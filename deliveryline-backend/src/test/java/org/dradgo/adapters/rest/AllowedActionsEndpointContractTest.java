@@ -178,6 +178,32 @@ class AllowedActionsEndpointContractTest {
   }
 
   @Test
+  void getAllowedActionsSurfacesEnterCompareModeWireValueAtReviewState() throws Exception {
+    // Story 4.20 (AC9) — the enter_compare_mode wire value serializes over the REST boundary at a
+    // review state (here the workflow_owner spec gate). The matrix logic itself is pinned by the
+    // service-unit test; this pins the open string[] wire serialization of the new value.
+    AllowedActionsView view =
+        new AllowedActionsView(
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.ANSWER_CLARIFICATION,
+                AllowedAction.ENTER_COMPARE_MODE),
+            new AllowedActionsVersionStamp("WaitingForSpecApproval", 3, 3, "evt_compare_1"));
+    when(workflowInspectionService.getAllowedActions(eq(RUN_ID), eq("workflow_owner")))
+        .thenReturn(view);
+
+    mockMvc
+        .perform(
+            get("/api/v1/workflows/{runId}/allowed-actions", RUN_ID)
+                .param("actorRole", "workflow_owner")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.actions", Matchers.hasItem("enter_compare_mode")));
+
+    verify(workflowInspectionService).getAllowedActions(eq(RUN_ID), eq("workflow_owner"));
+  }
+
+  @Test
   void unknownActorRoleReturns400WithUnknownActorRoleProblemDetails() throws Exception {
     Map<String, Object> details = new LinkedHashMap<>();
     details.put("actorRole", "auditor");

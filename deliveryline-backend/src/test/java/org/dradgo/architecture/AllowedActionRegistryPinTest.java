@@ -161,4 +161,14 @@ class AllowedActionRegistryPinTest {
     // RegistryContractTest).
     assertThat(AllowedAction.CLASSIFY_FAILURE.value()).isEqualTo("classify_failure");
   }
+
+  @Test
+  void enterCompareModeWireValueIsPinned() {
+    // Story 4.20 AC9 — Compare Mode is a read-only FE inspection surface (story-4.19 compare
+    // endpoint); there is NO backend executor. Surfaced via appendCompareOverlay for the
+    // reviewing/inspecting roles at WAITING_FOR_SPEC_APPROVAL / WAITING_FOR_REVIEW / FAILED /
+    // PAUSED, and the FE re-gates on the concrete artifact version>1. Guard against a silent
+    // rename (lockstep with allowed-actions.placeholder.json + RegistryContractTest).
+    assertThat(AllowedAction.ENTER_COMPARE_MODE.value()).isEqualTo("enter_compare_mode");
+  }
 }

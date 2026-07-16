@@ -296,6 +296,14 @@
               "null"
             ]
           },
+          "parentArtifactId" : {
+            "description" : "The immediately-prior version's public id (the artifact's lineage parent): the Compare-Mode baseline (story 4.20 OQ-2); null for a v1 artifact or a lineage root.",
+            "example" : "art_abc122",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
           "prReference" : {
             "description" : "prOutput only: the canonical PR reference (org/repo#n) from the active github_pr link (co-present with prState); null when no linked PR.",
             "example" : "octo/hello#42",

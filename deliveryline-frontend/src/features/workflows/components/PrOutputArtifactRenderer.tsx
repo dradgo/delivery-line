@@ -43,7 +43,12 @@ import {
   validateUrlScheme,
 } from '@/lib/sanitization';
 
-import { artifactTypeLabel, type PrOutputArtifactView } from '../artifactView';
+import {
+  artifactTypeLabel,
+  canEnableCompare,
+  hasComparableRevision,
+  type PrOutputArtifactView,
+} from '../artifactView';
 import { branchUrl, commitUrl, parsePrReference, prUrl, shortSha } from '../githubRef';
 import { formatRelativeTime, formatUtcTimestamp } from '../runContextFormat';
 import { PrStateBadge } from './PrStateBadge';
@@ -57,6 +62,11 @@ export interface PrOutputArtifactRendererProps {
    * gated controls stay the reserved disabled affordance.
    */
   actions?: readonly string[] | undefined;
+  /**
+   * Story 4.20 (AC9/AC10) — opens Compare Mode for this artifact (in-context overlay). Wired by
+   * the panel/route; `undefined` leaves the Compare control inert even when enabled.
+   */
+  onCompare?: (() => void) | undefined;
 }
 
 /** A labeled inline trusted-metadata slot (uppercase mini-label + value). Mirrors the spec renderer. */
@@ -79,7 +89,11 @@ function MetaItem({
   );
 }
 
-export function PrOutputArtifactRenderer({ artifact, actions }: PrOutputArtifactRendererProps) {
+export function PrOutputArtifactRenderer({
+  artifact,
+  actions,
+  onCompare,
+}: PrOutputArtifactRendererProps) {
   const { branch, commitSha, diff, prLinkage } = artifact;
 
   // Parse the diff ONCE (pure). Memoize so re-renders (copy state, paging) don't re-walk it.
@@ -181,9 +195,14 @@ export function PrOutputArtifactRenderer({ artifact, actions }: PrOutputArtifact
     });
   }, [githubUnreachable, prLinkage?.prState, prLinkage?.lastSyncedAt]);
 
-  // AC7 — a variant-specific control gated STRICTLY on backend-reported actions (parallel
-  // to the spec/impl-plan Compare control). `undefined` actions → reserved disabled.
-  const compareEnabled = actions?.includes('compare') ?? false;
+  // AC7 / Story 4.20 (AC9) — a variant-specific control gated STRICTLY on backend-reported
+  // actions (parallel to the spec/impl-plan Compare control). Renamed from the story-2.17
+  // anticipated `'compare'` to the registered backend action `'enter_compare_mode'`. Uses the
+  // SAME `canEnableCompare(actions, hasComparableRevision(artifact))` composition the container
+  // applies to spec/plan — the backend action is surfaced broadly at a review state, so the
+  // per-artifact `version > 1` predicate is what keeps a v1 prOutput (no prior revision) from
+  // offering a compare with no baseline. `undefined` actions → reserved disabled.
+  const compareEnabled = canEnableCompare(actions, hasComparableRevision(artifact));
 
   return (
     <div className="w-full" data-testid="pr-output-artifact-renderer" data-artifact-type="prOutput">
@@ -456,13 +475,17 @@ export function PrOutputArtifactRenderer({ artifact, actions }: PrOutputArtifact
         )}
       </section>
 
-      {/* Reserved disabled Compare control (AC7 / story 2.17 AC9) — enabled/disabled PURELY
-          from the container-supplied backend actions; the renderer never infers permissions. */}
+      {/* Compare control (AC7 / story 2.17 AC9 / story 4.20 AC9) — enabled/disabled PURELY from the
+          container-supplied backend actions; the renderer never infers permissions. When enabled,
+          onClick opens Compare Mode as an in-context overlay (AC8) via the panel-supplied handler. */}
       <div className="mt-4 flex flex-wrap items-center gap-2" data-testid="artifact-region-anchors">
         <button
           type="button"
           disabled={!compareEnabled}
-          title={compareEnabled ? undefined : 'Available in next release'}
+          onClick={onCompare}
+          title={
+            compareEnabled ? 'Compare with the previous revision' : 'Available in next release'
+          }
           className="rounded-md border border-border px-2.5 py-1 text-sm text-text-secondary disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
           data-testid="artifact-compare-entry"
         >

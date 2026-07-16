@@ -227,6 +227,10 @@ export function toArtifactView(dto: ArtifactDetail, artifactId: string): Artifac
     classification: dto.classification ?? '',
     body: dto.body ?? '',
     createdAt: dto.createdAt ?? '',
+    // Story 4.20 (OQ-2) — the Compare-Mode baseline (immediately-prior version id); a nullable wire
+    // field serializes as JSON null ([[workflowdetail-wire-sends-null-not-undefined]]) → normalize
+    // to null so the route resolves `artifactIdA` with a `?? ''` fallback.
+    parentArtifactId: dto.parentArtifactId ?? null,
   };
   if (artifactType === 'implementationPlan') {
     // Story 3b-6 — the live read model now carries the ordered plan `steps` as a typed nullable

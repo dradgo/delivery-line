@@ -32,6 +32,7 @@
     "reconcile_conflict",
     "rerun_from_step",
     "pause_workflow",
-    "classify_failure"
+    "classify_failure",
+    "enter_compare_mode"
   ]
 }

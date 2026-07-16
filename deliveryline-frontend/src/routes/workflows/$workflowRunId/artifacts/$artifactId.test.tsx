@@ -10,7 +10,7 @@
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryHistory, createRouter } from '@tanstack/react-router';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -132,6 +132,45 @@ describe('Artifact viewer route — live type + state-driven decision bar', () =
       ),
     );
     expect(screen.queryByText('No decision available')).not.toBeInTheDocument();
+  });
+
+  it('4.20 OQ-2 — opening Compare targets the immediately-prior version via parentArtifactId', async () => {
+    const PARENT_ID = 'art_parent00000000000000000000000000000';
+    let comparePair: string | null = null;
+    server.use(
+      http.get(`${API}/:workflowRunId`, () => detailWith('WaitingForSpecApproval')),
+      http.get(`${API}/:workflowRunId/allowed-actions`, () =>
+        allowedActionsWith('WaitingForSpecApproval', [
+          'approve_spec',
+          'reject_spec',
+          'enter_compare_mode',
+        ]),
+      ),
+      // A v2 spec artifact whose lineage parent (immediately-prior version) is resolvable — the
+      // OQ-2 Compare-Mode baseline id now surfaced on the artifact read.
+      http.get(`${API}/:workflowRunId/artifacts/:artifactId`, () =>
+        artifactOf('spec', { version: 2, parentArtifactId: PARENT_ID }),
+      ),
+      // The story-4.19 compare endpoint (NOT under /workflows) — capture the ordered id pair.
+      http.get(
+        'http://localhost/api/v1/artifacts/:artifactIdA/compare/:artifactIdB',
+        ({ params }) => {
+          comparePair = `${String(params.artifactIdA)}|${String(params.artifactIdB)}`;
+          return HttpResponse.json({ noMeaningfulDiff: true });
+        },
+      ),
+    );
+
+    renderArtifactRoute();
+
+    const compareBtn = await screen.findByTestId('artifact-compare-entry');
+    // The control activates only once allowed-actions resolve (enter_compare_mode) AND the
+    // artifact is past v1 — then the onClick opens the in-context overlay.
+    await waitFor(() => expect(compareBtn).toBeEnabled());
+    fireEvent.click(compareBtn);
+
+    // artifactIdA = the lineage parent (prior), artifactIdB = the artifact under review (current).
+    await waitFor(() => expect(comparePair).toBe(`${PARENT_ID}|${ARTIFACT_ID}`));
   });
 
   it('keeps the spec_approval bar for a spec artifact awaiting spec approval', async () => {

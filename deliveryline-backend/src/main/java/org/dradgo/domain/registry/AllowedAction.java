@@ -139,7 +139,21 @@ public enum AllowedAction implements RegistryValue {
   // deferred its targetStep sub-list. The REST endpoint that honors it lands in story 4.14. No DB
   // CHECK exists for allowed-actions (enum <-> frontend placeholder JSON only); the
   // allowed-actions REST field is an open string[] so adding a value needs NO OpenAPI regen.
-  CLASSIFY_FAILURE("classify_failure");
+  CLASSIFY_FAILURE("classify_failure"),
+  // Story 4.20 (AC9, UX-DR13) — the Compare-Mode entry affordance. Surfaced (via a small
+  // appendCompareOverlay overlay in WorkflowInspectionService.computeActionMatrix, mirroring
+  // appendConflictOverlay) for the reviewing/inspecting roles at the artifact-review + operator
+  // states: WAITING_FOR_SPEC_APPROVAL (product_reviewer / workflow_owner), WAITING_FOR_REVIEW
+  // (developer), FAILED / PAUSED (workflow_owner — the operator failure-context compare, AC10.c).
+  // The backend action means "compare is conceptually reachable for this run+role"; the FRONTEND
+  // re-gates on the concrete artifact (canEnableCompare combines this with a per-artifact
+  // version>1 predicate) and picks the concrete A/B pair — so the matrix stays version-agnostic
+  // (no artifact read injected into the pure state×role switch). There is NO canonical backend
+  // executor: Compare Mode is a read-only FE inspection surface consuming the story-4.19
+  // GET /api/v1/artifacts/{a}/compare/{b} endpoint. No DB CHECK exists for allowed-actions (enum
+  // <-> frontend placeholder JSON only); the allowed-actions REST field is an open string[] so
+  // adding a value needs NO OpenAPI regen.
+  ENTER_COMPARE_MODE("enter_compare_mode");
 
   private static final Map<String, AllowedAction> LOOKUP = RegistryParsers.index(values());
 

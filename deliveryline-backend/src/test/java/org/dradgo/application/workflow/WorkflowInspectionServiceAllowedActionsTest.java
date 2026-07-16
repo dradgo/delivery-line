@@ -136,7 +136,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.REGENERATE_SPEC,
                 // Story 3f-4 (AC1) — split overlay fires at the spec gate; default mock
                 // (no open proposal) appends request_split.
-                AllowedAction.REQUEST_SPLIT)),
+                AllowedAction.REQUEST_SPLIT,
+                // Story 4.20 (AC9) — compare overlay surfaces enter_compare_mode for the
+                // product_reviewer at the spec gate (after the split overlay).
+                AllowedAction.ENTER_COMPARE_MODE)),
         Arguments.of(
             WorkflowState.WAITING_FOR_SPEC_APPROVAL,
             "workflow_owner",
@@ -152,6 +155,9 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 // Story 3f-4 (AC1) — split overlay (request_split) is appended before the
                 // workflow_owner-only archive_run wrapper action.
                 AllowedAction.REQUEST_SPLIT,
+                // Story 4.20 (AC9) — compare overlay for the workflow_owner at the spec gate
+                // (after the split overlay, before the archive_run wrapper).
+                AllowedAction.ENTER_COMPARE_MODE,
                 AllowedAction.ARCHIVE_RUN)),
         // Story 3d-5 (AC6) — view_runner_logs joins the runner-execution states, role-agnostic.
         Arguments.of(
@@ -211,7 +217,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
                 // Story 3f-4 (AC1) — split overlay fires at the review gate for developer;
                 // default mock (no open proposal) appends request_split.
-                AllowedAction.REQUEST_SPLIT)),
+                AllowedAction.REQUEST_SPLIT,
+                // Story 4.20 (AC9) — compare overlay surfaces enter_compare_mode for the developer
+                // at the review gate (after the split overlay).
+                AllowedAction.ENTER_COMPARE_MODE)),
         // Story 3.20 (review) — `developer` is now recognized in EVERY state; pin its role-agnostic
         // fallback outside WAITING_FOR_REVIEW so a future matrix change can't silently grant it an
         // unintended action elsewhere.
@@ -313,6 +322,9 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_DIAGNOSTICS,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+                // Story 4.20 (AC9) — compare overlay for the workflow_owner at FAILED (operator
+                // failure-context compare, AC10.c), before the archive_run wrapper.
+                AllowedAction.ENTER_COMPARE_MODE,
                 AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.PAUSED,
@@ -331,6 +343,9 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_DIAGNOSTICS,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+                // Story 4.20 (AC9) — compare overlay for the workflow_owner at PAUSED (operator
+                // failure-context compare, AC10.c), before the archive_run wrapper.
+                AllowedAction.ENTER_COMPARE_MODE,
                 AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.TAKEN_OVER, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
@@ -449,7 +464,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
                 // Story 3f-4 (AC1) — split overlay (request_split) fires for the developer at
                 // the review gate; it is advisory and orthogonal to the reviewer verdict panel.
-                AllowedAction.REQUEST_SPLIT);
+                AllowedAction.REQUEST_SPLIT,
+                // Story 4.20 (AC9) — compare overlay for the developer at the review gate;
+                // orthogonal to the reviewer verdict panel (still no governed action added).
+                AllowedAction.ENTER_COMPARE_MODE);
       } else if (role.equals("workflow_owner")) {
         // Story 4.7 (AC10) — rerun_from_step leads the workflow_owner arm; archive_run is
         // workflow_owner-only (3d-8/D1). Story 4.8 (AC10) — pause_workflow follows it. Still
@@ -552,7 +570,9 @@ class WorkflowInspectionServiceAllowedActionsTest {
             AllowedAction.REGENERATE_SPEC,
             // Story 3f-4 (AC1) — split overlay (request_split) fires at the spec gate regardless
             // of pending clarifications.
-            AllowedAction.REQUEST_SPLIT);
+            AllowedAction.REQUEST_SPLIT,
+            // Story 4.20 (AC9) — compare overlay fires at the spec gate for product_reviewer.
+            AllowedAction.ENTER_COMPARE_MODE);
     assertThat(view.versionStamp().currentSpecArtifactVersion()).isEqualTo(2);
     assertThat(view.versionStamp().currentContextBundleVersion()).isEqualTo(5);
   }
@@ -575,7 +595,9 @@ class WorkflowInspectionServiceAllowedActionsTest {
             AllowedAction.ACCEPT_CLARIFICATION,
             AllowedAction.REGENERATE_SPEC,
             // Story 3f-4 (AC1) — split overlay (request_split) fires at the spec gate.
-            AllowedAction.REQUEST_SPLIT);
+            AllowedAction.REQUEST_SPLIT,
+            // Story 4.20 (AC9) — compare overlay fires at the spec gate for product_reviewer.
+            AllowedAction.ENTER_COMPARE_MODE);
   }
 
   // ---------------------------------------------------------------------------
@@ -659,6 +681,9 @@ class WorkflowInspectionServiceAllowedActionsTest {
             AllowedAction.VIEW_DIAGNOSTICS,
             AllowedAction.VIEW_RUNNER_LOGS,
             AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+            // Story 4.20 (AC9) — compare overlay for the workflow_owner at FAILED (AC10.c),
+            // before the archive_run wrapper.
+            AllowedAction.ENTER_COMPARE_MODE,
             AllowedAction.ARCHIVE_RUN);
   }
 
@@ -801,7 +826,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
             AllowedAction.REGENERATE_SPEC,
             // Story 3f-4 (AC1) — blank/null role defaults to product_reviewer, so the split
             // overlay (request_split) fires at the spec gate.
-            AllowedAction.REQUEST_SPLIT);
+            AllowedAction.REQUEST_SPLIT,
+            // Story 4.20 (AC9) — compare overlay fires at the spec gate for the defaulted
+            // product_reviewer.
+            AllowedAction.ENTER_COMPARE_MODE);
     assertThat(blank.actions()).containsExactlyElementsOf(expected);
     assertThat(nullRole.actions()).containsExactlyElementsOf(expected);
   }

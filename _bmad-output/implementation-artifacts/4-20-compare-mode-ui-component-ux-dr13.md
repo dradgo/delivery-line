@@ -1,6 +1,6 @@
 # Story 4.20: Compare Mode UI Component (UX-DR13)
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -116,50 +116,61 @@ The single most important thing to internalize: **the compare-entry seam ALREADY
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Backend: register `enter_compare_mode` + surface it in the action matrix (AC9)**
-  - [ ] Site 1: add `ENTER_COMPARE_MODE("enter_compare_mode")` to `domain/registry/AllowedAction.java` with a story-4.20 comment mirroring the recovery-action comment style (note "open string[] → no OpenAPI regen; no DB CHECK").
-  - [ ] Site 2: append `"enter_compare_mode"` to `test/resources/contracts/frontend/allowed-actions.placeholder.json`.
-  - [ ] Add `enterCompareModeWireValueIsPinned()` to `architecture/AllowedActionRegistryPinTest.java` (`assertThat(AllowedAction.ENTER_COMPARE_MODE.value()).isEqualTo("enter_compare_mode")`).
-  - [ ] Add `appendCompareOverlay(result, state, actorRole)` to `WorkflowInspectionService.computeActionMatrix` (mirror `appendConflictOverlay`) surfacing `ENTER_COMPARE_MODE` for `WAITING_FOR_SPEC_APPROVAL` (product_reviewer/workflow_owner), `WAITING_FOR_REVIEW` (developer), `FAILED`/`PAUSED` (workflow_owner). Keep it additive + a no-op for every other state×role so all other matrix rows stay byte-identical. (Reconciliation 4 / OQ-1)
-  - [ ] Confirm `RegistryContractTest.allowedActionsStayAlignedWithFrontendPlaceholder` + foundation-gate pass (enum ↔ placeholder parity round-trips). [[new-workflowcommand-permit-updates-symmetry-contract]] does NOT apply (allowed-actions ≠ command permits); the parity here is enum↔placeholder JSON only.
+- [x] **Task 1 — Backend: register `enter_compare_mode` + surface it in the action matrix (AC9)**
+  - [x] Site 1: add `ENTER_COMPARE_MODE("enter_compare_mode")` to `domain/registry/AllowedAction.java` with a story-4.20 comment mirroring the recovery-action comment style (note "open string[] → no OpenAPI regen; no DB CHECK").
+  - [x] Site 2: append `"enter_compare_mode"` to `test/resources/contracts/frontend/allowed-actions.placeholder.json`.
+  - [x] Add `enterCompareModeWireValueIsPinned()` to `architecture/AllowedActionRegistryPinTest.java` (`assertThat(AllowedAction.ENTER_COMPARE_MODE.value()).isEqualTo("enter_compare_mode")`).
+  - [x] Add `appendCompareOverlay(result, state, actorRole)` to `WorkflowInspectionService.computeActionMatrix` (mirror `appendConflictOverlay`) surfacing `ENTER_COMPARE_MODE` for `WAITING_FOR_SPEC_APPROVAL` (product_reviewer/workflow_owner), `WAITING_FOR_REVIEW` (developer), `FAILED`/`PAUSED` (workflow_owner). Additive + no-op for every other state×role (all other rows byte-identical). (Reconciliation 4 / OQ-1)
+  - [x] Confirm `RegistryContractTest.allowedActionsStayAlignedWithFrontendPlaceholder` passes (enum ↔ placeholder parity round-trips). [[new-workflowcommand-permit-updates-symmetry-contract]] does NOT apply (allowed-actions ≠ command permits).
 
-- [ ] **Task 2 — `useRevisionDelta` hook + query key (AC1)**
-  - [ ] Add `workflowKeys.revisionDelta(artifactIdA, artifactIdB)` = `[...workflowKeys.all, 'revisionDelta', artifactIdA, artifactIdB] as const` (a child of `all`, mirroring `artifact(artifactId)` — compare is lineage-scoped, not run-scoped). (Reconciliation 11)
-  - [ ] Create `hooks/useRevisionDelta.ts`: `apiClient.GET('/api/v1/artifacts/{artifactIdA}/compare/{artifactIdB}', { params: { path: { artifactIdA, artifactIdB } } })` → `unwrap` → `RevisionDelta`. `enabled` only when both ids are non-empty (mirror `useArtifact`). `staleTime: STALE_TIME.detail`. NO Idempotency-Key. Export `type RevisionDelta = components['schemas']['RevisionDelta']`.
-  - [ ] Unit test `useRevisionDelta.test.tsx` (mock `apiClient`): success shape, disabled when an id is empty, 404/503/400 surface as `ProblemDetailsError`.
+- [x] **Task 2 — `useRevisionDelta` hook + query key (AC1)**
+  - [x] Add `workflowKeys.revisionDelta(artifactIdA, artifactIdB)` = `[...workflowKeys.all, 'revisionDelta', artifactIdA, artifactIdB] as const` (a child of `all`, mirroring `artifact(artifactId)`). (Reconciliation 11)
+  - [x] Create `hooks/useRevisionDelta.ts`: `apiClient.GET('/api/v1/artifacts/{artifactIdA}/compare/{artifactIdB}', ...)` → `unwrap` → `RevisionDelta`. `enabled` only when both ids non-empty. `staleTime: STALE_TIME.detail`. NO Idempotency-Key. Exports `type RevisionDelta`.
+  - [x] Unit test `useRevisionDelta.test.tsx` (MSW): success shape, disabled when an id is empty, key off `all`, 404/503/400 surface as `ProblemDetailsError`.
 
-- [ ] **Task 3 — `normalizeRevisionDelta` + per-block discriminated union (AC4, AC6)**
-  - [ ] Create `compareView.ts` (`.ts` sibling — helpers out of `.tsx` per `frontend-react-refresh-no-fn-exports`): a frontend-owned strict model + `normalizeRevisionDelta(raw: RevisionDelta): CompareView` narrowing the loose generated shape into `{ artifactType: 'spec'|'implementationPlan'|'prOutput', revisionA, revisionB, summary, noMeaningfulDiff, blocks: ChangeBlockView[], linkedDiffReferences }`, where `ChangeBlockView` is a discriminated union on `blockType` (`markdown`/`planStep`/`file`) with `changeKind` narrowed to the closed set. Reject/skip malformed blocks (mirror `isArtifactView` runtime-guard discipline — never trust a partial wire shape). Pure + unit-tested.
-  - [ ] `resolveCompareState({ isError, isLoading, delta, error }): CompareState` — pure precedence `error → loading → noMeaningfulDiff → default`, with the error branch sub-classified by ProblemDetails code into `noBaseline (404) | partial (503) | unavailable (400/transport)`. Exposed as `data-compare-state`. Unit-tested. (Reconciliation 10)
+- [x] **Task 3 — `normalizeRevisionDelta` + per-block discriminated union (AC4, AC6)**
+  - [x] Create `compareView.ts`: strict `CompareView` model + `normalizeRevisionDelta` narrowing the loose generated shape into `{ artifactType, revisionA, revisionB, summary, noMeaningfulDiff, blocks: ChangeBlockView[], linkedDiffReferences }`; `ChangeBlockView` discriminated on `kind` (`markdown`/`planStep`/`file`); `changeKind` narrowed to the closed set; malformed/unknown blocks skipped (mirror `isArtifactView`). Pure + unit-tested. + `compareLayout` helper.
+  - [x] `resolveCompareState({ hasBaseline, isError, isLoading, delta, error }): CompareState` — pure precedence `no-baseline → error → loading → no-meaningful-diff → default`, error sub-classified by ProblemDetails code into `no-baseline (404) | partial (503) | unavailable (400/transport)`. Exposed as `data-compare-state`. Unit-tested. (Reconciliation 10) — added the `hasBaseline` gate so the OQ-2 unresolved-baseline path resolves without firing a request.
 
-- [ ] **Task 4 — `CompareMode` presentational composite + per-block renderers (AC2, AC3, AC4, AC5, AC7)**
-  - [ ] `components/CompareMode.tsx`: presentational, prop-driven (`{ state, view?, onExit, onRetry? }`), router/query-free. Renders exactly one `data-compare-state`; for `default` renders the summary header (A/B identifiers + `RevisionDeltaSummary` counts), the filter toggle ("Show only changes"/"Show all", default ON), the jump controls, the exit control, and the comparison surface (side-by-side for spec/plan; stacked accordions for prOutput). Gutter changed-region markers (non-color). `summary-first` toggle collapses blocks. Skeleton for `loading` matching layout; `EmptyState` for `noMeaningfulDiff`; `ErrorState` (with 2.22 `nextAction`) for the error sub-states.
-  - [ ] Per-block renderers (sibling components or inline): `MarkdownChangeBlockView` → `SafeMarkdownRenderer` on `priorText`/`currentText`; `PlanStepChangeBlockView` → React-escaped plain step text + `priorStepOrder`/`currentStepOrder` badges + `changeKind` (added/removed/reordered/modified) signifier; `FileChangeBlockView` → `renderTextWithRedactions(filePath)` + `addedLines`/`removedLines` counts + an expand control that lazy-loads the full diff. (Reconciliation 7)
-  - [ ] prOutput lazy diff: on file-accordion expand, read the artifact via `useArtifact(runId, artifactId)` (from `linkedDiffReferences`) and render its resolved `diff` via `SafeUnifiedDiffRenderer` + `parseUnifiedDiff` (cap `PR_DIFF_MAX_FILES`/`PR_DIFF_MAX_LINES`). (Reconciliation 8)
+- [x] **Task 4 — `CompareMode` presentational composite + per-block renderers (AC2, AC3, AC4, AC5, AC7)**
+  - [x] `components/CompareMode.tsx`: presentational, prop-driven, router/query-free. Renders exactly one `data-compare-state`; `default` renders the summary header (A/B identifiers + counts), the filter toggle (default ON), jump controls, exit control, and the comparison surface (side-by-side 2-col synced scrollport for spec/plan; stacked file accordions for prOutput). Non-color gutter markers (symbol + label). `summary-first` toggle collapses blocks. Skeleton/`EmptyState`/`ErrorState` (with 2.22 `nextAction`) for the non-default states.
+  - [x] Per-block renderers (inline): `MarkdownCell` → `SafeMarkdownRenderer`; `PlanStepCell` → React-escaped plain text + order badges + `changeKind` signifier; file blocks → `renderTextWithRedactions(filePath)` + counts + expand.
+  - [x] prOutput lazy diff: `CompareFileDiff` mounts on expand (only when run + artifact ids present), reads via `useArtifact`, `parseUnifiedDiff` → `SafeUnifiedDiffRenderer` (`PR_DIFF_MAX_LINES`). (Reconciliation 8)
 
-- [ ] **Task 5 — Keyboard nav + a11y + announcements (AC6, AC11-axe)**
-  - [ ] J/K + Down/Up jump to next/previous changed region (smooth `scrollIntoView`, jsdom-guarded); Tab order summary → filter → regions → exit; Esc → `onExit`. Focus follows the next changed region by default (AC7).
-  - [ ] Add a `// ---- Compare Mode (story 4.20)` block to `lib/a11y/announcements.ts`: `compareLoaded(changedRegionCount)`, `compareNoMeaningfulDiff`, `compareJumpedToRegion(index, total)`, `compareExited`, `compareLoadFailed` (const-vs-function per the vocabulary-node-test). Wire via `useLiveAnnouncement`. Run `npm run check:a11y`.
-  - [ ] `axe-core` zero-violations test on the default + no-meaningful-diff + error renders.
+- [x] **Task 5 — Keyboard nav + a11y + announcements (AC6, AC11-axe)**
+  - [x] J/K + Down/Up jump to next/previous changed region (guarded `scrollIntoView` + focus); Esc → exit. Bound as a native region-level listener (accelerator over natively-operable children). Focus follows the landed region.
+  - [x] Added the `// ---- Compare Mode (story 4.20)` block to `lib/a11y/announcements.ts` (`compareLoaded`, `compareNoMeaningfulDiff`, `compareJumpedToRegion`, `compareExited`, `compareLoadFailed`), wired via `useLiveAnnouncement`. `check:a11y` green.
+  - [x] `axe-core` zero-violations test on the default + no-meaningful-diff + partial-error renders.
 
-- [ ] **Task 6 — Container + ARP entry wiring + overlay mount (AC1, AC8, AC9, AC10)**
-  - [ ] `components/CompareModeContainer.tsx`: reads `useRevisionDelta`, maps to `CompareMode` props, owns field-only structured logs (`console.warn({ event: 'compare.loadError', code, transport })` / `console.info({ event: 'compare.exit' })` — mirror `ArtifactReviewPanelContainer`; NEVER log raw error/body).
-  - [ ] Rename `'compare'` → `'enter_compare_mode'` in `artifactView.ts` `canEnableCompare` + `PrOutputArtifactRenderer.tsx:186`; update the stale doc comments. (Reconciliation 2)
-  - [ ] Wire the ARP Compare control onClick (Spec / ImplementationPlan / PrOutput renderers): when `compareEnabled`, clicking opens the Compare overlay with `{ artifactIdB: current artifactId, artifactIdA: prior-version id }`. Overlay state + mount live in the artifact route (`$artifactId.tsx`) or a thin `ArtifactReviewPanel` wrapper — in-context, NO navigation. Exit calls `useReturnToRunContext` + closes the overlay. (Reconciliation 9)
-  - [ ] "Compare with revision N" dropdown (AC10.b) — render only when a lineage version list is available; otherwise leave reserved (OQ-2).
+- [x] **Task 6 — Container + ARP entry wiring + overlay mount (AC1, AC8, AC9, AC10)**
+  - [x] `components/CompareModeContainer.tsx`: reads `useRevisionDelta`, resolves + normalizes, owns field-only structured logs (`compare.opened` / `compare.loadError` code+transport / `compare.exit`).
+  - [x] Renamed `'compare'` → `'enter_compare_mode'` in `artifactView.ts` `canEnableCompare` + `PrOutputArtifactRenderer` (updated the stale doc comments). (Reconciliation 2)
+  - [x] Threaded `onEnterCompare`/`onCompare` through `ArtifactReviewPanel(+Container)` → all three renderers; the Compare control's onClick opens the overlay. Overlay state + mount live in `$artifactId.tsx` (in-context, NO navigation); exit closes the overlay. (Reconciliation 9)
+  - [x] "Compare with revision N" dropdown (AC10.b) — left reserved (OQ-2: no lineage version-list read exists today).
 
-- [ ] **Task 7 — Tests (AC11)**
-  - [ ] `CompareMode.test.tsx` (presentational, fixtures): side-by-side (spec/plan) + synced-scroll marker, stacked (prOutput) accordions, summary-first collapse/expand, no-meaningful-diff empty state, each error sub-state (404/503/400) with correct copy + nextAction, J/K jump, Esc-exit calls `onExit`, gutter markers present + non-color.
-  - [ ] Sanitization: feed the story-2.24 XSS fixtures through `priorText`/`currentText`/`filePath` and assert no scriptable payload renders (mirror `SafeMarkdownRenderer.test`). (AC5)
-  - [ ] `CompareModeContainer.test.tsx`: mock `useRevisionDelta` → loading/default/error mappings + structured-log assertion.
-  - [ ] Extend `ArtifactReviewPanel.test.tsx` / `SpecArtifactRenderer.test.tsx` / `PrOutputArtifactRenderer.test.tsx`: Compare control enabled ONLY when `actions` includes `enter_compare_mode` AND `version>1`; onClick opens the overlay.
-  - [ ] Backend: `WorkflowInspectionServiceAllowedActions*Test` (matrix surfaces `enter_compare_mode` at the bound states, absent elsewhere) + `AllowedActionsEndpointContractTest` (the wire value appears at a review state) + confirm `RegistryContractTest` + `AllowedActionRegistryPinTest` green.
-  - [ ] Run the REAL frontend build (`npm run build` — tsc -b typechecks tests) before claiming green [[frontend-tsc-noemit-misses-test-files]]; `npm run check:api` stays green (NO schema change this story); `npm run check:a11y` green.
+- [x] **Task 7 — Tests (AC11)**
+  - [x] `CompareMode.test.tsx` (presentational, fixtures): side-by-side + synced-scroll, stacked prOutput accordions, summary-first collapse/expand, no-meaningful-diff, each error sub-state, J/K jump announce, Esc-exit, gutter markers non-color, filter default-ON toggle.
+  - [x] Sanitization: scriptable payloads fed through `priorText`/`currentText`/`filePath` render no `<script>`/`img[onerror]`. (AC5)
+  - [x] `CompareModeContainer.test.tsx`: mock `useRevisionDelta` → loading/default/404/503/400 mappings + `compare.loadError` code-only log assertion + unresolved-baseline path.
+  - [x] Extended `ArtifactReviewPanel.test.tsx` / `SpecArtifactRenderer.test.tsx` / `PrOutputArtifactRenderer.test.tsx` / `ImplementationPlanArtifactRenderer.test.tsx` / `artifactView.test.ts`: Compare enabled ONLY when `enter_compare_mode` present AND `version>1`; onClick invokes the handler; old `'compare'` literal no longer enables.
+  - [x] Backend: `WorkflowInspectionServiceAllowedActionsTest` (matrix surfaces `enter_compare_mode` at the bound states, absent elsewhere) + `AllowedActionsEndpointContractTest` (wire value at a review state) + `RegistryContractTest` + `AllowedActionRegistryPinTest` all green.
+  - [x] Real frontend build (`npm run build` — tsc -b) green; `npm run check:api` in sync (NO schema change); `npm run check:a11y` green; full vitest 1407/0; eslint 0; prettier clean.
 
-- [ ] **Logging instrumentation** (cross-cutting; required on every story — FE idiom + the thin backend slice)
-  - [ ] Frontend (mirror `ArtifactReviewPanelContainer` / `QueueShell`): field-only structured `console.*` at the container — `console.info({ event: 'compare.opened', artifactIdA, artifactIdB })`, `console.warn({ event: 'compare.loadError', code, transport })`, `console.info({ event: 'compare.exit' })`, `console.debug({ event: 'compare.jump', index, total })`. NEVER log the raw error message, delta text, or artifact body — only the stable ProblemDetails `code` + a transport flag.
-  - [ ] Backend (the matrix slice): the action matrix is a pure read; no new SLF4J surface is required beyond what `getAllowedActions` already logs. Do NOT add per-matrix-row logs (hot path). If any WARN is warranted it is only on an unexpected role/state — but the overlay is a pure no-op elsewhere, so none is needed.
-  - [ ] Pin at least one FE announcement + one structured-log assertion in the container/component test (the compare-specific `aria-live` text + the `compare.loadError` code-only log).
+- [x] **Logging instrumentation** (cross-cutting)
+  - [x] Frontend: field-only structured `console.*` at the container — `compare.opened` (ids), `compare.loadError` (code + transport), `compare.exit`. NEVER the raw error/delta text/body.
+  - [x] Backend (matrix slice): pure read, no new SLF4J surface (the overlay is a no-op elsewhere; `getAllowedActions` logging unchanged).
+  - [x] Pinned the compare `aria-live` announcement (component test) + the `compare.loadError` code-only log (container test).
+
+### Review Findings
+
+> From `bmad-code-review` (2026-07-16) — three adversarial layers (Blind Hunter, Edge Case Hunter, Acceptance Auditor). Blind Hunter's diff read was truncated at ~2000 lines (missed 4 modified files); Edge Case Hunter + Acceptance Auditor had full project read access and covered them. 1 decision-needed, 2 patch, 3 deferred, 1 dismissed. **Alex resolved the decision-needed as "build it now" and both patches were applied (2026-07-16).**
+
+- [x] [Review][Decision→RESOLVED: built] OQ-2 — prior-version artifact id source added. **Resolution (Alex chose to build now, not defer):** the backend already tracks the lineage parent (`ArtifactEntity.parentArtifact` → `ArtifactRecordSnapshot.parentArtifactId`); it just wasn't surfaced on the read. Added `parentArtifactId` to `ArtifactDetailView` + `ArtifactDetailResponse` (`@Schema(nullable=true)`), regenerated `openapi.json` (hand-mirrored the sibling `branch` field's exact springdoc shape — the snapshot regen needs Docker, unavailable locally) + `schema.d.ts`, threaded it through `ArtifactViewBase`/`toArtifactView`/`isArtifactView`, and resolved `artifactIdA = artifact?.parentArtifactId ?? ''` in `$artifactId.tsx`. A v1 artifact still resolves to "no baseline available" (correct — no prior version). **CI-GATE: `OpenApiSnapshotContractTest` + the artifact-read `@Tag("contract")` IT verify the byte-exact snapshot in CI only (Docker); locally verified: `npm run check:api` in sync, FE build + 1409 vitest green, `WorkflowInspectionServiceArtifactDetailTest` 21/0, backend test-compile + spotless clean.** (auditor; = story OQ-2)
+- [x] [Review][Patch→APPLIED] prOutput Compare control now applies the `version > 1` gate [`components/PrOutputArtifactRenderer.tsx:197`] — replaced the self-derived `actions?.includes('enter_compare_mode') ?? false` with the SAME `canEnableCompare(actions, hasComparableRevision(artifact))` composition the container applies to spec/plan, so a v1 prOutput no longer offers a compare with no baseline. Tests updated (`PrOutputArtifactRenderer.test.tsx`) to lock: v1 stays disabled even with the action; v2+ enables. (blind+edge)
+- [x] [Review][Patch→APPLIED] Compare Mode now focuses the section on entry [`components/CompareMode.tsx`] — added a mount `useEffect(() => sectionRef.current?.focus(), [])` so the native `keydown` accelerators (J/K/Esc) receive events immediately (previously focus fell to `document.body` after the ARP unmounted the focused Compare button). New regression test asserts `compare-mode` has focus on render. (edge)
+- [x] [Review][Defer] `default` state with positive `changedRegionCount` but zero renderable blocks shows a contradictory surface [`components/CompareMode.tsx:448` + `compareView.ts`] — deferred, forward-compat only: `normalizeRevisionDelta` skips unknown `blockType`s (correct) but `summary.changedRegionCount` passes through verbatim, so a wire delta with `noMeaningfulDiff:false` + count>0 + all-unknown blocks renders "N changed regions" over an empty surface. The 4.19 endpoint only emits the three known block types today, so it cannot trigger. (edge)
+- [x] [Review][Defer] Sanitization tests use hand-rolled XSS payloads, not the story-2.24 AC7 fixture corpus [`components/CompareMode.test.tsx`] — deferred, intent met: AC11's literal wording asks the 2.24 fixtures be exercised; the tests assert against inline `<script>`/`img[onerror]`/`javascript:` strings instead. Real sanitization is delegated to the barrel primitives (fixture-tested at 2.24) and this matches the sibling `PrOutputArtifactRenderer.test.tsx` convention. (auditor)
+- [x] [Review][Defer] Exit control tab order deviates — rendered first, AC6 specifies last [`components/CompareMode.tsx:386`] — deferred, deliberate design: the exit affordance is intentionally rendered in the top bar in EVERY state ("the operator can always leave"), so DOM tab order is exit → filter/summary/jump → regions rather than the AC6-stated summary → filter → regions → exit. Esc also exits. (auditor)
 
 ## Dev Notes
 
@@ -216,7 +227,7 @@ This is a frontend-heavy story; the "logging" contract is the FE's structured-`c
 ### Open Questions (for Alex — do not block dev; provisional bindings applied)
 
 - **OQ-1 — the `enter_compare_mode` matrix state/role set.** Provisional: surface at `WaitingForSpecApproval` (product_reviewer/workflow_owner), `WaitingForReview` (developer), `Failed`/`Paused` (workflow_owner). The FE combines this with the per-artifact `version>1` gate. Alternative: surface it in EVERY state that can show an artifact (broader) or make the matrix artifact-version-aware (couples the matrix to an artifact read — rejected, breaks the pure state×role switch). Confirm the state/role set.
-- **OQ-2 — the prior-version artifact id source for AC10.a/b.** The default "Compare with previous revision" needs `artifactIdA` = the immediately-prior version's public id. `useArtifact`/`WorkflowDetail.latestArtifacts[]` expose `version` but NOT the full lineage id list today. Provisional: wire AC10.a fully when a prior-version id is resolvable (e.g. the artifact read exposes `parentArtifactId`/a lineage list); otherwise the Compare control opens against the current id only and the "Compare with revision N" dropdown (AC10.b) stays reserved until a lineage-list read exists. Confirm whether to add a lineage-list read here or defer the dropdown to a follow-up.
+- **OQ-2 — the prior-version artifact id source for AC10.a/b. [RESOLVED 2026-07-16 via code-review — Alex chose "build now".]** The default "Compare with previous revision" needs `artifactIdA` = the immediately-prior version's public id. **Resolution:** the artifact-read contract now exposes `parentArtifactId` (the lineage parent, sourced from the already-populated `ArtifactRecordSnapshot.parentArtifactId`), and `$artifactId.tsx` resolves `artifactIdA = artifact?.parentArtifactId ?? ''` — so AC10.a compares current-vs-immediately-prior end-to-end. A v1 artifact (no parent) still resolves to "no baseline available" (correct). AC10.b ("Compare with revision N" dropdown) remains reserved — a full lineage-list read (not just the single parent) is a follow-up if multi-revision selection is wanted.
 - **OQ-3 — synced-scroll fidelity for side-by-side.** Provisional: implement a lightweight scroll-sync (mirror scrollTop ratio between the two panes) sufficient for the AC4 "synced scroll" + the test assertion; a pixel-perfect line-locked sync is out of scope. Confirm the fidelity bar.
 - **OQ-4 — summary-first default per variant.** Provisional: `summary-first` collapsed-by-default for prOutput (dense file diffs) and expanded-by-default for spec/plan (fewer, section/step-level blocks). Confirm the per-variant default.
 
@@ -228,6 +239,72 @@ claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-create-story workflow
 
 ### Debug Log References
 
+- Backend: appending `enter_compare_mode` to the version-agnostic matrix rippled the exact-match rows in `WorkflowInspectionServiceAllowedActionsTest` (5 `matrixCases` rows + 3 focused tests) and the reviewer-verdict pin — all updated + re-verified (`WorkflowInspectionServiceAllowedActionsTest` 59/0, `AllowedActionsEndpointContractTest` 11/0, `RegistryContractTest`/`AllowedActionRegistryPinTest` green). No OTHER backend test references `getAllowedActions`/`.actions()` (grep-confirmed) → no further ripple.
+- FE: the region-level J/K/Esc keyboard accelerator initially tripped `jsx-a11y/no-noninteractive-element-interactions` on the `<section>` landmark (the disable directive couldn't anchor to the root JSX element). Resolved by binding the shortcut as a NATIVE `keydown` listener on a `sectionRef` (no JSX handler) — `fireEvent.keyDown` still dispatches to it, so the tests are unchanged.
+- FE: `ErrorState` consumes `useReturnToRunContext` (breadcrumb provider) — the presentational `CompareMode` tests stub it (as the ARP tests do) so the error sub-states render router/query-free.
+
 ### Completion Notes List
 
+**Scope delivered:** the FRONTEND-heavy Compare-Mode composite (UX-DR13) over the frozen story-4.19 `RevisionDelta` contract + the TINY additive backend registry slice. NO OpenAPI regen, NO Flyway, NO new `WorkflowState`/`WorkflowEventType`/`DomainErrorCode` — the only registry touch is the `AllowedAction.ENTER_COMPARE_MODE` value (Reconciliation 3 held).
+
+- **Backend (AC9):** `AllowedAction.ENTER_COMPARE_MODE("enter_compare_mode")` + placeholder JSON entry + `enterCompareModeWireValueIsPinned` pin + `appendCompareOverlay` in `computeActionMatrix` (additive, no-op outside the bound state/role set → all other matrix rows byte-identical). Surfaced for WaitingForSpecApproval (product_reviewer/workflow_owner), WaitingForReview (developer), Failed/Paused (workflow_owner) per OQ-1. The matrix stays version-agnostic; the FE re-gates on the concrete artifact `version>1`.
+- **FE contract layer:** `useRevisionDelta` hook + `workflowKeys.revisionDelta(a,b)` (off `all`, not `detail(runId)` — Reconciliation 11); `compareView.ts` = `normalizeRevisionDelta` (loose wire → strict `ChangeBlockView` discriminated union, skips malformed blocks) + `resolveCompareState` (pure precedence, error sub-classified by the LIVE 4.19 codes 404/503/400 — Reconciliation 10).
+- **FE composite:** `CompareMode` (presentational) + `CompareModeContainer` (thin data seam). Layout by `artifactType` (spec/plan side-by-side synced-scrollport; prOutput stacked file accordions); per-block renderer by `kind`. All delta text sanitized via the `@/lib/sanitization` barrel (spec→`SafeMarkdownRenderer`, planStep→escaped plain text, prOutput `filePath`→`renderTextWithRedactions`, lazy full diff→`SafeUnifiedDiffRenderer`). Non-color gutter markers; J/K/Esc keyboard nav; ONE `aria-live` region + a new announcement vocabulary block. In-context overlay mounted in `$artifactId.tsx` (AC8 — NO new route). FE literal renamed `'compare'`→`'enter_compare_mode'` at both seam sites; the ARP Compare control is now activated (onClick opens the overlay).
+
+**OQ provisional bindings applied (per the story's "do not block dev" header):**
+- **OQ-1** — matrix state/role set as above. Confirm the exact set.
+- **OQ-2 (needs Alex)** — there is NO resolvable prior-version artifact id today: `ArtifactDetail`/`LatestArtifact` expose `version` but no `parentArtifactId`/lineage-id list (verified in `schema.d.ts`). So the ARP Compare control opens the overlay with `artifactIdB = current` and `artifactIdA = ''` → the surface renders the **"no baseline available"** state. The whole composite (side-by-side/stacked/summary-first/errors) is fully exercised by fixtures; only the live end-to-end real-diff path is gated on a future lineage-list read. The "Compare with revision N" dropdown (AC10.b) stays reserved. **Decision needed: add a backend lineage-list read now (expands scope beyond the TINY registry touch) vs. defer to a follow-up.**
+- **OQ-3** — synced scroll implemented as a single scrollport with a 2-column prior|current grid (inherently synced) rather than two ratio-mirrored panes; sufficient for AC4 + the test. Confirm the fidelity bar.
+- **OQ-4** — summary-first default: collapsed for prOutput, expanded for spec/plan (seeded once per artifactType). Confirm.
+
+**Verification (all green):** BE `WorkflowInspectionServiceAllowedActionsTest` 59/0 + `AllowedActionsEndpointContractTest` 11/0 + `RegistryContractTest`/`AllowedActionRegistryPinTest` (aggregate 70–72/0), spotless clean. FE full vitest **1407/0**, `npm run build` (tsc -b + vite) green, eslint 0, `check:api` in sync (no schema change), `check:a11y` 4/0, prettier clean. Backend ITs / ArchUnit-Failsafe tier not run locally (no Docker) — the change is additive + mirrors the existing `appendConflictOverlay`/`appendSplitOverlay` overlay pattern the ArchUnit single-switch pin already tolerates.
+
 ### File List
+
+**Backend (modified):**
+- `deliveryline-backend/src/main/java/org/dradgo/domain/registry/AllowedAction.java` (+`ENTER_COMPARE_MODE`)
+- `deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowInspectionService.java` (`appendCompareOverlay` + wiring; **code-review OQ-2: +`parentArtifactId` on `ArtifactDetailView` + construction**)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ArtifactDetailResponse.java` (**code-review OQ-2: +`parentArtifactId` field + `@Schema` + `.from()`**)
+- `deliveryline-backend/src/main/resources/openapi/openapi.json` (**code-review OQ-2: +`parentArtifactId` on `ArtifactDetail` schema — hand-mirrored sibling shape, CI regen-verified**)
+- `deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowInspectionServiceArtifactDetailTest.java` (**code-review OQ-2: +parent-surfacing + null-parent assertions**)
+- `deliveryline-backend/src/test/resources/contracts/frontend/allowed-actions.placeholder.json` (+`enter_compare_mode`)
+- `deliveryline-backend/src/test/java/org/dradgo/architecture/AllowedActionRegistryPinTest.java` (+pin)
+- `deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowInspectionServiceAllowedActionsTest.java` (affected matrix rows)
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/AllowedActionsEndpointContractTest.java` (+wire-value test)
+
+**Frontend (new):**
+- `deliveryline-frontend/src/features/workflows/hooks/useRevisionDelta.ts`
+- `deliveryline-frontend/src/features/workflows/hooks/useRevisionDelta.test.tsx`
+- `deliveryline-frontend/src/features/workflows/compareView.ts`
+- `deliveryline-frontend/src/features/workflows/compareView.test.ts`
+- `deliveryline-frontend/src/features/workflows/components/CompareMode.tsx`
+- `deliveryline-frontend/src/features/workflows/components/CompareMode.test.tsx`
+- `deliveryline-frontend/src/features/workflows/components/CompareModeContainer.tsx`
+- `deliveryline-frontend/src/features/workflows/components/CompareModeContainer.test.tsx`
+
+**Frontend (modified):**
+- `deliveryline-frontend/src/lib/api/schema.d.ts` (**code-review OQ-2: regenerated — `ArtifactDetail.parentArtifactId`**)
+- `deliveryline-frontend/src/lib/api/queryOptions.ts` (**code-review OQ-2: `toArtifactView` maps `parentArtifactId`**)
+- `deliveryline-frontend/src/lib/queryKeys/workflowKeys.ts` (+`revisionDelta`)
+- `deliveryline-frontend/src/lib/a11y/announcements.ts` (+Compare-Mode vocabulary block)
+- `deliveryline-frontend/src/features/workflows/artifactView.ts` (`canEnableCompare` literal rename)
+- `deliveryline-frontend/src/features/workflows/artifactView.test.ts`
+- `deliveryline-frontend/src/features/workflows/components/ArtifactReviewPanel.tsx` (+`onEnterCompare` threading)
+- `deliveryline-frontend/src/features/workflows/components/ArtifactReviewPanel.test.tsx`
+- `deliveryline-frontend/src/features/workflows/components/SpecArtifactRenderer.tsx` (+`onCompare`)
+- `deliveryline-frontend/src/features/workflows/components/SpecArtifactRenderer.test.tsx`
+- `deliveryline-frontend/src/features/workflows/components/ImplementationPlanArtifactRenderer.tsx` (+`onCompare`)
+- `deliveryline-frontend/src/features/workflows/components/ImplementationPlanArtifactRenderer.test.tsx`
+- `deliveryline-frontend/src/features/workflows/components/PrOutputArtifactRenderer.tsx` (literal rename + `onCompare`)
+- `deliveryline-frontend/src/features/workflows/components/PrOutputArtifactRenderer.test.tsx`
+- `deliveryline-frontend/src/routes/workflows/$workflowRunId/artifacts/$artifactId.tsx` (in-context overlay mount; **code-review OQ-2: `artifactIdA = artifact?.parentArtifactId ?? ''`**)
+- `deliveryline-frontend/src/routes/workflows/$workflowRunId/artifacts/$artifactId.test.tsx` (**code-review OQ-2: end-to-end Compare-opens-against-parent test**)
+- `deliveryline-frontend/src/features/workflows/artifactView.ts` (**code-review OQ-2: `parentArtifactId` on `ArtifactViewBase` + `isArtifactView` guard**)
+- `deliveryline-frontend/src/features/workflows/components/CompareMode.tsx` (**code-review patch: focus section on mount**)
+
+## Change Log
+
+| Date | Change |
+|---|---|
+| 2026-07-16 | Implemented story 4.20 (Compare Mode UI, UX-DR13) via bmad-dev-story: backend `enter_compare_mode` registry slice + `appendCompareOverlay`; FE `useRevisionDelta` hook + `revisionDelta` key, `compareView` (normalize + state resolver), `CompareMode` composite + `CompareModeContainer`, Compare-Mode announcement vocabulary, `'compare'`→`'enter_compare_mode'` seam rename, in-context overlay in the artifact route. All 4 OQs applied as provisional bindings (OQ-2 flagged for Alex: no lineage-id source → primary path renders "no baseline available" until a lineage read lands). Verified: BE allowed-action tests green, FE build + 1407 vitest + lint + check:api + check:a11y green. Status `in-progress → review`. |
+| 2026-07-16 | `bmad-code-review` (3 adversarial layers → 1 decision, 2 patch, 3 defer, 1 dismiss). Alex resolved OQ-2 as **build now**: surfaced the lineage parent as `parentArtifactId` on the artifact-read contract (`ArtifactDetailView` + `ArtifactDetailResponse` + `openapi.json` + regenerated `schema.d.ts` + `toArtifactView`/`ArtifactViewBase`/`isArtifactView`), wiring `artifactIdA = artifact?.parentArtifactId ?? ''` so AC10.a compares current-vs-immediately-prior end-to-end. Patches applied: prOutput Compare control now version>1-gated (`canEnableCompare`); Compare Mode focuses its section on entry so J/K/Esc work. 3 findings deferred (see Review Findings + deferred-work.md), 1 dismissed ("Show only changes" no-op, by design). Verified locally: FE build + **1409** vitest + lint + `check:api` + `check:a11y` green; BE `WorkflowInspectionServiceArtifactDetailTest` 21/0 + test-compile + spotless clean. **CI-gate: OpenAPI snapshot regen + artifact-read contract IT verify in CI only (Docker unavailable locally); the `openapi.json` edit hand-mirrors the verified sibling `branch` field.** Status `review → done`. |

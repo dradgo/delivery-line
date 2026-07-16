@@ -1629,6 +1629,13 @@ public class WorkflowInspectionService {
     // before the archive overlay so the gate actions stay grouped.
     appendSplitOverlay(result, state, actorRole, hasOpenSplitProposal, hasActiveSplitDispatch);
     appendConflictOverlay(result, actorRole, hasUnresolvedConflict);
+    // Story 4.20 (AC9) — the Compare-Mode entry overlay. Additive + a no-op outside the bound
+    // state/role set (so every other matrix row stays byte-identical), mirroring the
+    // conflict/split overlays. Surfaces enter_compare_mode BROADLY for the reviewing/inspecting
+    // roles; the FE combines it with the concrete per-artifact version>1 predicate and picks the
+    // A/B pair, so the matrix stays version-agnostic (no artifact read in the pure state×role
+    // switch).
+    appendCompareOverlay(result, state, actorRole);
     // Soft-hide is a run-owner triage affordance only (review decision 3d-8/D1): gate
     // archive_run/unarchive_run to workflow_owner, mirroring RETRY / OPEN_DIAGNOSTIC_CONSOLE.
     // It stays additive + orthogonal to the per-state lifecycle actions, just role-scoped.
@@ -1644,6 +1651,28 @@ public class WorkflowInspectionService {
       List<AllowedAction> actions, String actorRole, boolean hasUnresolvedConflict) {
     if (hasUnresolvedConflict && ROLE_WORKFLOW_OWNER.equals(actorRole)) {
       actions.add(AllowedAction.RECONCILE_CONFLICT);
+    }
+  }
+
+  // Story 4.20 (AC9, Reconciliation 4 / OQ-1) — surface enter_compare_mode for the
+  // reviewing/inspecting roles at the artifact-review + operator states: WAITING_FOR_SPEC_APPROVAL
+  // (product_reviewer / workflow_owner), WAITING_FOR_REVIEW (developer), FAILED / PAUSED
+  // (workflow_owner — the operator failure-context compare, AC10.c). A no-op for every other
+  // state×role so all other matrix rows stay byte-identical. The backend action means "compare is
+  // conceptually reachable for this run+role"; the FE re-gates on the concrete artifact version>1
+  // and picks the A/B pair, keeping the matrix version-agnostic.
+  private void appendCompareOverlay(
+      List<AllowedAction> actions, WorkflowState state, String actorRole) {
+    boolean specGateReviewer =
+        state == WorkflowState.WAITING_FOR_SPEC_APPROVAL
+            && (ROLE_PRODUCT_REVIEWER.equals(actorRole) || ROLE_WORKFLOW_OWNER.equals(actorRole));
+    boolean reviewGateDeveloper =
+        state == WorkflowState.WAITING_FOR_REVIEW && ROLE_DEVELOPER.equals(actorRole);
+    boolean operatorState =
+        (state == WorkflowState.FAILED || state == WorkflowState.PAUSED)
+            && ROLE_WORKFLOW_OWNER.equals(actorRole);
+    if (specGateReviewer || reviewGateDeveloper || operatorState) {
+      actions.add(AllowedAction.ENTER_COMPARE_MODE);
     }
   }
 
@@ -2616,6 +2645,7 @@ public class WorkflowInspectionService {
               artifact.publicId(),
               artifact.artifactType().value(),
               artifact.version(),
+              artifact.parentArtifactId(),
               artifact.status().value(),
               artifact.classification().value(),
               artifact.createdAt(),
@@ -3794,6 +3824,11 @@ public class WorkflowInspectionService {
       String artifactId,
       String artifactType,
       int version,
+      // Story 4.20 (OQ-2) — the immediately-prior version's public id (the artifact's lineage
+      // parent), or null for a v1 artifact / a root of its lineage. Surfaces the Compare-Mode
+      // baseline id the frontend needs to resolve `artifactIdA` (current vs immediately-prior);
+      // sourced from the already-populated `ArtifactRecordSnapshot.parentArtifactId`.
+      String parentArtifactId,
       String status,
       String classification,
       OffsetDateTime createdAt,

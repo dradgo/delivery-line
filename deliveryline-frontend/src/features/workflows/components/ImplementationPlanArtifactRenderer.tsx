@@ -45,11 +45,16 @@ export interface ImplementationPlanArtifactRendererProps {
   artifact: ImplementationPlanArtifactView;
   /**
    * AC6 — whether the Compare-Mode entry control is enabled. The CONTAINER derives this
-   * from the backend-reported allowed actions (NO frontend permission inference, D2);
-   * it is always the safe default `false` live, so the control stays a reserved disabled
-   * affordance until Compare Mode (Epic 4) ships.
+   * from the backend-reported allowed actions (`enter_compare_mode`) combined with the
+   * per-artifact `version > 1` predicate (NO frontend permission inference, D2). Story 4.20
+   * activates it (Epic 4).
    */
   compareEnabled?: boolean;
+  /**
+   * Story 4.20 (AC9/AC10) — opens Compare Mode for this artifact (in-context overlay). Wired by
+   * the panel/route; `undefined` leaves the Compare control inert even when enabled.
+   */
+  onCompare?: (() => void) | undefined;
 }
 
 /** Human-readable label for a context-reference kind (trusted, typed — never markdown). */
@@ -125,6 +130,7 @@ function ContextRefItem({
 export function ImplementationPlanArtifactRenderer({
   artifact,
   compareEnabled = false,
+  onCompare,
 }: ImplementationPlanArtifactRendererProps) {
   // R3 — steps/contextReferences are OPTIONAL on the read model (the live wire DTO omits
   // them, rendering body-only); default to empty so the sections degrade gracefully.
@@ -279,7 +285,10 @@ export function ImplementationPlanArtifactRenderer({
         <button
           type="button"
           disabled={!compareEnabled}
-          title={compareEnabled ? undefined : 'Available in next release'}
+          onClick={onCompare}
+          title={
+            compareEnabled ? 'Compare with the previous revision' : 'Available in next release'
+          }
           className="rounded-md border border-border px-2.5 py-1 text-sm text-text-secondary disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-focus"
           data-testid="artifact-compare-entry"
         >

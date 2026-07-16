@@ -148,6 +148,24 @@ export const recoveryPauseInitiated = 'Pausing the run.';
 /** Announced once a pause is recorded (success), mirroring the inline outcome. */
 export const recoveryPauseRecorded = 'Run paused. Decision recorded.';
 
+// ---- Compare Mode (story 4.20) -------------------------------------------------
+
+/** Announced once a revision delta loads, stating how many changed regions there are. */
+export function compareLoaded(changedRegionCount: number): string {
+  const regions = `${changedRegionCount} ${changedRegionCount === 1 ? 'region' : 'regions'}`;
+  return `Comparison loaded: ${regions} changed`;
+}
+/** Announced when the two revisions are identical (`noMeaningfulDiff`). */
+export const compareNoMeaningfulDiff = 'These revisions are identical — no meaningful differences.';
+/** Announced when focus jumps to a changed region via the J/K (or arrow) jump controls. */
+export function compareJumpedToRegion(index: number, total: number): string {
+  return `Changed region ${index} of ${total}`;
+}
+/** Announced when Compare Mode is exited back to the originating review context. */
+export const compareExited = 'Exited compare mode.';
+/** Announced when a revision delta could not be loaded (any error sub-state). */
+export const compareLoadFailed = 'The revision comparison could not be loaded.';
+
 // ---- Implementation review (story 3.28) ----------------------------------------
 
 /** Announced once an implementation is accepted (success), mirroring the inline outcome. */

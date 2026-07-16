@@ -1288,6 +1288,11 @@ export interface components {
             /** @description prOutput only: the unified diff (size-capped) resolved at ingest; null when the runner produced no resolvable diff. */
             diff?: string | null;
             /**
+             * @description The immediately-prior version's public id (the artifact's lineage parent): the Compare-Mode baseline (story 4.20 OQ-2); null for a v1 artifact or a lineage root.
+             * @example art_abc122
+             */
+            parentArtifactId?: string | null;
+            /**
              * @description prOutput only: the canonical PR reference (org/repo#n) from the active github_pr link (co-present with prState); null when no linked PR.
              * @example octo/hello#42
              */

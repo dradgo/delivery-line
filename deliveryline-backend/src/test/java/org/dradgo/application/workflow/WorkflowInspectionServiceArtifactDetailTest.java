@@ -108,11 +108,45 @@ class WorkflowInspectionServiceArtifactDetailTest {
     // algorithm is normalized to its canonical upper-case form regardless of stored casing.
     assertThat(view.checksumShortForm()).isEqualTo("SHA-256:0123456789ab");
     assertThat(view.body()).isEqualTo(SPEC_BODY);
+    // Story 4.20 (OQ-2) — a lineage-root artifact (no parent) surfaces a null Compare baseline.
+    assertThat(view.parentArtifactId()).isNull();
 
     assertThat(logMessages(appender))
         .anyMatch(m -> m.contains("getArtifactDetail success") && m.contains(ARTIFACT));
     // The body bytes must never appear in any log line.
     assertThat(logMessages(appender)).noneMatch(m -> m.contains("Redacted spec body"));
+  }
+
+  @Test
+  void surfacesParentArtifactIdAsCompareBaseline() {
+    // Story 4.20 (OQ-2) — a v2 artifact carries its immediately-prior version as the lineage
+    // parent;
+    // getArtifactDetail must surface it so the frontend can resolve the Compare-Mode baseline id.
+    when(runs.findByPublicId(RUN)).thenReturn(Optional.of(runSnapshot(RUN)));
+    ArtifactRecordSnapshot v2 =
+        new ArtifactRecordSnapshot(
+            ARTIFACT,
+            RUN,
+            ArtifactType.SPEC,
+            2,
+            "art_specread0000prev",
+            DataClassification.SHAREABLE_REDACTED,
+            "spec/ref",
+            "sha-256",
+            "0123456789abcdeffedcba9876543210",
+            null,
+            null,
+            ArtifactStatus.AVAILABLE,
+            null,
+            false,
+            CREATED);
+    when(artifacts.findByPublicId(ARTIFACT)).thenReturn(Optional.of(v2));
+    when(payloadStore.readBytes("spec/ref"))
+        .thenReturn(Optional.of(SPEC_BODY.getBytes(StandardCharsets.UTF_8)));
+
+    ArtifactDetailView view = service.getArtifactDetail(RUN, ARTIFACT);
+
+    assertThat(view.parentArtifactId()).isEqualTo("art_specread0000prev");
   }
 
   @Test

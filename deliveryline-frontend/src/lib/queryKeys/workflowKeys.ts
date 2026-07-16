@@ -155,4 +155,15 @@ export const workflowKeys = {
 
   /** A single artifact by its own public id (endpoint ships in the artifact-read story). */
   artifact: (artifactId: string) => [...workflowKeys.all, 'artifact', artifactId] as const,
+
+  /**
+   * Story 4.20 (AC1) — a typed revision delta between two artifact versions of ONE lineage
+   * (story 4.19 `GET /api/v1/artifacts/{a}/compare/{b}`). Keyed OFF `all` (a sibling of
+   * `artifact(id)`), NOT `detail(runId)`: a compare spans an artifact lineage independent of any
+   * single run (it may cross runs), so it must not live under one run's detail-invalidation
+   * subtree. Read-only + idempotent (no Idempotency-Key). The A/B order is significant —
+   * A = baseline/prior, B = target/current — so the pair is part of the key verbatim.
+   */
+  revisionDelta: (artifactIdA: string, artifactIdB: string) =>
+    [...workflowKeys.all, 'revisionDelta', artifactIdA, artifactIdB] as const,
 } as const;

@@ -40,6 +40,13 @@ interface ArtifactViewBase {
   readonly body: string;
   /** ISO-8601 creation timestamp. */
   readonly createdAt: string;
+  /**
+   * Story 4.20 (OQ-2) — the immediately-prior version's public id (the lineage parent), the
+   * Compare-Mode baseline. `null`/absent for a v1 artifact or a lineage root (the wire sends JSON
+   * null, [[workflowdetail-wire-sends-null-not-undefined]]) — the Compare control then opens
+   * against an unresolved baseline and the surface renders "no baseline available".
+   */
+  readonly parentArtifactId?: string | null;
 }
 
 /**
@@ -200,7 +207,11 @@ function hasSharedArtifactFields(value: Record<string, unknown>): boolean {
     Number.isFinite(value.version) &&
     typeof value.classification === 'string' &&
     typeof value.body === 'string' &&
-    typeof value.createdAt === 'string'
+    typeof value.createdAt === 'string' &&
+    // Story 4.20 (OQ-2) — the optional Compare-Mode baseline id: absent/null/string only.
+    (value.parentArtifactId === undefined ||
+      value.parentArtifactId === null ||
+      typeof value.parentArtifactId === 'string')
   );
 }
 
@@ -411,20 +422,23 @@ export function resolveArtifactPanelState({
 }
 
 /**
- * Story 2.17 (AC9) — whether a Compare-Mode entry is eligible. The panel derives
- * this PURELY from the backend-reported `actions[]` + whether a comparable earlier
- * revision exists; it NEVER computes action eligibility locally (the backend owns it).
+ * Story 2.17 (AC9) / Story 4.20 (AC9) — whether a Compare-Mode entry is eligible.
+ * The panel derives this PURELY from the backend-reported `actions[]` + whether a
+ * comparable earlier revision exists; it NEVER computes action eligibility locally
+ * (the backend owns it).
  *
- * `'compare'` is the anticipated backend action name (Compare Mode is Epic 4); a
- * comparable revision exists when a spec is past v1 (an earlier revision to diff
- * against). Live today the `useAllowedActions` stub is disabled → `actions` is
- * `undefined` → this returns `false` (the safe default). Tested via the mocked hook.
+ * Story 4.20 renamed the checked literal from the story-2.17 anticipated `'compare'`
+ * to the registered backend action `'enter_compare_mode'` (the `AllowedAction` value
+ * surfaced by `WorkflowInspectionService.appendCompareOverlay`). A comparable revision
+ * exists when the artifact is past v1 (`hasComparableRevision`) — the FE re-gates the
+ * broad backend action on the concrete per-artifact version so a v1 artifact never
+ * offers a compare with no baseline.
  */
 export function canEnableCompare(
   actions: readonly string[] | undefined,
   hasComparableRevision: boolean,
 ): boolean {
-  return actions !== undefined && actions.includes('compare') && hasComparableRevision;
+  return actions !== undefined && actions.includes('enter_compare_mode') && hasComparableRevision;
 }
 
 /** Whether an artifact has an earlier revision Compare Mode could diff against (spec v2+). */

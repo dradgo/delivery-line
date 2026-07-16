@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { Link, createFileRoute } from '@tanstack/react-router';
 
 import { Stack } from '@/components/layout';
 import { ArtifactReviewPanelContainer } from '@/features/workflows/components/ArtifactReviewPanel';
+import { CompareModeContainer } from '@/features/workflows/components/CompareModeContainer';
 import { WorkflowDecisionBar } from '@/features/workflows/components/WorkflowDecisionBar';
 import { useArtifact } from '@/features/workflows/hooks/useArtifact';
 import {
@@ -79,6 +81,11 @@ function ArtifactViewerRoute() {
   const { data: artifact } = useArtifact(workflowRunId, artifactId);
   const artifactType = artifact?.artifactType ?? data.artifactType;
 
+  // Story 4.20 (AC8) — Compare Mode is a deeper inspection STATE of THIS artifact review, NOT a
+  // new route. Entry toggles a local overlay (no navigation); the run + artifact identity (the
+  // header + route params) is preserved. Exit restores the review panel.
+  const [compareOpen, setCompareOpen] = useState(false);
+
   // AC8b — an artifact type the current Artifact Review Panel can't render yet.
   if (!RENDERABLE_ARTIFACT_TYPES.has(artifactType)) {
     return <UnrenderableArtifactState artifactType={artifactType} />;
@@ -98,18 +105,36 @@ function ArtifactViewerRoute() {
         <code>{artifactId}</code> &middot; type <code>{artifactType}</code> &middot; run{' '}
         <code>{workflowRunId}</code>
       </p>
-      {/* Story 2.17 — the generalized Artifact Review Panel. The container reads the
-          disabled `useArtifact` stub, so it renders the `empty/not-yet-generated`
-          state today; it flips to the rendered artifact with no route change when the
-          artifact-read story enables the hook + endpoint. */}
-      <ArtifactReviewPanelContainer workflowRunId={workflowRunId} artifactId={artifactId} />
-      {/* The in-flow decision bar, rendered beneath the Artifact Review Panel. The
-          state-driven `WorkflowDecisionBar` selector (the same one the run-detail pane
-          uses) picks the right mode for the run's current state — `implementation_review`
-          (accept / reject / take over) at `WaitingForReview`, `recovery_operator` at
-          `Failed`, `spec_approval` otherwise — rather than always mounting the spec bar
-          (which read "No decision available" for an implementation-plan artifact). */}
-      <WorkflowDecisionBar workflowRunId={workflowRunId} layout="inline_section" />
+      {compareOpen ? (
+        // Story 4.20 (AC8/AC10.a) — the in-context Compare-Mode overlay. `artifactIdB` is the
+        // artifact under review; `artifactIdA` is the immediately-prior version, resolved from the
+        // lineage parent surfaced on the artifact read (OQ-2 — `parentArtifactId`; null for a v1
+        // artifact → `?? ''` → the surface renders "no baseline available"). Run + artifact
+        // identity is preserved (no navigation).
+        <CompareModeContainer
+          workflowRunId={workflowRunId}
+          artifactIdA={artifact?.parentArtifactId ?? ''}
+          artifactIdB={artifactId}
+          onExit={() => setCompareOpen(false)}
+        />
+      ) : (
+        <>
+          {/* Story 2.17 — the generalized Artifact Review Panel. Story 4.20 wires its Compare
+              control's onClick to open the in-context overlay above (AC8/AC9). */}
+          <ArtifactReviewPanelContainer
+            workflowRunId={workflowRunId}
+            artifactId={artifactId}
+            onEnterCompare={() => setCompareOpen(true)}
+          />
+          {/* The in-flow decision bar, rendered beneath the Artifact Review Panel. The
+              state-driven `WorkflowDecisionBar` selector (the same one the run-detail pane
+              uses) picks the right mode for the run's current state — `implementation_review`
+              (accept / reject / take over) at `WaitingForReview`, `recovery_operator` at
+              `Failed`, `spec_approval` otherwise — rather than always mounting the spec bar
+              (which read "No decision available" for an implementation-plan artifact). */}
+          <WorkflowDecisionBar workflowRunId={workflowRunId} layout="inline_section" />
+        </>
+      )}
     </Stack>
   );
 }
