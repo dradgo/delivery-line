@@ -1,6 +1,6 @@
 # Story 4.25: CI Tier Extension — Recovery Integration Tests + Fault Injection
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -99,40 +99,40 @@ The precedent ITs that already do exactly this seeding are your templates — **
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Maven tier split (Reconciliation 8)**
-  - [ ] Add `recovery-integration` to the DEFAULT Failsafe `<excludedGroups>` in `deliveryline-backend/pom.xml` (append to `known-failure,docker-runner-it`).
-  - [ ] Add a `<profile><id>recovery-integration</id>`: Failsafe `<excludedGroups>known-failure</excludedGroups>` + `<groups>recovery-integration</groups>` + `<jacoco.check.skip>true</jacoco.check.skip>` (mirror the `docker-runner-it` profile block).
-  - [ ] Verify locally: `./mvnw -Precovery-integration -pl deliveryline-backend -am verify` runs ONLY the tagged scenario ITs; a plain `./mvnw -pl deliveryline-backend verify` does NOT run them (no double-run).
-- [ ] **Task 2 — Recovery scenario ITs (AC2)** — `@Tag("recovery-integration")`, `@SpringBootTest`, `@ActiveProfiles({"test","linear-mock","github-mock"})`, `*IT` name ([[springboot-testcontainers-test-must-be-IT]]), `@TempDir`+`@DynamicPropertySource` for `deliveryline.home`, Testcontainers PG.
-  - [ ] `ResumeRecoveryScenarioIT` — pause→Paused+cancelled counts→resume→prior-state return (+ re-enqueue per OQ-2). Template: `PauseResumeRoundTripIT`.
-  - [ ] `ReconcileRecoveryScenarioIT` — GitHub-conflict inject → `sweep()` → detect+auto-pause (`@TestPropertySource` opt-in) → `/reconcile`. Templates: `ConflictAutoPauseIT`, `IntegrationConflictReconcileIT`.
-  - [ ] `RerunFromStepRecoveryScenarioIT` — approve spec → `/rerun-from-step?targetStep=investigating` → assert superseded/invalidated ids + queued runner_execution. Template: `RecoveryServiceRerunFromStepIT`.
-  - [ ] `PauseResumeIdempotencyScenarioIT` — same-key replay determinism + different-action `IDEMPOTENCY_KEY_CONFLICT`.
-  - [ ] `ClassifyFailureRecoveryScenarioIT` — fail→classify→assert `failure_classification` triple + `recovery.failureClassified` event. Template: `RecoveryServiceClassifyFailureIT`.
-- [ ] **Task 3 — Artifact-drift fault-injection ITs (AC3)** — `@Tag("recovery-integration")`; templates `ArtifactDriftDetectionIT` + `ArtifactDriftRepairIT`.
-  - [ ] `ArtifactDriftOrphanScenarioIT` — stale `pending` op (backdated `created_at`) → `detectDrift()` → `ORPHAN_OPERATION` → `markOperationFailed` resolve.
-  - [ ] `ArtifactDriftMissingPayloadScenarioIT` — write payload → delete file under `deliveryline.home` → `MISSING_PAYLOAD` → `markPayloadUnavailable`.
-  - [ ] `ArtifactDriftChecksumScenarioIT` — write payload + wrong stored `checksum_value` (SHA-256/512) → `CHECKSUM_MISMATCH` → `reVerifyChecksum`.
-- [ ] **Task 4 — Integration-conflict fault-injection ITs (AC4)** — `@Tag("recovery-integration")`; template `IntegrationConflictDetectionIT`.
-  - [ ] `IntegrationConflictCategoryScenarioIT` — all 5 categories via `GitHubMockScenarioRegistry` (advanced/reverted/removed/metadata_drift/link_broken) → `sweep()` → assert per-category `integration_conflicts` row + event; auto-pause asserted for the 2 default categories, NOT for the other 3.
-  - [ ] `LinearConflictScenarioIT` (or a section in the above) — Linear `external_resource_removed` + `link_broken` only; document the state-drift gap (OQ-3).
-- [ ] **Task 5 — CI job `recovery-integration` (AC1, AC5, AC9)** in `.github/workflows/ci.yml`
-  - [ ] `runs-on: ubuntu-latest`, `permissions: contents: read`, `timeout-minutes:`, env (`POSTGRES_PASSWORD`, `SPRING_PROFILES_ACTIVE=test`, workspace-scoped `DELIVERYLINE_HOME` if booting the app), `needs: [detect-changes, foundation-gate, runner-image-build]`, `if: ${{ needs.detect-changes.outputs.recovery-paths-changed == 'true' }}`.
-  - [ ] Docker-daemon `[env]` guard step + `./mvnw -B -ntp -Precovery-integration -pl deliveryline-backend -am verify -Djacoco.check.skip=true`.
-  - [ ] "Assert ≥1 recovery IT ran" fail-open guard (parse Failsafe XML `tests>=1`) + `actions/upload-artifact@v4` Failsafe reports (`if-no-files-found: ignore`, `retention-days: 14`).
-- [ ] **Task 6 — Path-gate output (AC8)**
-  - [ ] Add `recovery-paths-changed` output to `detect-changes` with the watched prefix array (Reconciliation 6); preserve the 3 fail-safe branches.
-- [ ] **Task 7 — Aggregator gate + PR comment + branch protection (AC6, AC7)**
-  - [ ] `recovery-integration-gate` job (`if: ${{ !cancelled() }}`, `needs:` incl. `recovery-integration`, `permissions: pull-requests: write`) mirroring `runner-contract-real-gate`.
-  - [ ] `<!-- recovery-integration-status -->` upsert comment (scenario outcome table).
-  - [ ] Register `recovery-integration-gate` in `scripts/ci/configure-branch-protection.{sh,ps1}` REQUIRED_CHECKS markers + `docs/ci-branch-protection.md`.
-  - [ ] Light Java smoke contract (mirror `BranchProtectionConfigSmokeContractTest`) asserting `recovery-integration-gate` is in the required-checks source-of-truth. (OQ-4: `@Nested` FoundationGate delegate-run — probably skip.)
-- [ ] **Task 8 — Local repro docs (AC10)**
-  - [ ] Add "Reproduce the recovery-integration CI locally" section to `docs/setup-local.md` (exact `-Precovery-integration` command, Docker prereq, auto-pause override note); link-check clean.
-- [ ] **Logging instrumentation** (cross-cutting — SCOPED for this story)
-  - [ ] **This story adds NO new production service surface, so there is no new production log line to add.** Instead: where a scenario IT drives a recovery path that ALREADY logs (pause/resume/reconcile/rerun/classify entry-exit, detection-sweep summaries, repair actions, `RECOVERY_DISPATCH_FAILED`), the IT MAY assert the expected existing log line via `OutputCaptureExtension` to pin observability — but do NOT add production logging in this story.
-  - [ ] Ensure test output itself is debuggable: scenario ITs should `log`/assert on the public ids they seed (`wfr_`, `art_`, `adr_`, `icf_`, `rcv_`, `evt_`) so a CI failure is diagnosable from the Failsafe report without re-running.
-  - [ ] Never emit secrets/payload bytes/PII in test logs or fixtures (the recovery reason fields are sanitized to LENGTH-only in the controllers; do not print raw payloads you corrupt).
+- [x] **Task 1 — Maven tier split (Reconciliation 8)**
+  - [x] Add `recovery-integration` to the DEFAULT Failsafe `<excludedGroups>` in `deliveryline-backend/pom.xml` (append to `known-failure,docker-runner-it`).
+  - [x] Add a `<profile><id>recovery-integration</id>`: Failsafe `<excludedGroups>known-failure</excludedGroups>` + `<groups>recovery-integration</groups>` + `<jacoco.check.skip>true</jacoco.check.skip>` (mirror the `docker-runner-it` profile block).
+  - [x] Verify locally: `./mvnw -Precovery-integration -pl deliveryline-backend -am verify` runs ONLY the tagged scenario ITs; a plain `./mvnw -pl deliveryline-backend verify` does NOT run them (no double-run). **VERIFIED — default `verify -Dit.test=ResumeRecoveryScenarioIT` ran 0 tests; the `-Precovery-integration` profile ran all 10 scenarios.**
+- [x] **Task 2 — Recovery scenario ITs (AC2)** — `@Tag("recovery-integration")`, `@SpringBootTest`, `@ActiveProfiles({"test","linear-mock","github-mock"})`, `*IT` name ([[springboot-testcontainers-test-must-be-IT]]), `@TempDir`+`@DynamicPropertySource` for `deliveryline.home`, Testcontainers PG.
+  - [x] `ResumeRecoveryScenarioIT` — pause→Paused+cancelled counts→resume→prior-state return (+ re-enqueue per OQ-2). Template: `PauseResumeRoundTripIT`.
+  - [x] `ReconcileRecoveryScenarioIT` — GitHub-conflict inject → `sweep()` → detect+auto-pause (`@TestPropertySource` opt-in) → `/reconcile`. Templates: `ConflictAutoPauseIT`, `IntegrationConflictReconcileIT`.
+  - [x] `RerunFromStepRecoveryScenarioIT` — approve spec → `/rerun-from-step?targetStep=investigating` → assert superseded/invalidated ids + queued runner_execution. Template: `RecoveryServiceRerunFromStepIT`.
+  - [x] `PauseResumeIdempotencyScenarioIT` — same-key replay determinism + different-action `IDEMPOTENCY_KEY_CONFLICT`.
+  - [x] `ClassifyFailureRecoveryScenarioIT` — fail→classify→assert `failure_classification` triple + `recovery.failureClassified` event. Template: `RecoveryServiceClassifyFailureIT`.
+- [x] **Task 3 — Artifact-drift fault-injection ITs (AC3)** — `@Tag("recovery-integration")`; templates `ArtifactDriftDetectionIT` + `ArtifactDriftRepairIT`.
+  - [x] `ArtifactDriftOrphanScenarioIT` — stale `pending` op (backdated `created_at`) → `detectDrift()` → `ORPHAN_OPERATION` → `markOperationFailed` resolve.
+  - [x] `ArtifactDriftMissingPayloadScenarioIT` — write payload → delete file under `deliveryline.home` → `MISSING_PAYLOAD` → `markPayloadUnavailable`.
+  - [x] `ArtifactDriftChecksumScenarioIT` — write CORRUPTED payload + INTENDED stored `checksum_value` (SHA-256) → `CHECKSUM_MISMATCH` → restore payload → `reVerifyChecksum` resolves.
+- [x] **Task 4 — Integration-conflict fault-injection ITs (AC4)** — `@Tag("recovery-integration")`; template `IntegrationConflictDetectionIT`.
+  - [x] `IntegrationConflictCategoryScenarioIT` — all 5 categories via `GitHubMockScenarioRegistry` (advanced/reverted/removed/metadata_drift/link_broken) → `sweep()` → assert per-category `integration_conflicts` row + event; auto-pause asserted for the 2 default categories, NOT for the other 3.
+  - [x] `LinearConflictScenarioIT` — Linear `external_resource_removed` + `link_broken` only (explicitly `register(...)` NOT_FOUND + AUTH_FAILURE scenarios — they are NOT default-registered); document the state-drift gap (OQ-3).
+- [x] **Task 5 — CI job `recovery-integration` (AC1, AC5, AC9)** in `.github/workflows/ci.yml`
+  - [x] `runs-on: ubuntu-latest`, `permissions: contents: read`, `timeout-minutes:`, env (`POSTGRES_PASSWORD`, `SPRING_PROFILES_ACTIVE=test`, workspace-scoped `DELIVERYLINE_HOME`), `needs: [detect-changes, foundation-gate]` (OQ-5: NOT `runner-image-build` — path-gated, would skip-cascade this job on recovery-only PRs), `if: ${{ needs.detect-changes.outputs.recovery-paths-changed == 'true' }}`.
+  - [x] Docker-daemon `[env]` guard step + `./mvnw -B -ntp -Precovery-integration -pl deliveryline-backend -am verify -Djacoco.check.skip=true`.
+  - [x] "Assert ≥1 recovery IT ran" fail-open guard (parse Failsafe XML `*ScenarioIT` reports `tests>=1`) + `actions/upload-artifact@v4` Failsafe reports (`if-no-files-found: ignore`, `retention-days: 14`).
+- [x] **Task 6 — Path-gate output (AC8)**
+  - [x] Add `recovery-paths-changed` output to `detect-changes` with the watched prefix array (Reconciliation 6); preserve the 3 fail-safe branches (both outputs set together via `setBoth`).
+- [x] **Task 7 — Aggregator gate + PR comment + branch protection (AC6, AC7)**
+  - [x] `recovery-integration-gate` job (`if: ${{ always() && !cancelled() }}`, `needs: [detect-changes, recovery-integration]`, `permissions: pull-requests: write`) mirroring `runner-contract-real-gate`.
+  - [x] `<!-- recovery-integration-status -->` upsert comment (scenario-family outcome table).
+  - [x] Register `recovery-integration-gate` in `scripts/ci/configure-branch-protection.{sh,ps1}` REQUIRED_CHECKS markers + `docs/ci-branch-protection.md`.
+  - [x] Light Java smoke contract (`RecoveryIntegrationGateBranchProtectionSmokeContractTest`, mirrors `BranchProtectionConfigSmokeContractTest`) asserting `recovery-integration-gate` is in the required-checks source-of-truth. (OQ-4: `@Nested` FoundationGate delegate-run — SKIPPED per recommendation, keeps the gate job fast.)
+- [x] **Task 8 — Local repro docs (AC10)**
+  - [x] Add "Reproduce the recovery-integration CI locally" section to `docs/setup-local.md` (exact `-Precovery-integration` command, Docker prereq, per-scenario `-Dit.test`, auto-pause override note); internal link (`#install-docker`) resolves.
+- [x] **Logging instrumentation** (cross-cutting — SCOPED for this story)
+  - [x] **This story adds NO new production service surface, so there is no new production log line to add.** No production logging was added; the scenario ITs drive existing recovery paths that already log.
+  - [x] Test output is debuggable: scenario ITs seed + assert on the public ids (`run_…`, `art_…`, `adr_…`, `ilk_…`, `icf_…` via the driven services) so a CI failure is diagnosable from the Failsafe report.
+  - [x] Never emit secrets/payload bytes/PII in test logs or fixtures — the checksum scenario corrupts payload bytes but never prints them; reason fields are short literals.
 
 ## Dev Notes
 
@@ -182,3 +182,83 @@ The project-wide standard (add production logs on every touched service) is **no
 3. **Linear state-drift gap (AC4):** the Linear mock has no state baseline for advanced/reverted/metadata_drift. Document the gap + cover only `external_resource_removed`/`link_broken` on Linear — vs building a Linear `sourceStatusId` baseline (a 4.17 follow-up, out of scope here). *Recommend document + defer.*
 4. **Java foundation-gate contract:** light branch-protection smoke only, vs additionally a `@Nested` `FoundationGateVerificationTest` contract that delegate-runs a representative recovery IT by FQN (bloats the gate job with a heavy Testcontainers IT). *Recommend light-only.*
 5. **Job env:** does any PR-tier scenario need to boot the full app (justifying the workspace-scoped `DELIVERYLINE_HOME` + `runner-image-build` need), or do all PR-tier scenarios assert at the queue/state/DB level (no live runner, so `runner-image-build` need is precautionary)? *Confirm which scenarios, if any, exercise a live runner container.*
+
+## Dev Agent Record
+
+### Context Reference
+
+- Story spec: `_bmad-output/implementation-artifacts/4-25-ci-tier-extension-recovery-integration-tests-and-fault-injection.md`
+- Precedent ITs used as templates (READ before writing): `PauseResumeRoundTripIT`, `RecoveryServicePauseIT`, `RecoveryServiceRerunFromStepIT`, `RecoveryServiceClassifyFailureIT`, `IntegrationConflictReconcileIT`, `ConflictAutoPauseIT`, `IntegrationConflictDetectionIT`, `ArtifactDriftDetectionIT`, `ArtifactDriftRepairIT`.
+- CI templates: `.github/workflows/ci.yml` `detect-changes` + `runner-contract-real` + `runner-contract-real-gate`; `deliveryline-backend/pom.xml` `docker-runner-it` profile; `BranchProtectionConfigSmokeContractTest`.
+
+### Implementation Plan / Decisions
+
+- **OQ-1 (tier isolation): tagged-profile.** `@Tag("recovery-integration")` on all 10 scenario ITs + default Failsafe `<excludedGroups>…,recovery-integration` + a `recovery-integration` profile that clears the exclusion and selects `<groups>recovery-integration</groups>`. Verified no double-run (default `verify` runs 0 of them).
+- **OQ-2 (resume depth): LIGHT.** `ResumeRecoveryScenarioIT` asserts prior-state return + cancelled-runner counts + no re-enqueue (auto-dispatch OFF in the shared test profile). "Continues to completion" is deferred to a possible nightly (would need a live mock runner).
+- **OQ-3 (Linear state-drift gap): documented + deferred.** `LinearConflictScenarioIT` covers `external_resource_removed` (NOT_FOUND) + `link_broken` (AUTH_FAILURE→LINK_FAILURE) only; both refs registered explicitly (they are NOT default-registered — the runtime log `no scenario registered` proved this during dev). The three state-drift categories are covered on the GitHub-PR vehicle in `IntegrationConflictCategoryScenarioIT`. Javadoc records the gap.
+- **OQ-4 (Java foundation-gate contract): light-only.** A single filesystem-parse smoke (`RecoveryIntegrationGateBranchProtectionSmokeContractTest`, `@Tag("contract")`) asserting `recovery-integration-gate` is in the required-checks array. No `@Nested` heavy-IT delegate-run.
+- **OQ-5 (job env / runner-image-build need): scenarios do NOT boot a live runner.** All PR-tier scenarios assert at the queue/state/DB level → the `recovery-integration` job deliberately does NOT `needs: runner-image-build`. This was load-bearing: `runner-image-build` is path-gated on `runner-paths-changed`, so on a recovery-only PR it would be SKIPPED, and a non-status `if:` would skip-cascade the whole recovery job. `needs: [detect-changes, foundation-gate]` only (foundation-gate always runs, never skips).
+
+### Completion Notes
+
+- **Zero production blast radius honored** — no `src/main/java` service/migration/error-code/event/endpoint/port changed. The only non-test source change is `deliveryline-backend/pom.xml` (tier split) + `.github/workflows/ci.yml` + branch-protection scripts + docs.
+- **Checksum scenario design (AC3c):** to exercise `reVerifyChecksum`'s resolve-on-match branch after a GENUINE detection, the scenario writes corrupted bytes with the INTENDED checksum stored (detection flags mismatch), then RESTORES the correct payload (overwriting the same file) so re-verify recomputes a matching digest and clears the drift.
+- **Verification (real Postgres, Docker/Testcontainers):** all 10 scenario ITs GREEN via `./mvnw -Precovery-integration -pl deliveryline-backend -am verify` (10 tests, 0 failures). Both branch-protection smoke contract tests GREEN (foundation-gate one still passes after adding the new required check). No-double-run confirmed (default profile runs 0 tagged scenarios). `checkstyle:check` 0 violations + `spotless:check` clean across the reactor. `ci.yml` parses as valid YAML (20 jobs).
+- **AC5 flake control:** detection is driven synchronously in every scenario (`sweep()`/`detectDrift()` called directly; `@Scheduled` wrappers stay disabled) → the epic's feared scheduled-timing flake does not exist; NO timing retry added. The job carries the "assert ≥1 `*ScenarioIT` report ran" fail-open guard.
+
+## File List
+
+**New test files (all `@Tag("recovery-integration")` unless noted):**
+- `deliveryline-backend/src/test/java/org/dradgo/application/recovery/ResumeRecoveryScenarioIT.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/recovery/PauseResumeIdempotencyScenarioIT.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/recovery/ReconcileRecoveryScenarioIT.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/recovery/RerunFromStepRecoveryScenarioIT.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/recovery/ClassifyFailureRecoveryScenarioIT.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/artifact/reconciliation/ArtifactDriftOrphanScenarioIT.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/artifact/reconciliation/ArtifactDriftMissingPayloadScenarioIT.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/artifact/reconciliation/ArtifactDriftChecksumScenarioIT.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/integration/conflict/IntegrationConflictCategoryScenarioIT.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/integration/conflict/LinearConflictScenarioIT.java`
+- `deliveryline-backend/src/test/java/org/dradgo/contract/RecoveryIntegrationGateBranchProtectionSmokeContractTest.java` (`@Tag("contract")`)
+
+**Modified non-test files:**
+- `deliveryline-backend/pom.xml` — default Failsafe `<excludedGroups>` += `recovery-integration`; new `recovery-integration` profile.
+- `.github/workflows/ci.yml` — `detect-changes` `recovery-paths-changed` output; `recovery-integration` job; `recovery-integration-gate` aggregator job.
+- `scripts/ci/configure-branch-protection.sh` — `recovery-integration-gate` in `REQUIRED_CHECKS`.
+- `scripts/ci/configure-branch-protection.ps1` — `recovery-integration-gate` in `$REQUIRED_CHECKS`.
+- `docs/ci-branch-protection.md` — required-check table row + gh-api example + `recovery-integration-gate` section.
+- `docs/setup-local.md` — "Reproduce the recovery-integration CI locally" section.
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — story status → in-progress → review.
+
+## Change Log
+
+- 2026-07-17 — Implemented story 4.25 (CI Tier Extension — Recovery Integration Tests + Fault Injection). Added 10 `@Tag("recovery-integration")` end-to-end scenario ITs (5 recovery paths + 3 artifact-drift + 2 integration-conflict fault-injection), a Maven tier split, a path-triggered `recovery-integration` CI job + `recovery-integration-gate` aggregator + `recovery-paths-changed` detect-changes output, branch-protection required-check registration + a light Java smoke contract, and a local-repro docs section. Zero production blast radius. All 10 scenarios GREEN on real Postgres; static gates clean. Status → review.
+
+## Review Findings
+
+> Adversarial code review 2026-07-17 (Blind Hunter + Edge Case Hunter + Acceptance Auditor). Verdict: **implementation is faithful** — all 10 ACs, the 10 Reconciliations, and OQ-1..OQ-5 honored; zero production blast radius confirmed. Findings are low-severity test/CI hardening + one isolation gap needing a decision. No Critical/High correctness defects.
+
+### Patch (all applied + verified 2026-07-17)
+
+- [x] [Review][Patch] Mock-registry `clearTestScenarios()` is a silent no-op for every seeded ref — AC9 / Reconciliation-9 isolation not actually provided. **FIXED (approach a): prefixed all seeded/registered refs with `TEST-`** so `clearTestScenarios()` (which purges only keys `.startsWith("TEST-")`) actually removes them. GitHub refs → `TEST-octo/repo#4501–4505` / `TEST-octo/repo#4250`; Linear registered under local `TEST-LIN-NOT-FOUND` / `TEST-LIN-AUTH-FAILURE` aliases (the production `LIN-*` registry constants left untouched — zero prod blast radius). Verified the mock treats refs as opaque map keys (`getPullRequestByRef`/`find`/`findAnyPullRequest` — no `owner/repo#number` parsing), and re-ran the 3 affected ITs under `-Precovery-integration`: `IntegrationConflictCategoryScenarioIT`/`LinearConflictScenarioIT`/`ReconcileRecoveryScenarioIT` all GREEN (1/1 each, 0 fail/err/skip) — detection still resolves the prefixed refs end-to-end. [IntegrationConflictCategoryScenarioIT.java; LinearConflictScenarioIT.java; ReconcileRecoveryScenarioIT.java]
+- [x] [Review][Patch] `recoveryWatched` path-gate omits the seams the scenarios actually drive — **FIXED:** added `adapters/integration/repohost/github/`, `adapters/integration/ticketsource/linear/`, and `adapters/files/` (payload store) to the watched-prefix array so a PR touching only the mock/payload seams re-runs the tier. [.github/workflows/ci.yml `recoveryWatched`]
+- [x] [Review][Patch] Branch-protection smoke contract guards only the `.sh` script, not the `.ps1` — **FIXED:** converted `RecoveryIntegrationGateBranchProtectionSmokeContractTest` to a `@ParameterizedTest` over BOTH `configure-branch-protection.{sh,ps1}` with a quote-agnostic parser (shell double-quote + PowerShell single-quote). [RecoveryIntegrationGateBranchProtectionSmokeContractTest.java]
+- [x] [Review][Patch] "Assert ≥1 recovery IT ran" fail-open guard counts skipped tests as run — **FIXED:** the guard now subtracts `skipped="N"` per report and asserts `executed >= 1` (was: raw `tests`). [.github/workflows/ci.yml "Assert recovery scenarios actually ran"]
+
+### Deferred (checked = acknowledged, not fixed this pass)
+
+- [x] [Review][Defer] Upsert-comment step lacks `continue-on-error` — a cosmetic comment-API failure (fork PR read-only token / transient 5xx / secondary rate-limit) can red the required `recovery-integration-gate` on an otherwise-green run. [.github/workflows/ci.yml:1947] — deferred, pre-existing pattern: mirrors the `foundation-gate` and `runner-image` upsert-comment steps identically; a fix belongs repo-wide across all three, not this story alone.
+- [x] [Review][Defer] AC3 idempotent-replay + `DRIFT_ALREADY_RESOLVED` battery proven only once — `ArtifactDriftOrphanScenarioIT` asserts the full replay/already-resolved battery; `ArtifactDriftMissingPayloadScenarioIT` + `ArtifactDriftChecksumScenarioIT` assert detect→repair→`resolved_at`+event but not the replay path. [ArtifactDriftMissingPayloadScenarioIT.java; ArtifactDriftChecksumScenarioIT.java] — deferred: idempotency machinery is structurally shared across the three repair methods (proven once); core AC3 detect-and-repair is fully met.
+- [x] [Review][Defer] Gate diagnostic misleads when foundation-gate is red — recovery job is `skipped` (via `needs: foundation-gate`), so the gate prints `recovery-integration did not succeed (result=skipped)`, pointing operators at the recovery tier when the real cause is a red foundation. [.github/workflows/ci.yml:1941-1943] — deferred: fails closed correctly; wording-only nit.
+- [x] [Review][Defer] Nondeterministic `System.identityHashCode`-derived public IDs — `IntegrationConflictCategoryScenarioIT.seedLink` builds run/link IDs from `Integer.toHexString(System.identityHashCode(...))`; the trailing `size()` is the only real uniqueness guarantee. [IntegrationConflictCategoryScenarioIT.java ~1399] — deferred: works today; brittle-not-broken. Prefer the deterministic `#450X` suffix already present.
+
+### Dismissed as noise (8)
+
+- `jacoco.check.skip` a no-op (Blind) — **false positive**: `pom.xml:486` wires `<skip>${jacoco.check.skip}</skip>` on the jacoco `check` execution.
+- Unscoped `delete from workflow_runs` teardown in Resume/Idempotency ITs (Blind) — established repo-wide convention (40+ existing ITs; single-fork sequential Failsafe); verified by Edge Case Hunter.
+- `-am verify` runs upstream-module tests (Blind) — required for the fresh runner-contracts jar; inherent to `-am`.
+- Cancelled run → gate `skipped` → treated as passing (Blind) — standard GitHub branch-protection semantics, identical for all gate jobs.
+- Frontend prefix in a backend-only tier (Edge) — spec AC8 explicitly lists `deliveryline-frontend/src/features/workflows/` in the watched array; intentional.
+- `sprint-status.yaml` absent from the review diff (Auditor) — deliberately excluded from review as status-tracking noise; present in the working tree.
+- AC2(a) re-enqueue asserted absent/null (Auditor) — matches the binding OQ-2 "LIGHT" decision (auto-dispatch off in shared test profile).
+- AC2(b) asserts `resolved_by_action_id` rather than the literal `resolved_at` (Auditor) — functionally equivalent evidence of resolution.

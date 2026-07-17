@@ -665,7 +665,12 @@
 					     image pulls that the foundation gate intentionally avoids). The dedicated
 					     `docker-runner-it` profile below clears this exclusion. Story 3-8 ships
 					     the real CI tier for the real Codex/Claude images. -->
-					<excludedGroups>known-failure,docker-runner-it</excludedGroups>
+					<!-- Story 4.25 — recovery-integration is default-excluded so the
+					     backend-contract-tests `mvn verify` tier does NOT double-run the
+					     heavy end-to-end recovery scenario ITs; the dedicated
+					     `recovery-integration` profile below clears it + selects the tag
+					     (mirrors docker-runner-it). -->
+					<excludedGroups>known-failure,docker-runner-it,recovery-integration</excludedGroups>
 					<includes>
 						<include>**/*IT.java</include>
 						<include>**/IT*.java</include>
@@ -766,6 +771,42 @@
 						<artifactId>maven-failsafe-plugin</artifactId>
 						<configuration>
 							<excludedGroups>known-failure</excludedGroups>
+							<includes>
+								<include>**/*IT.java</include>
+								<include>**/IT*.java</include>
+								<include>**/*ITCase.java</include>
+							</includes>
+						</configuration>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+
+		<!-- Story 4.25 — opt-in tier for the end-to-end recovery SCENARIO ITs tagged
+		     `recovery-integration` (resume / reconcile / rerun-from-step / pause-resume
+		     idempotency / classify-failure scenarios + artifact-drift + integration-conflict
+		     fault-injection ITs). The default Failsafe config excludes that tag so the
+		     no-double-run backend-contract-tests tier skips these heavy Testcontainers
+		     scenarios; this profile clears the exclusion and selects ONLY the tagged tests via
+		     <groups>. Mirrors the docker-runner-it profile shape. jacoco.check.skip=true: this
+		     tier runs a partial (tagged) subset, so the full-suite line/branch floors can never
+		     be met and would fail the build on coverage rather than on a scenario regression —
+		     coverage gating lives on backend-contract-tests. The CI job runs
+		     `./mvnw -Precovery-integration -pl deliveryline-backend -am verify -Djacoco.check.skip=true`;
+		     narrow to one scenario with `-Dit.test=ResumeRecoveryScenarioIT`. -->
+		<profile>
+			<id>recovery-integration</id>
+			<properties>
+				<jacoco.check.skip>true</jacoco.check.skip>
+			</properties>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-failsafe-plugin</artifactId>
+						<configuration>
+							<excludedGroups>known-failure</excludedGroups>
+							<groups>recovery-integration</groups>
 							<includes>
 								<include>**/*IT.java</include>
 								<include>**/IT*.java</include>

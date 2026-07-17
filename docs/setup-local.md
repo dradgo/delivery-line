@@ -509,6 +509,56 @@ service definitions.
 
 ---
 
+## Reproduce the recovery-integration CI locally
+
+The CI `recovery-integration` job (story 4.25) runs the end-to-end recovery
+SCENARIO integration tests with deliberate fault injection — resume, reconcile,
+rerun-from-step, pause/resume idempotency, classify-failure, plus artifact-drift
+(orphan / missing-payload / checksum-mismatch) and integration-conflict (all five
+categories via the GitHub mock, plus Linear removed / link_broken) detect →
+repair / auto-pause round-trips. These are Testcontainers ITs tagged
+`@Tag("recovery-integration")`, so run them on **Linux / Docker** (WSL2 works —
+see [Install Docker](#install-docker)) to reproduce a CI failure without pushing.
+
+### Run the full recovery-integration tier
+
+```bash
+./mvnw -Precovery-integration -pl deliveryline-backend -am verify
+```
+
+The `-Precovery-integration` profile clears the default Failsafe exclusion that
+hides `recovery-integration`-tagged tests and selects ONLY those tagged scenarios
+(so a plain `./mvnw -pl deliveryline-backend verify` does NOT run them — no
+double-run); `-am` keeps the freshest `deliveryline-runner-contracts` jar on the
+classpath. Each scenario boots a per-class Testcontainers Postgres (a Docker
+daemon is **required**) and a per-test `deliveryline.home` temp dir, so there is
+no cross-test state.
+
+### Run a single scenario
+
+```bash
+./mvnw -Precovery-integration -pl deliveryline-backend -am verify -Dit.test=ResumeRecoveryScenarioIT
+```
+
+Swap in any scenario class: `ResumeRecoveryScenarioIT`,
+`ReconcileRecoveryScenarioIT`, `RerunFromStepRecoveryScenarioIT`,
+`PauseResumeIdempotencyScenarioIT`, `ClassifyFailureRecoveryScenarioIT`,
+`ArtifactDriftOrphanScenarioIT`, `ArtifactDriftMissingPayloadScenarioIT`,
+`ArtifactDriftChecksumScenarioIT`, `IntegrationConflictCategoryScenarioIT`, or
+`LinearConflictScenarioIT`.
+
+> **Auto-pause note:** the shared test profile opts OUT of conflict auto-pause
+> (`deliveryline.integration.conflict-detection.auto-pause-on-categories=[]`). The
+> reconcile / conflict-category scenarios opt it back in per class via
+> `@TestPropertySource`; to override it on the command line for an ad-hoc run,
+> pass `-Ddeliveryline.integration.conflict-detection.auto-pause-on-categories=external_state_advanced,external_state_reverted`.
+
+The CI job runs the same command with `-Djacoco.check.skip=true` (a tagged subset
+is not representative coverage — the coverage gate lives on
+`backend-contract-tests`).
+
+---
+
 ## Troubleshooting
 
 Most-likely first-run failures and their fixes. If none of these match, run
