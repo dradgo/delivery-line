@@ -16,6 +16,7 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { server } from '@/test/server';
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 import type { RunQueueRow } from '../../runQueueRow';
 
 vi.mock('@tanstack/react-router', async (importOriginal) => {
@@ -138,5 +139,22 @@ describe('OperatorClassifiedRow (story 4.24 D2b/D3)', () => {
     expect(screen.queryByTestId('operator-classification-chip')).toBeNull();
     expect(screen.queryByTestId('operator-classify-action')).toBeNull();
     expect(onClassify).not.toHaveBeenCalled();
+  });
+
+  // Story 4.26 (AC9, OQ-3) — every Epic-4 component test runs an axe scan. This container renders real
+  // DOM (the classified row + Classify affordance), so the scan is meaningful even though the
+  // presentational RunReviewQueueItem is scanned by its own test.
+  it('reports zero WCAG-AA violations for the classified row (AC9)', async () => {
+    serveTaxonomy();
+    serveClassification({
+      workflowRunId: 'run_op_classify_1',
+      currentTaxonomyValue: 'agent_execution_failure',
+      currentDisplayLabel: 'agent_execution_failure',
+      deprecated: false,
+      priorClassifications: [],
+    });
+    renderRow();
+    await screen.findByTestId('operator-classification-chip');
+    await expectNoA11yViolations(document.body);
   });
 });

@@ -1,0 +1,9 @@
+{
+  "renderedTextContains": [
+    "<script>window.__reconBranchXss = 1;</script>",
+    "<img src=x onerror=window.__reconRefXss=1>"
+  ],
+  "noScriptElements": true,
+  "noActiveElements": true,
+  "noAnchorElements": true
+}

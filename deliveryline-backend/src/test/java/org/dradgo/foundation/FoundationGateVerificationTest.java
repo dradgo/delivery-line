@@ -905,4 +905,98 @@ class FoundationGateVerificationTest {
           "3i-3", "org.dradgo.foundation.BitbucketRepositoryHostParityFoundationContract");
     }
   }
+
+  // ===========================================================================================
+  // Epic 4 — Failure Handling, Recovery & Reconciliation (story 4.26). Contracts #29–#32 make a
+  // representative set of Epic-4 source-of-truth invariants (recovery / reconciliation /
+  // integration-
+  // conflict auto-pause / Compare-Mode delta) NAMED, enforced members of the gate, so a regression
+  // in
+  // any of them fails `-Pfoundation-gate verify`. Each contract delegate-runs the EXISTING
+  // source-of-truth test by FQN (no assertion re-authoring), mirroring Contracts #1–#28. The
+  // Testcontainers ITs run in the gate tier the same way the Epic-3c/3d ITs (#20/#23/#25/#26) do —
+  // the gate tier has Docker up. A small representative set keeps the gate job fast (OQ-4); the
+  // full
+  // Epic-4 matrix runs in `backend-unit-tests` + `backend-contract-tests`, both already
+  // gate-blocking.
+  // ===========================================================================================
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #29 — RecoveryService precondition/idempotency contract (stories 4.5–4.9)")
+  class Contract29RecoveryService {
+
+    /**
+     * Stories 4.5–4.9 — {@code RecoveryServiceContractTest} pins the resume/reconcile/rerun/pause/
+     * classify precondition {@code DomainErrorCode}s (with their {@code details} keys), that {@code
+     * describeFailure} reads the live tables, and the retry idempotency contract (the {@code
+     * replayed} flag on a replayed command). It is the source-of-truth contract for the recovery
+     * primitives every Epic-4 REST/UI surface sits on. {@code @Tag("contract")} — the Launcher
+     * discovers it by FQN regardless of Maven tag.
+     */
+    @Test
+    @DisplayName("RecoveryServiceContractTest passes (precondition codes + idempotency-replay)")
+    void recoveryServiceContract() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "4.9", "org.dradgo.application.recovery.RecoveryServiceContractTest");
+    }
+  }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #30 — Artifact drift detection + operator repair (stories 4.15/4.16)")
+  class Contract30ArtifactDriftRepair {
+
+    /**
+     * Stories 4.15/4.16 — {@code ArtifactDriftRepairIT} drives real-Postgres operator-driven repair
+     * per drift category (orphan / missing-payload / checksum-mismatch): the repair writes a {@code
+     * recovery_actions} row + event (AC3) and invalidates prior approvals when applicable (AC4),
+     * and is replay-safe. Testcontainers IT (the gate tier has Docker up — Contract #13/#20/#23
+     * already run ITs here).
+     */
+    @Test
+    @DisplayName("ArtifactDriftRepairIT passes (per-category repair + approval invalidation)")
+    void artifactDriftRepairContract() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "4.16", "org.dradgo.application.artifact.reconciliation.ArtifactDriftRepairIT");
+    }
+  }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #31 — Integration conflict detection + auto-pause (stories 4.17/4.18)")
+  class Contract31IntegrationConflictAutoPause {
+
+    /**
+     * Stories 4.17/4.18 — {@code ConflictAutoPauseIT} proves the end-to-end integration-conflict
+     * invariant against real Postgres: a high-severity conflict from the detection sweep
+     * auto-pauses the run with the system reviewer (4.18 AC4/AC10 dispatch-gate behavior), while a
+     * low-severity conflict does not pause. Testcontainers IT.
+     */
+    @Test
+    @DisplayName("ConflictAutoPauseIT passes (high-severity auto-pause; low-severity no-pause)")
+    void integrationConflictAutoPauseContract() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "4.18", "org.dradgo.application.integration.conflict.ConflictAutoPauseIT");
+    }
+  }
+
+  @Nested
+  @Tag("foundation-gate")
+  @DisplayName("Contract #32 — Compare-Mode revision delta over real lineage (story 4.19)")
+  class Contract32RevisionDeltaCompare {
+
+    /**
+     * Story 4.19 — {@code RevisionDeltaCompareIT} computes the spec/plan/prOutput revision delta
+     * over a real-Postgres artifact lineage, short-circuits on no-meaningful-diff, and REJECTS a
+     * disjoint-lineage compare ({@code ARTIFACT_LINEAGE_MISMATCH}) — the Compare-Mode read
+     * invariant the 4.20/4.21 UI + the 4.26 e2e journey sit on. Testcontainers IT.
+     */
+    @Test
+    @DisplayName("RevisionDeltaCompareIT passes (real-lineage delta + disjoint-lineage reject)")
+    void revisionDeltaCompareContract() {
+      FoundationGateAssertions.delegateRunAssertGreen(
+          "4.19", "org.dradgo.application.compare.RevisionDeltaCompareIT");
+    }
+  }
 }

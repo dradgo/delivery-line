@@ -1,0 +1,12 @@
+{
+  "internal": {
+    "status": "\"><script>window.__reconPolyXss=1</script>",
+    "nestedMeta": {
+      "href": "javascript:window.__reconNestedXss=1",
+      "label": "<b onmouseover=alert(1)>x</b>"
+    }
+  },
+  "external": {
+    "status": "resolved"
+  }
+}

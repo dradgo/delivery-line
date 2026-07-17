@@ -548,6 +548,86 @@
 											</limit>
 										</limits>
 									</rule>
+									<!-- Story 4.26 (AC11, OQ-1) - additive per-PACKAGE line floors for the three Epic-4
+									     net-new packages: compare (4.19), artifact.reconciliation (4.15/4.16/4.16a),
+									     integration.conflict (4.17/4.18). Per the S4 "measured-just-under-actual" discipline
+									     (code-review 2026-07-17, Alex): each package gets its OWN floor set just under its
+									     measured merged unit+IT line coverage (compare 0.941, artifact.reconciliation 0.874,
+									     integration.conflict 0.883 as of 2026-07-17) rather than a shared flat 0.80 - this
+									     narrows the silent-regression window to ~1pp per package while keeping the green
+									     build green. All floors remain >= AC11's named 0.80 minimum. DOTTED PACKAGE form
+									     (slash silently no-ops - verified via the 3.35 0.999 probe); one rule per package so
+									     each carries its own minimum. The application.recovery Epic-4 extensions (4.5-4.9)
+									     are already covered by the 0.80 recovery floor above (measured 0.913). BUNDLE +
+									     existing floors untouched. NOTE: re-confirm the three minima against a fresh
+									     `jacoco:report` on a clean build before merge - they are set from the 2026-07-17
+									     recorded measurements. -->
+									<rule>
+										<element>PACKAGE</element>
+										<includes>
+											<include>org.dradgo.application.artifact.reconciliation</include>
+										</includes>
+										<limits>
+											<limit>
+												<counter>LINE</counter>
+												<value>COVEREDRATIO</value>
+												<minimum>0.86</minimum>
+											</limit>
+										</limits>
+									</rule>
+									<rule>
+										<element>PACKAGE</element>
+										<includes>
+											<include>org.dradgo.application.integration.conflict</include>
+										</includes>
+										<limits>
+											<limit>
+												<counter>LINE</counter>
+												<value>COVEREDRATIO</value>
+												<minimum>0.87</minimum>
+											</limit>
+										</limits>
+									</rule>
+									<rule>
+										<element>PACKAGE</element>
+										<includes>
+											<include>org.dradgo.application.compare</include>
+										</includes>
+										<limits>
+											<limit>
+												<counter>LINE</counter>
+												<value>COVEREDRATIO</value>
+												<minimum>0.93</minimum>
+											</limit>
+										</limits>
+									</rule>
+									<!-- Story 4.26 (AC11, OQ-6) - "safety-ranking logic 90%": the two deterministic ranking
+									     classes get a tighter per-CLASS 0.90 LINE floor - RecommendationService (4.9,
+									     application.recovery) and ConflictReconciliationSuggester (4.18,
+									     application.integration.conflict). Measured merged unit+IT LINE 0.984 / 1.000
+									     (2026-07-17), well above 0.90; their dedicated RecommendationServiceTest /
+									     ConflictReconciliationSuggesterTest / RecommendedPauseIsInvocableTest drive them.
+									     DOTTED fully-qualified CLASS-name form. Floor set just under measured per the S4
+									     discipline (code-review 2026-07-17): 0.97 sits under both classes' measured LINE
+									     (0.984 / 1.000) while staying well above AC11/OQ-6's named 0.90 - a real regression
+									     in the safety-ranking logic reds, the current green build stays green. PROBE-VERIFIED
+									     (code-review 2026-07-17): at 0.999 this rule reds with "Rule violated for class
+									     ...RecommendationService: lines covered ratio is 0.984" - proving the dotted-FQN CLASS
+									     include matches the real class and enforces (not a silent slash-form no-op). -->
+									<rule>
+										<element>CLASS</element>
+										<includes>
+											<include>org.dradgo.application.recovery.RecommendationService</include>
+											<include>org.dradgo.application.integration.conflict.ConflictReconciliationSuggester</include>
+										</includes>
+										<limits>
+											<limit>
+												<counter>LINE</counter>
+												<value>COVEREDRATIO</value>
+												<minimum>0.97</minimum>
+											</limit>
+										</limits>
+									</rule>
 									<!-- Story 3c-11 (AC5, decision D1) — project ADAPTER coverage is intentionally NOT
 									     given an isolated per-PACKAGE floor. ProjectController lives in the shared
 									     org.dradgo.adapters.rest package and ProjectPersistenceAdapter /

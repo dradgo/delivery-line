@@ -46,10 +46,17 @@ describe('SafeMarkdownRenderer — XSS fixture loop (AC7, AC12)', () => {
   // `detail` renders through THIS renderer (ImplementationPlanArtifactRenderer routes step.detail →
   // SafeMarkdownRenderer). The diff-content fixtures live in their own loop in
   // SafeUnifiedDiffRenderer.test.tsx (a different renderer).
+  //
+  // Floor bumped from 14 to 16 by story 4.26 (AC8): two Compare-Mode spec-section fixtures
+  // (`compare-spec-section-*`) join the sweep, since CompareMode's `MarkdownCell` routes the
+  // untrusted prior/current spec-section delta text through THIS renderer (CompareMode.tsx). The
+  // reconciliation-JSONB and classification-description Epic-4 content types render through their own
+  // React-escape path and have a dedicated build-blocking loop in the workflows feature
+  // (Epic4ContentSanitization.test.tsx), not here.
   expect(
     fixtureNames.length,
-    'Fixture set must not shrink — at least fourteen attack-class fixtures required (AC7 + story 3.35 AC8 plan-step fixtures)',
-  ).toBeGreaterThanOrEqual(14);
+    'Fixture set must not shrink — at least sixteen attack-class fixtures required (AC7 + story 3.35 AC8 plan-step + story 4.26 AC8 compare-section fixtures)',
+  ).toBeGreaterThanOrEqual(16);
 
   for (const name of fixtureNames) {
     const mdPath = `./xss-fixtures/${name}.md`;

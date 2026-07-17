@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProblemDetailsError } from '@/lib/api/problemDetails';
 import { installMatchMedia, uninstallMatchMedia } from '@/test/matchMedia';
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 
 vi.mock('../hooks/useRevisionDelta', () => ({ useRevisionDelta: vi.fn() }));
 vi.mock('../hooks/useArtifact', () => ({ useArtifact: vi.fn(() => ({ data: undefined })) }));
@@ -167,5 +168,16 @@ describe('CompareModeContainer', () => {
     expect(screen.getByTestId('compare-mode')).toHaveAttribute('data-compare-viewport', 'desktop');
     expect(screen.queryByTestId('compare-mobile-body')).toBeNull();
     expect(screen.getByTestId('compare-synced-scroll')).toBeInTheDocument();
+  });
+
+  // Story 4.26 (AC9, OQ-3) — every Epic-4 component test runs an axe scan. The container renders real
+  // DOM (the resolved compare surface); scan the default desktop state (the mobile takeover is a11y-
+  // covered by CompareMode.test.tsx's mobile block).
+  it('reports zero WCAG-AA violations for the resolved default state (AC9)', async () => {
+    installMatchMedia(1280);
+    mockUseRevisionDelta.mockReturnValue(specDeltaQuery());
+    const { container } = render(<CompareModeContainer {...IDS} onExit={vi.fn()} />);
+    expect(screen.getByTestId('compare-mode')).toHaveAttribute('data-compare-state', 'default');
+    await expectNoA11yViolations(container);
   });
 });

@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PROBLEM_JSON_CONTENT_TYPE } from '@/lib/api/problemDetails';
 import { retryUnlessNonRetryable } from '@/lib/api/queryOptions';
 import { server } from '@/test/server';
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 
 vi.mock('@/lib/navigation/useReturnToRunContext', () => ({
   useReturnToRunContext: () => vi.fn(),
@@ -273,5 +274,20 @@ describe('RecoveryDecisionBarContainer — full activation (story 4.22)', () => 
     expect(screen.getByTestId('recovery-action-reconcile_conflict')).not.toHaveTextContent(
       /upcoming increment/i,
     );
+  });
+
+  // Story 4.26 (AC9, OQ-3) — every Epic-4 component test runs an axe scan. This full-activation
+  // container renders real DOM (the recovery bar + its action set); scan the settled Failed state.
+  it('reports zero WCAG-AA violations for the full Failed action set (AC9)', async () => {
+    server.use(
+      http.get(ALLOWED_URL, () =>
+        allowed(['retry', 'rerun_from_step', 'pause_workflow', 'classify_failure']),
+      ),
+      http.get(DETAIL_URL, () => detail('Failed')),
+      http.get(DIAGNOSTICS_URL, () => diagnostics([{ actionType: 'retry', safetyLevel: 'safe' }])),
+    );
+    renderContainer();
+    await screen.findByRole('button', { name: 'Retry failed step' });
+    await expectNoA11yViolations(document.body);
   });
 });

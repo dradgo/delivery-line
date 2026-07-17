@@ -1,0 +1,7 @@
+{
+  "renderedTextContains": ["Retry policy", "Retries are capped at three attempts."],
+  "renderedTextDoesNotContain": ["window.__compareImgXss = 1"],
+  "noScriptElements": true,
+  "noIframeElements": true,
+  "noActiveElements": true
+}

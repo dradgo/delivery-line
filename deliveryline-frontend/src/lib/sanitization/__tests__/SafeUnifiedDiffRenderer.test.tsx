@@ -111,10 +111,14 @@ describe('SafeUnifiedDiffRenderer — diff-content XSS fixture loop (AC8)', () =
   // AC8 floor — the diff sanitization sweep must keep at least five attack-class fixtures
   // (script-in-line, img-onerror, javascript: URL, entity-encoded, polyglot header+line). Story
   // 2.27's regression block is EXPANDED here, not duplicated (the markdown loop keeps its own floor).
+  //
+  // Floor bumped from 5 to 6 by story 4.26 (AC8): a Compare-Mode prOutput file-diff fixture
+  // (`compare-proutput-file-diff`) joins the sweep, since CompareMode's `CompareFileDiff` routes the
+  // untrusted prOutput unified-diff delta through THIS renderer (CompareMode.tsx → SafeUnifiedDiffRenderer).
   expect(
     fixtureNames.length,
-    'Diff XSS fixture set must not shrink — at least five attack-class fixtures required (AC8)',
-  ).toBeGreaterThanOrEqual(5);
+    'Diff XSS fixture set must not shrink — at least six attack-class fixtures required (AC8 + story 4.26 compare prOutput diff)',
+  ).toBeGreaterThanOrEqual(6);
 
   for (const name of fixtureNames) {
     const diffPath = `./diff-xss-fixtures/${name}.diff`;

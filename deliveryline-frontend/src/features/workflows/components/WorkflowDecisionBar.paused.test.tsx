@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { retryUnlessNonRetryable } from '@/lib/api/queryOptions';
 import { server } from '@/test/server';
+import { expectNoA11yViolations } from '@/test/a11y/axe';
 
 vi.mock('@/lib/navigation/useReturnToRunContext', () => ({
   useReturnToRunContext: () => vi.fn(),
@@ -126,5 +127,31 @@ describe('WorkflowDecisionBar — Paused selects the recovery bar (story 4.22)',
       'data-approval-bar-mode',
       'recovery_operator',
     );
+  });
+
+  // Story 4.26 (AC9, OQ-3) — every Epic-4 component test runs an axe scan. This selector test renders
+  // the real recovery bar for a Paused run; scan the settled bar.
+  it('reports zero WCAG-AA violations for the Paused recovery bar (AC9)', async () => {
+    server.use(
+      http.get(ALLOWED_URL, () =>
+        HttpResponse.json({
+          actions: ['resume_workflow'],
+          versionStamp: { workflowState: 'Paused' },
+        }),
+      ),
+      http.get(DETAIL_URL, () =>
+        HttpResponse.json({ workflowRunId: RUN_ID, currentState: 'Paused' }),
+      ),
+      http.get(DIAGNOSTICS_URL, () =>
+        HttpResponse.json({
+          workflowRunId: RUN_ID,
+          currentState: 'Paused',
+          recommendedRecoveryActions: [],
+        }),
+      ),
+    );
+    renderBar();
+    await screen.findByRole('button', { name: 'Resume run' });
+    await expectNoA11yViolations(document.body);
   });
 });

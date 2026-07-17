@@ -27,13 +27,33 @@ never quarantined under the "no-blanket-retry" rule from story 1.21. The
 following failure modes terminate the build:
 
 - Any XSS fixture under `__tests__/xss-fixtures/` whose rendered output
-  fails its `.expected.json` sidecar contract.
+  fails its `.expected.json` sidecar contract (`SafeMarkdownRenderer.test.tsx`
+  loop, floor **≥16** — incl. the story-4.26 `compare-spec-section-*` fixtures
+  that route through `CompareMode`'s `MarkdownCell`).
+- Any diff XSS fixture under `__tests__/diff-xss-fixtures/` whose rendered
+  output fails its `.expected.json` contract (`SafeUnifiedDiffRenderer.test.tsx`
+  loop, floor **≥6** — incl. the story-4.26 `compare-proutput-file-diff` fixture
+  that routes through `CompareMode`'s `CompareFileDiff`).
 - Any redaction fixture under `__tests__/redaction-fixtures/` whose
   rendered output fails to wrap a known secret pattern.
 - A cross-side drift between this package's `redaction-policy.generated.json`
   and the canonical source at
   `deliveryline-runner-contracts/src/main/resources/runner-contracts/redaction-policy.json`
   (the `deliveryline-runner-contracts` contract test pins parity).
+
+Story 4.26 (AC8) also adds two **build-blocking fixture loops for Epic-4
+content types whose render path is React auto-escaping, not these primitives**,
+so they live next to the components that render them (not in this package):
+
+- `src/features/workflows/components/__tests__/reconciliation-snapshot-fixtures/`
+  — scriptable integration-snapshot JSONB field values driven through the real
+  `ReconciliationDialog` (floor **≥3**).
+- `src/features/workflows/components/__tests__/classification-description-fixtures/`
+  — scriptable failure-taxonomy `description`/`examples` driven through the real
+  `FailureClassificationDialog` (floor **≥2**).
+
+Both are swept by `.../components/__tests__/Epic4ContentSanitization.test.tsx`;
+a payload that survives as live markup reds the build the same way.
 
 ## Bundle impact
 

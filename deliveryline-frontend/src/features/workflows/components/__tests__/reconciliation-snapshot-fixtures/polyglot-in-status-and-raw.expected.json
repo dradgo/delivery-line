@@ -1,0 +1,9 @@
+{
+  "renderedTextContains": [
+    "\"><script>window.__reconPolyXss=1</script>",
+    "javascript:window.__reconNestedXss=1"
+  ],
+  "noScriptElements": true,
+  "noActiveElements": true,
+  "noAnchorElements": true
+}
