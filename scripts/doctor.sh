@@ -44,12 +44,27 @@ done
 # smoke. Those checks are already gated by the dedicated format-static-checks
 # tier and the unit/contract test jobs, and running SpotBugs here (~30s) is
 # pure overhead that pushes the doctor smoke against its 300s CI timeout.
+#
+# frontend-maven-plugin.skip=true: the doctor CLI boots the backend with the
+# web server disabled and never serves static assets, so the frontend bundle
+# is not needed here. Skipping it avoids the full `npm run test:coverage`
+# vitest suite that the frontend module binds to process-resources (~3 min) —
+# that suite is already gated by the frontend-build-tests tier, and running it
+# inside the doctor smoke is what pushed this tier over its 300s timeout. The
+# toggle is the documented, first-class skip wired through both the backend
+# require-frontend-dist enforcer and the copy-frontend-dist step.
 "${REPO_ROOT}/mvnw" -B -ntp -pl deliveryline-backend -am install -DskipTests \
-  -Dspotbugs.skip=true -Dcheckstyle.skip=true -Dspotless.check.skip=true
+  -Dspotbugs.skip=true -Dcheckstyle.skip=true -Dspotless.check.skip=true \
+  -Dfrontend-maven-plugin.skip=true
 
 # Step 2 — run the backend only. No `-am`, so spring-boot:run is invoked
 # strictly on deliveryline-backend, which is the only module with a main
 # class. Upstream artifacts are now resolvable from ~/.m2 after step 1.
+# frontend-maven-plugin.skip=true mirrors step 1: spring-boot:run drives the
+# backend lifecycle through process-resources, where the require-frontend-dist
+# enforcer would otherwise fail because the (skipped) frontend never produced
+# dist/. The doctor CLI needs no static assets.
 exec "${REPO_ROOT}/mvnw" -B -ntp -pl deliveryline-backend spring-boot:run \
+  -Dfrontend-maven-plugin.skip=true \
   "-Ddeliveryline.shell=${DETECTED_SHELL}" \
   "-Dspring-boot.run.arguments=${RUN_ARGS}"
