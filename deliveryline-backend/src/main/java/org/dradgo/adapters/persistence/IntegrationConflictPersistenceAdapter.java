@@ -20,6 +20,7 @@ import org.dradgo.application.integration.conflict.spi.IntegrationConflictScanPo
 import org.dradgo.application.integration.conflict.spi.IntegrationConflictWritePort;
 import org.dradgo.application.integration.conflict.spi.IntegrationLinkScanRow;
 import org.dradgo.application.integration.conflict.spi.NewIntegrationConflict;
+import org.dradgo.application.integration.conflict.spi.TerminalRunConflict;
 import org.dradgo.application.integration.conflict.spi.UnresolvedConflictCount;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -214,6 +215,26 @@ public class IntegrationConflictPersistenceAdapter
         left join integration_links l on l.public_id = c.integration_link_id
        where c.public_id = :conflictId
          and c.archived_at is null
+      """;
+
+  // Story 4.30 (AC2) — UNRESOLVED conflicts whose owning run has terminalized. workflow_run_id is
+  // the opaque run public_id (V36 FK → workflow_runs.public_id), so the join is by public_id. Wire
+  // WorkflowState values ('Completed'/'TakenOver'/'Reconciled') match workflow_runs.current_state.
+  // Ordered by c.id asc (oldest strand first) + bounded by :batchLimit so the sweep drains a
+  // backlog
+  // deterministically across ticks without bare-LIMIT tail starvation of a full-batch remainder.
+  private static final String FIND_UNRESOLVED_ON_TERMINAL_RUNS_SQL =
+      """
+      select c.public_id      as conflict_id,
+             c.workflow_run_id as workflow_run_id,
+             r.current_state   as current_state
+        from integration_conflicts c
+        join workflow_runs r on r.public_id = c.workflow_run_id
+       where c.resolved_at is null
+         and c.archived_at is null
+         and r.current_state in ('Completed', 'TakenOver', 'Reconciled')
+       order by c.id asc
+       limit :batchLimit
       """;
 
   private static final String MARK_RESOLVED_SQL =
@@ -496,6 +517,26 @@ public class IntegrationConflictPersistenceAdapter
           counts.put(rs.getString("run_id"), rs.getInt("cnt"));
         });
     return counts;
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<TerminalRunConflict> findUnresolvedConflictsOnTerminalRuns(int batchLimit) {
+    if (batchLimit <= 0) {
+      throw new IllegalArgumentException("batchLimit must be positive");
+    }
+    List<TerminalRunConflict> rows =
+        jdbcTemplate.query(
+            FIND_UNRESOLVED_ON_TERMINAL_RUNS_SQL,
+            new MapSqlParameterSource("batchLimit", batchLimit),
+            (rs, rowNum) ->
+                new TerminalRunConflict(
+                    rs.getString("conflict_id"),
+                    rs.getString("workflow_run_id"),
+                    rs.getString("current_state")));
+    log.debug(
+        "findUnresolvedConflictsOnTerminalRuns returned={} batchLimit={}", rows.size(), batchLimit);
+    return new ArrayList<>(rows);
   }
 
   private static java.time.Instant toInstant(OffsetDateTime value) {

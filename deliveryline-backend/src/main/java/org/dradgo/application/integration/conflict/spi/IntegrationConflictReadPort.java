@@ -50,4 +50,15 @@ public interface IntegrationConflictReadPort {
    * yields an empty map without touching the DB.
    */
   Map<String, Integer> unresolvedCountByRun(Collection<String> workflowRunIds);
+
+  /**
+   * Story 4.30 (AC2, Reconciliation 4) — up to {@code batchLimit} UNRESOLVED, non-archived
+   * conflicts whose owning run is in a TERMINAL state ({@code Completed}/{@code TakenOver}/{@code
+   * Reconciled}), ordered by ascending {@code id} (oldest strand first) so the sweep drains the
+   * backlog deterministically across ticks. The self-healing terminal-run reconciliation sweep
+   * resolves each returned row. When the result size equals {@code batchLimit} the caller WARNs
+   * "more may remain" and heals the remainder on the next tick (no silent truncation — mirrors the
+   * 4.17 detection sweep and the 3f-8 rollup sweep).
+   */
+  List<TerminalRunConflict> findUnresolvedConflictsOnTerminalRuns(int batchLimit);
 }

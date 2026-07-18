@@ -35,6 +35,7 @@ import org.dradgo.domain.registry.IntegrationConflictCategory;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.WorkflowEventDetailKeys;
 import org.dradgo.domain.registry.WorkflowEventType;
+import org.dradgo.domain.registry.WorkflowState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -261,7 +262,27 @@ public class IntegrationConflictDetectionService {
           break;
         }
         if (!(decision.skip() || decision.category() == null)) {
-          recordConflict(row, decision, integrationTag, correlationId, tally);
+          if (isTerminalRun(row.currentState())) {
+            // Story 4.30 (AC1, Reconciliation 1) — SKIP creating a conflict for a run that has
+            // already terminalized (Completed/TakenOver/Reconciled). Such a conflict is
+            // unresolvable
+            // (RecoveryService.reconcile rejects terminal runs with RECONCILE_NOT_APPLICABLE and
+            // the
+            // 4.6 P1 overlay no longer advertises reconcile there), so it would strand
+            // resolved_at IS NULL forever and over-report unresolved counts. The run's currentState
+            // is already in hand on the scan row — this is a free guard, not a new query. The
+            // sub-millisecond TOCTOU window (state read non-terminal, terminalizes before insert
+            // commits) is healed by the terminal-run reconciliation sweep.
+            log.debug(
+                "integration-conflict SWEEP skipping terminal-run conflict workflowRunId={}"
+                    + " integrationLinkId={} currentState={} conflictCategory={}",
+                row.workflowRunPublicId(),
+                row.integrationLinkPublicId(),
+                row.currentState(),
+                decision.category().value());
+          } else {
+            recordConflict(row, decision, integrationTag, correlationId, tally);
+          }
         }
         lastSeq = row.linkSeq();
       } catch (RuntimeException unexpected) {
@@ -599,6 +620,28 @@ public class IntegrationConflictDetectionService {
 
   private static String asString(Object value) {
     return value == null ? null : value.toString();
+  }
+
+  /**
+   * Story 4.30 (AC1) — {@code true} when the scan row's run is in a terminal {@link WorkflowState}
+   * ({@code Completed}/{@code TakenOver}/{@code Reconciled}). Defensive: a null or unparseable
+   * state string is treated as NON-terminal so a bad state value never silently drops a genuine
+   * conflict — detection proceeds and the row is written as before this story.
+   */
+  private static boolean isTerminalRun(String currentState) {
+    if (currentState == null || currentState.isBlank()) {
+      return false;
+    }
+    try {
+      return WorkflowState.fromValue(currentState, null).isTerminal();
+    } catch (RuntimeException unparseable) {
+      // A bad/unknown state string must never silently drop a genuine conflict — proceed as
+      // non-terminal (detection writes the row exactly as before this story).
+      log.debug(
+          "integration-conflict SWEEP unparseable currentState={} — treating run as non-terminal",
+          currentState);
+      return false;
+    }
   }
 
   /** Mutable per-sweep accumulator folded into a {@link SweepResult}. */

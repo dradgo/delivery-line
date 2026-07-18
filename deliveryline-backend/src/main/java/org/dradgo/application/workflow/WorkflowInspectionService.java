@@ -1434,17 +1434,15 @@ public class WorkflowInspectionService {
 
   static final String ROLE_WORKFLOW_OWNER = "workflow_owner";
 
-  /**
-   * Story 4.6 code review (P1) — the {@code reconcile_conflict} overlay is only actionable for the
-   * workflow owner on a NON-terminal run, because {@code RecoveryService.reconcile} rejects
-   * terminal states with {@code RECONCILE_NOT_APPLICABLE}. Mirrors {@code
-   * RecoveryService.TERMINAL_STATES}. Gating the conflict scan on role + non-terminal state keeps
-   * the {@code integration_conflicts} query off the allowed-actions hot path (it never runs for
-   * non-owner roles or terminal runs) and stops the overlay from advertising an action that would
-   * always 409 — the same state-gating discipline as {@code hasActiveSplitDispatch}.
-   */
-  private static final Set<WorkflowState> RECONCILE_TERMINAL_STATES =
-      EnumSet.of(WorkflowState.COMPLETED, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED);
+  // Story 4.6 code review (P1) — the reconcile_conflict overlay is only actionable for the workflow
+  // owner on a NON-terminal run, because RecoveryService.reconcile rejects terminal states with
+  // RECONCILE_NOT_APPLICABLE. Story 4.30 (Reconciliation 1) collapsed the former private
+  // RECONCILE_TERMINAL_STATES set — the third hardcode of the COMPLETED/TAKEN_OVER/RECONCILED
+  // triple
+  // — into the single WorkflowState.isTerminal() predicate. Gating the conflict scan on role +
+  // non-terminal state keeps the integration_conflicts query off the allowed-actions hot path (it
+  // never runs for non-owner roles or terminal runs) and stops the overlay from advertising an
+  // action that would always 409 — the same state-gating discipline as hasActiveSplitDispatch.
 
   /**
    * Story 3.20 (AC12 / OQ-3) — the developer-review actor role recognized for {@code
@@ -1556,7 +1554,7 @@ public class WorkflowInspectionService {
       // querying integration_conflicts on every getAllowedActions call.
       boolean hasUnresolvedConflict =
           ROLE_WORKFLOW_OWNER.equals(resolvedRole)
-              && !RECONCILE_TERMINAL_STATES.contains(state)
+              && !state.isTerminal()
               && hasUnresolvedConflict(workflowRunPublicId);
       List<AllowedAction> actions =
           computeActionMatrix(

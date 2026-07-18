@@ -217,8 +217,10 @@ public class RecoveryService {
           RunnerExecutionStatus.TIMED_OUT,
           RunnerExecutionStatus.ORPHANED);
 
-  private static final List<WorkflowState> TERMINAL_STATES =
-      List.of(WorkflowState.COMPLETED, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED);
+  // Story 4.30 (Reconciliation 1) — terminality is now the single WorkflowState.isTerminal()
+  // predicate (COMPLETED/TAKEN_OVER/RECONCILED); the former private TERMINAL_STATES list was the
+  // second of three hardcodes of that triple and is removed so a future terminal state cannot
+  // silently diverge the reconcile guard from the detector guard/sweep.
 
   // Story 4.7 [Review 2026-07-12] — the ONLY states from which a rerun-from-step may be launched.
   // Mirrors the AC10 allowed-actions gate (RERUN_FROM_STEP is offered only at FAILED +
@@ -1602,7 +1604,7 @@ public class RecoveryService {
           workflowRunReadPort
               .findByPublicId(workflowRunId)
               .orElseThrow(() -> runNotFound(workflowRunId));
-      if (TERMINAL_STATES.contains(run.currentState())) {
+      if (run.currentState().isTerminal()) {
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("runId", workflowRunId);
         details.put("currentState", run.currentState().value());
@@ -3442,7 +3444,7 @@ public class RecoveryService {
 
       if (run.currentState() != WorkflowState.FAILED) {
         String safeAction =
-            TERMINAL_STATES.contains(run.currentState())
+            run.currentState().isTerminal()
                 ? NEXT_SAFE_ACTION_VIEW_ONLY
                 : NEXT_SAFE_ACTION_AWAIT_OUTCOME;
         log.info(

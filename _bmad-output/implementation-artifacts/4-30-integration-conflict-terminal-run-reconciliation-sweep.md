@@ -1,6 +1,6 @@
 # Story 4.30: Integration-Conflict Terminal-Run Guard + Self-Healing Reconciliation Sweep
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -66,24 +66,31 @@ so that the "manifestation (b)" gap left open by story 4.6's P3a per-run advisor
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Detector terminal-run guard (AC1)**
-  - [ ] Extract a single source of truth for terminality: add `WorkflowState.isTerminal()` (or a shared constant) covering `COMPLETED`/`TAKEN_OVER`/`RECONCILED`; refactor `RecoveryService.TERMINAL_STATES` and `WorkflowInspectionService.RECONCILE_TERMINAL_STATES` (added by 4.6 P1) to reference it (avoid a 3rd hardcode).
-  - [ ] In `IntegrationConflictDetectionService`, before `writePort.insertIfAbsent(request)` (`:463`), `continue` + `log.debug` when `WorkflowState.fromValue(row.currentState()).isTerminal()`. Guard null/unparseable state defensively (treat as non-terminal → proceed, since detection should not silently drop on a bad state string).
-  - [ ] Unit test: a scan row with `currentState="Reconciled"` → `insertIfAbsent` never called; a non-terminal row still inserts.
-- [ ] **Task 2 — Terminal-run read query (AC2, Reconciliation 4)**
-  - [ ] `IntegrationConflictReadPort.findUnresolvedConflictsOnTerminalRuns(int batchLimit)` + adapter SQL (`join workflow_runs r ... where c.resolved_at is null and c.archived_at is null and r.current_state in ('Completed','TakenOver','Reconciled') order by c.id asc limit :batchLimit`). Return `ConflictResolutionView` (reuse) or a lean id+run row.
-- [ ] **Task 3 — Sweep service + scheduler (AC2, AC4, AC5, Reconciliation 2/3/6)**
-  - [ ] `application.integration.conflict.IntegrationConflictTerminalRunReconciliationSweepService.sweep()` → `SweepResult(found, cleared, batchLimitHit)`; per stranded conflict: `integrationConflictService.lockRunForReconcile(runId)` then clear per OQ-1; per-item WARN; batch-limit WARN; INFO tick summary. Framework-trigger-free.
-  - [ ] `infrastructure.config` `IntegrationConflictTerminalSweepConfiguration` (`@Configuration @EnableScheduling @ConditionalOnProperty @Scheduled fixedDelayString`), mirror `SplitRollupSweepConfiguration`.
-  - [ ] Properties record (mirror `RollupSweepProperties`) for `enabled`/`interval-ms`/`batch-limit`; register test `application.yml` values ([[validated-config-needs-test-yaml]]).
-  - [ ] IF OQ-1 = system-resolve: add the SYSTEM-actor `recovery_actions` insert + (optional) new `ReconciliationDecision.SYSTEM_TERMINAL_RUN` registry value (three-site/set-equality per 4.6 Reconciliation 8) + `RECOVERY_RECONCILED` event append. IF OQ-1 = log-only: skip the write leg, WARN only.
-- [ ] **Task 4 — Tests + ArchUnit (AC6)**
-  - [ ] Real-PG `IntegrationConflictTerminalRunSweepIT` (`*IT`): seed via the 4.17 adapter an unresolved conflict on a run set to `RECONCILED` → sweep clears it → `findUnresolvedConflictsOnTerminalRuns` empty + (if system-resolve) `recovery_actions` row present.
-  - [ ] Unit: sweep no-op with no terminal-run conflicts; batch-limit WARN; disabled-flag no-bean (context test).
-  - [ ] ArchUnit `ONLY_CONFLICT_PACKAGE_MAY_WRITE_INTEGRATION_CONFLICTS` green (sweep writes via the in-package service). Verify in the Failsafe slice ([[archunit-runs-in-failsafe-not-surefire]]).
-- [ ] **Logging instrumentation** (cross-cutting; required on every story)
-  - [ ] Detector skip → DEBUG (`workflowRunId`+`integrationLinkId`+`currentState`). Sweep: INFO tick summary (`found`+`cleared`+`batchLimit`), WARN per auto-clear (`conflictId`+`workflowRunId`+`currentState`), WARN batch-limit. No secrets/payloads — ids/states only.
-  - [ ] Pin the detector-skip DEBUG and the sweep per-item WARN with a ListAppender assertion.
+- [x] **Task 1 — Detector terminal-run guard (AC1)**
+  - [x] Extract a single source of truth for terminality: add `WorkflowState.isTerminal()` (or a shared constant) covering `COMPLETED`/`TAKEN_OVER`/`RECONCILED`; refactor `RecoveryService.TERMINAL_STATES` and `WorkflowInspectionService.RECONCILE_TERMINAL_STATES` (added by 4.6 P1) to reference it (avoid a 3rd hardcode). — Added `WorkflowState.isTerminal()` + a private `TERMINAL_STATES` set on the enum; removed both consumers' local hardcodes and routed them through `.isTerminal()`.
+  - [x] In `IntegrationConflictDetectionService`, before `writePort.insertIfAbsent(request)` (`:463`), `continue` + `log.debug` when `WorkflowState.fromValue(row.currentState()).isTerminal()`. Guard null/unparseable state defensively (treat as non-terminal → proceed, since detection should not silently drop on a bad state string). — Guard placed at the `recordConflict` call site; `isTerminalRun(String)` catches parse failures → non-terminal.
+  - [x] Unit test: a scan row with `currentState="Reconciled"` → `insertIfAbsent` never called; a non-terminal row still inserts. — `terminalRunSkipsConflictInsertAndLogsDebug` + `nonTerminalRunStillInsertsConflict`.
+- [x] **Task 2 — Terminal-run read query (AC2, Reconciliation 4)**
+  - [x] `IntegrationConflictReadPort.findUnresolvedConflictsOnTerminalRuns(int batchLimit)` + adapter SQL (`join workflow_runs r ... where c.resolved_at is null and c.archived_at is null and r.current_state in ('Completed','TakenOver','Reconciled') order by c.id asc limit :batchLimit`). Return `ConflictResolutionView` (reuse) or a lean id+run row. — Lean `TerminalRunConflict(conflictId, workflowRunId, currentState)` record (currentState needed for the AC2 per-item WARN).
+- [x] **Task 3 — Sweep service + scheduler (AC2, AC4, AC5, Reconciliation 2/3/6)**
+  - [x] `application.integration.conflict.IntegrationConflictTerminalRunReconciliationSweepService.sweep()` → `SweepResult(found, cleared, batchLimitHit)`; per stranded conflict: `integrationConflictService.lockRunForReconcile(runId)` then clear per OQ-1; per-item WARN; batch-limit WARN; INFO tick summary. Framework-trigger-free. One bounded tx per conflict via `TransactionTemplate`.
+  - [x] `infrastructure.config` `IntegrationConflictTerminalSweepConfiguration` (`@Configuration @EnableScheduling @ConditionalOnProperty @Scheduled fixedDelayString`), mirror `SplitRollupSweepConfiguration`.
+  - [x] Properties record (mirror `RollupSweepProperties`) for `enabled`/`interval-ms`/`batch-limit`; register test `application.yml` values ([[validated-config-needs-test-yaml]]). — `IntegrationConflictTerminalSweepProperties`; registered UNCONDITIONALLY in `IntegrationConflictConfiguration`; keys mirrored into both `application.yml` files.
+  - [x] IF OQ-1 = system-resolve: add the SYSTEM-actor `recovery_actions` insert + (optional) new `ReconciliationDecision.SYSTEM_TERMINAL_RUN` registry value (three-site/set-equality per 4.6 Reconciliation 8) + `RECOVERY_RECONCILED` event append. — **OQ-1 = SYSTEM-resolve.** SYSTEM-actor `recovery_actions` row (`reconcile`/`system`/`succeeded`/`reviewer_role=system`, inserted `succeeded` directly like classify) + `RECOVERY_RECONCILED` event. **Deliberately did NOT add a `ReconciliationDecision` value** (see Completion Notes) — zero registry/OpenAPI/FE fan-out.
+- [x] **Task 4 — Tests + ArchUnit (AC6)**
+  - [x] Real-PG `IntegrationConflictTerminalRunSweepIT` (`*IT`): seed an unresolved conflict on a run set to `RECONCILED` → sweep clears it → `findUnresolvedConflictsOnTerminalRuns` empty + `recovery_actions` row present. Plus a non-terminal-run control (row left untouched). GREEN on real PG (2/2).
+  - [x] Unit: sweep no-op with no terminal-run conflicts; batch-limit WARN; disabled-flag no-bean (context test). — 5 sweep-service unit tests + 3 config-context tests, all GREEN.
+  - [x] ArchUnit `ONLY_CONFLICT_PACKAGE_MAY_WRITE_INTEGRATION_CONFLICTS` green (sweep writes via the in-package service). Verified in the Failsafe slice — `ArchitectureBoundaryTest` 64/64 GREEN.
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] Detector skip → DEBUG (`workflowRunId`+`integrationLinkId`+`currentState`). Sweep: INFO tick summary (`found`+`cleared`+`batchLimit`), WARN per auto-clear (`conflictId`+`workflowRunId`+`currentState`), WARN batch-limit. No secrets/payloads — ids/states only.
+  - [x] Pin the detector-skip DEBUG and the sweep per-item WARN with a ListAppender assertion. — DEBUG pinned in the detection test; WARN + INFO pinned in the sweep test.
+
+## Review Findings — 2026-07-18
+
+- [x] [Review][Patch] `RECOVERY_RECONCILED` auto-clear event needs a distinguishing detail so timeline consumers can tell a SYSTEM strand-clear from an operator reconcile [IntegrationConflictTerminalRunReconciliationSweepService.java:253-270] — (resolved from Decision D1, option 2) **FIXED:** added `WorkflowEventDetailKeys.AUTO_CLEARED = "autoCleared"` (allow-listed, like `viaSplitRollup`) + a `"autoCleared": {"type":"boolean"}` property in `workflow-history.v1.schema.json` (keeps the `WorkflowEventDetailKeysContractTest` set-equality green), and the sweep now emits `AUTO_CLEARED=true` on the event. Sweep unit test pins the discriminator on every auto-clear event. No OpenAPI/FE fan-out (CLI-only schema).
+- [x] [Review][Patch] Sweep read-query re-hardcodes the terminal-state triple a 4th time, defeating the story's single-source-of-truth claim [IntegrationConflictPersistenceAdapter.java `FIND_UNRESOLVED_ON_TERMINAL_RUNS_SQL`] — **FIXED:** added `IntegrationConflictTerminalRunSqlContractTest` (source-scan, mirrors the `CORRELATION_ID` literal-pin pattern) asserting the SQL `current_state in (...)` literals are byte-for-byte the wire values of the `WorkflowState` members where `isTerminal()`, so a 4th terminal state can't silently diverge the query.
+- [x] [Review][Patch] `interval-ms<=0 → 60000` clamp is dead for the scheduler; javadoc overclaims runtime normalization [IntegrationConflictTerminalSweepProperties.java] — **FIXED:** the `application.yml` had no misleading inline comment (Blind Hunter's quote was imprecise); the overclaim was in the record javadoc ("non-positive intervalMs/batchLimit clamp to their defaults"), an exact mirror of the accepted `RollupSweepProperties` house pattern. Clarified the 4.30 javadoc to state the `@Scheduled` reads the RAW `interval-ms` property so a non-positive value fails fast at startup (the clamp guards only `batchLimit`, which the sweep reads from the record). Did NOT touch the sibling 3f-8 file (out of scope) nor remove the clamp (structural parity with the mirror).
+- [x] [Review][Defer] Deterministic per-conflict failure re-thrashes at the batch head with no attempt cap / dead-letter / cursor-advance [IntegrationConflictTerminalRunReconciliationSweepService.java:156-192] — deferred, pre-existing (shared with the `SplitRollupReconciliationSweepService` house pattern this story mirrors byte-for-byte). A conflict that throws a non-`CONFLICT_ALREADY_RESOLVED` error every tick keeps the lowest `c.id`, so `order by c.id asc limit :batchLimit` re-fetches it at the head forever; ≥`batchLimit` such poison rows would starve the remainder. Self-surfacing via the per-tick WARN; internal-only writes make deterministic failure unlikely.
 
 ## Dev Notes
 
@@ -124,8 +131,52 @@ so that the "manifestation (b)" gap left open by story 4.6's P3a per-run advisor
 
 ### Agent Model Used
 
+claude-opus-4-8[1m] (BMad dev-story workflow)
+
 ### Debug Log References
+
+- `maven-argLine-direct-goal-crash` — `surefire:test`/`failsafe:integration-test` direct goals crash on `@{argLine}`; ran via the `test`/`integration-test` lifecycle phases with `-Djacoco.skip=true` instead.
+- Two-constructor bean wiring: the sweep service's public `Clock`-defaulting constructor + package-private `Clock`-accepting one initially failed context load ("No default constructor found") — added `@Autowired` to the public constructor (mirrors `IntegrationConflictService`). Caught by `IntegrationConflictTerminalRunSweepIT` context load, fixed, re-GREEN.
+- Spotless reformat required after hand-editing (`spotless:apply`) — em-dashes in new source verified as proper U+2014 by codepoint (no mojibake).
 
 ### Completion Notes List
 
+- **OQ-1 resolved = SYSTEM-resolve, WITHOUT a new `ReconciliationDecision` value.** The provisional binding said "SYSTEM-resolve via a SYSTEM-actor `recovery_actions` row + `RECOVERY_RECONCILED` event", with the new `ReconciliationDecision.SYSTEM_TERMINAL_RUN` value flagged **(optional)**. I deliberately did NOT add it: a `ReconciliationDecision` is an OPERATOR-facing decision (it fans out to `DomainRegistry`, `RegistryContractTest`, `openapi.json`, the FE `schema.d.ts`, `ConflictReconciliationSuggester`, and the REST reconcile request) — polluting that operator vocabulary with a system-internal auto-clear token would be wrong and would red `check:api`/FE. Instead the `RECOVERY_RECONCILED` event carries the semantics via its SYSTEM actor + a `reason` detail; the audit trail is fully honest with ZERO registry/OpenAPI/FE fan-out. If Alex wants the explicit decision token later it can be added as a system-only registry value.
+- **OQ-2 resolved = ship BOTH** (guard + sweep), per the recommendation and the 3f-7 hook + 3f-8 sweep house pattern.
+- **NO migration, NO new WorkflowState/transition edge, NO new DomainErrorCode/WorkflowEventType/WorkflowEventDetailKey, NO REST/CLI/FE** (Reconciliation 5). `action_type='reconcile'` is a pre-reserved V1 slot; `reviewer_role='system'` and `actor_type='system'` already valid; `recovery_actions` inserted `succeeded` directly (one-tx, no post-commit side-effect — the classify_failure R16 rationale).
+- **Sweep write boundary + P3a lock (AC3):** each conflict is SYSTEM-resolved in its own bounded `TransactionTemplate` tx that takes `IntegrationConflictService.lockRunForReconcile(runId)` FIRST, then routes the resolve through `IntegrationConflictService.resolveConflict` (in-package) — never a raw `IntegrationConflictWritePort` call, so `ONLY_CONFLICT_PACKAGE_MAY_WRITE_INTEGRATION_CONFLICTS` stays green. A concurrent live reconcile that already cleared the row makes `resolveConflict` throw `CONFLICT_ALREADY_RESOLVED` → the per-conflict tx rolls back cleanly and the sweep counts it a benign skip (not a failure, no false "auto-cleared" WARN).
+- **Terminality single-source-of-truth (Reconciliation 1):** `WorkflowState.isTerminal()` now backs the reconcile guard (`RecoveryService`), the allowed-actions overlay (`WorkflowInspectionService`), and the new detector guard + sweep query — the three prior hardcodes collapsed to one.
+- **Default posture:** the sweep is OFF by default in both `application.yml` files (opt-in per-deploy, mirroring `rollup-sweep`); the always-active detector guard prevents the common case, and the sweep is the durability backstop for pre-existing strands + the TOCTOU window. AC4 disabled-flag no-bean is pinned by the config context test.
+- Detector guard is state-scoped: a terminal-run scan row is skipped (DEBUG), a non-terminal row still inserts (control test). Defensive `isTerminalRun` treats null/unparseable state as non-terminal so a bad state string never silently drops a genuine conflict.
+
 ### File List
+
+**Main (changed):**
+- `deliveryline-backend/src/main/java/org/dradgo/domain/registry/WorkflowState.java` — added `isTerminal()` + private `TERMINAL_STATES` set (single source of truth).
+- `deliveryline-backend/src/main/java/org/dradgo/application/recovery/RecoveryService.java` — removed local `TERMINAL_STATES`; 2 call sites → `.isTerminal()`.
+- `deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowInspectionService.java` — removed local `RECONCILE_TERMINAL_STATES`; call site → `!state.isTerminal()`.
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/IntegrationConflictDetectionService.java` — terminal-run guard before `recordConflict` + `isTerminalRun` helper + DEBUG skip log.
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/spi/IntegrationConflictReadPort.java` — `findUnresolvedConflictsOnTerminalRuns(int)`.
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/persistence/IntegrationConflictPersistenceAdapter.java` — `FIND_UNRESOLVED_ON_TERMINAL_RUNS_SQL` + impl.
+- `deliveryline-backend/src/main/java/org/dradgo/infrastructure/config/IntegrationConflictConfiguration.java` — register `IntegrationConflictTerminalSweepProperties`.
+- `deliveryline-backend/src/main/resources/application.yml` — new `deliveryline.integration-conflict.terminal-sweep.*` (enabled:false).
+- `deliveryline-backend/src/test/resources/application.yml` — mirror (enabled:false).
+
+**Main (new):**
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/spi/TerminalRunConflict.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/IntegrationConflictTerminalRunReconciliationSweepService.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/IntegrationConflictTerminalSweepProperties.java`
+- `deliveryline-backend/src/main/java/org/dradgo/infrastructure/config/IntegrationConflictTerminalSweepConfiguration.java`
+
+**Test (changed):**
+- `deliveryline-backend/src/test/java/org/dradgo/application/integration/conflict/IntegrationConflictDetectionServiceTest.java` — 2 guard tests + `rowWithState` helper.
+
+**Test (new):**
+- `deliveryline-backend/src/test/java/org/dradgo/application/integration/conflict/IntegrationConflictTerminalRunReconciliationSweepServiceTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/integration/conflict/IntegrationConflictTerminalRunSweepIT.java`
+- `deliveryline-backend/src/test/java/org/dradgo/infrastructure/config/IntegrationConflictTerminalSweepConfigurationTest.java`
+
+### Change Log
+
+- 2026-07-18 — Story 4.30 implemented: 4.17 detector terminal-run guard (skip creating conflicts on terminalized runs) + `WorkflowState.isTerminal()` single-source-of-truth + self-healing `IntegrationConflictTerminalRunReconciliationSweepService` (SYSTEM-resolve, `@ConditionalOnProperty`-gated, OFF by default) + `findUnresolvedConflictsOnTerminalRuns` read query. No migration / registry / REST / FE changes. OQ-1=SYSTEM-resolve (no new `ReconciliationDecision`), OQ-2=ship both.
+- 2026-07-18 — Code review (`review`→`done`): 1 decision + 3 patches applied, 1 deferred, 6 dismissed. (D1→P1) new allow-listed `AUTO_CLEARED` event detail key + CLI history schema property so timeline consumers distinguish a SYSTEM terminal-run auto-clear from an operator reconcile; (P2) `IntegrationConflictTerminalRunSqlContractTest` pins the sweep SQL terminal-state literals to `WorkflowState.isTerminal()`; (P3) honest `IntegrationConflictTerminalSweepProperties` javadoc re the inert `interval-ms` clamp. Deferred: poison-row thrash/starvation (shared 3f-8 house-pattern limitation → `deferred-work.md`). Affected tests GREEN (22/22: sweep unit + 2 contract + CLI JSON schema + config context).

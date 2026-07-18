@@ -302,6 +302,66 @@ class IntegrationConflictDetectionServiceTest {
     verify(scanPort, times(1)).snapshotExternalMetadataBaseline(eq("ilk_gh11"), any());
   }
 
+  @Test
+  void terminalRunSkipsConflictInsertAndLogsDebug() {
+    // Story 4.30 (AC1) — a scan row whose run has already terminalized (Reconciled) must NOT create
+    // a conflict even when fresh external drift would otherwise classify one: that conflict is
+    // unresolvable (RecoveryService.reconcile rejects terminal runs) and would strand forever.
+    ch.qos.logback.classic.Logger detectionLogger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(IntegrationConflictDetectionService.class);
+    ch.qos.logback.classic.Level priorLevel = detectionLogger.getLevel();
+    detectionLogger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+    ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+        new ch.qos.logback.core.read.ListAppender<>();
+    appender.start();
+    detectionLogger.addAppender(appender);
+    try {
+      stubGitHub(
+          rowWithState(
+              "ilk_term1", "run_term", "octo/repo#20", Map.of("prState", "open"), "Reconciled"));
+      when(gitHubAdapter.getPullRequestByRef(any()))
+          .thenReturn(Optional.of(pr("octo/repo#20", "octo/repo", "feature/x", "closed", true)));
+
+      SweepResult result = service.sweep();
+
+      assertThat(result.conflictsDetected()).isZero();
+      verify(writePort, never()).insertIfAbsent(any());
+      verify(eventPort, never()).append(any());
+      verify(conflictAutoPauseHandler, never()).maybeAutoPause(any(), any(), any(), any());
+      // AC1 / logging instrumentation — the skip is recorded at DEBUG with run + link + state.
+      assertThat(appender.list)
+          .anyMatch(
+              e ->
+                  e.getFormattedMessage().contains("skipping terminal-run conflict")
+                      && e.getFormattedMessage().contains("run_term")
+                      && e.getFormattedMessage().contains("Reconciled"));
+    } finally {
+      detectionLogger.detachAppender(appender);
+      detectionLogger.setLevel(priorLevel);
+    }
+  }
+
+  @Test
+  void nonTerminalRunStillInsertsConflict() {
+    // Control for the terminal-run guard: the same drift on a NON-terminal (WaitingForReview) run
+    // still inserts, so the guard is state-scoped, not a blanket suppression.
+    stubGitHub(
+        rowWithState(
+            "ilk_nonterm1",
+            "run_nonterm",
+            "octo/repo#21",
+            Map.of("prState", "open"),
+            "WaitingForReview"));
+    when(gitHubAdapter.getPullRequestByRef(any()))
+        .thenReturn(Optional.of(pr("octo/repo#21", "octo/repo", "feature/x", "closed", true)));
+
+    SweepResult result = service.sweep();
+
+    assertThat(result.conflictsDetected()).isEqualTo(1);
+    verify(writePort, times(1)).insertIfAbsent(any());
+  }
+
   // ---- helpers ----------------------------------------------------------------------------------
 
   private void stubGitHub(IntegrationLinkScanRow... rows) {
@@ -344,6 +404,15 @@ class IntegrationConflictDetectionServiceTest {
 
   private static IntegrationLinkScanRow row(
       String linkId, String runId, String externalRef, Map<String, Object> cachedMetadata) {
+    return rowWithState(linkId, runId, externalRef, cachedMetadata, "WaitingForReview");
+  }
+
+  private static IntegrationLinkScanRow rowWithState(
+      String linkId,
+      String runId,
+      String externalRef,
+      Map<String, Object> cachedMetadata,
+      String currentState) {
     return new IntegrationLinkScanRow(
         linkId,
         runId,
@@ -351,7 +420,7 @@ class IntegrationConflictDetectionServiceTest {
         externalRef,
         toBytes(cachedMetadata),
         "prj_test1",
-        "WaitingForReview",
+        currentState,
         SEQ.getAndIncrement());
   }
 

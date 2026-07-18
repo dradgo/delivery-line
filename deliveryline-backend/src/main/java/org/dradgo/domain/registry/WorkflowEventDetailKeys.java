@@ -118,6 +118,14 @@ public final class WorkflowEventDetailKeys {
   public static final String CONFLICT_CATEGORY = "conflictCategory";
   public static final String RECONCILIATION_DECISION = "reconciliationDecision";
 
+  // Integration-conflict terminal-run auto-clear key (added story 4.30 review, emitted on
+  // RECOVERY_RECONCILED when the terminal-run reconciliation sweep SYSTEM-resolves a conflict
+  // stranded on an already-terminal run). Allow-listed boolean discriminator — the same shareable
+  // posture as viaSplitRollup: it lets a timeline consumer tell a system strand-clear (actorType
+  // SYSTEM, prior==resulting terminal state) from an operator reconcile (which transitions the run
+  // TO Reconciled and carries reconciliationDecision). Never carries payloads.
+  public static final String AUTO_CLEARED = "autoCleared";
+
   // Artifact-drift keys (added story 4.15 AC4, emitted on ARTIFACT_DRIFT_DETECTED). All
   // allow-listed:
   // driftCategory is the controlled-vocabulary DriftCategory wire token (orphan_operation /
@@ -230,6 +238,7 @@ public final class WorkflowEventDetailKeys {
           CONFLICT_ID,
           CONFLICT_CATEGORY,
           RECONCILIATION_DECISION,
+          AUTO_CLEARED,
           DRIFT_CATEGORY,
           DRIFT_ID,
           OPERATION_ID,

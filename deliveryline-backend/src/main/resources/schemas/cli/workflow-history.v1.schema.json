@@ -258,6 +258,9 @@
               "reconciliationDecision": {
                 "type": "string"
               },
+              "autoCleared": {
+                "type": "boolean"
+              },
               "driftCategory": {
                 "type": "string"
               },

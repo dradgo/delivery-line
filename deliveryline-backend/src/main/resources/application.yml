@@ -150,6 +150,23 @@ deliveryline:
       auto-pause-on-categories:
         - external_state_advanced
         - external_state_reverted
+  integration-conflict:
+    # Story 4.30 (AC4/AC5): the terminal-run reconciliation sweep self-heals integration_conflicts
+    # rows stranded on a run that already terminalized (Completed/TakenOver/Reconciled) — the
+    # manifestation-(b) residue the 4.17 detector's terminal-run guard cannot cover (pre-existing
+    # strands + the sub-ms TOCTOU window). It SYSTEM-resolves each (a system-actor recovery_actions
+    # row + RECOVERY_RECONCILED event), under the P3a per-run reconcile lock so it never races a live
+    # operator reconcile. The @Scheduled trigger (IntegrationConflictTerminalSweepConfiguration) is
+    # @ConditionalOnProperty-gated on `enabled`, so a disabled sweep registers NO bean and adds zero
+    # scheduled work (byte-identical to pre-story). `interval-ms` is the fixed-delay between ticks
+    # (<=0 normalized to 60000 = 1 min); `batch-limit` caps stranded conflicts cleared per tick — the
+    # sweep WARNs on a full batch (no silent truncation), remainder heals next tick (<=0 → 100).
+    # Default OFF: the detector guard prevents the common case at the source; this durability backstop
+    # is opted in per-deploy (mirrors rollup-sweep's opt-in posture). Turn on to drain a backlog.
+    terminal-sweep:
+      enabled: false
+      interval-ms: 60000
+      batch-limit: 100
   workflow:
     # Story 2.10 (FR13): threshold above which ApprovalService.rejectSpec raises the per-run
     # escalation marker. The escalation event is appended exactly once (when the counter crosses

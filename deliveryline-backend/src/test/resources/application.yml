@@ -84,6 +84,16 @@ deliveryline:
       # directly, and ConflictAutoPauseIT opts back in via @TestPropertySource — both exercise the
       # production posture without imposing it on the whole @SpringBootTest tier.
       auto-pause-on-categories: []
+  integration-conflict:
+    # Story 4.30 (AC4 / Trap) — mirror deliveryline.integration-conflict.terminal-sweep.* (the test
+    # yaml SHADOWS, not merges with, main). The terminal-run sweep is DISABLED in the shared test
+    # profile so no @Scheduled trigger bean registers and no always-on sweep fires during unrelated
+    # @SpringBootTests; IntegrationConflictTerminalRunSweepIT invokes sweep() directly (no scheduler
+    # wait), and the disabled-flag config test asserts the absence of the trigger bean.
+    terminal-sweep:
+      enabled: false
+      interval-ms: 60000
+      batch-limit: 100
   workflow:
     # Story 3.9 Trap T2 — mirror the deliveryline.workflow.* keys so the validated WorkflowProperties
     # binding does not shadow defaults to surprising values in the @SpringBootTest tier (memory:

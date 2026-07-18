@@ -1,6 +1,9 @@
 package org.dradgo.domain.registry;
 
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.Map;
+import java.util.Set;
 
 public enum WorkflowState implements RegistryValue {
   INBOX("Inbox"),
@@ -55,6 +58,17 @@ public enum WorkflowState implements RegistryValue {
 
   private static final Map<String, WorkflowState> LOOKUP = RegistryParsers.index(values());
 
+  /**
+   * Story 4.30 (Reconciliation 1) — the SINGLE source of truth for run terminality: the states a
+   * run can never leave ({@code Completed}/{@code TakenOver}/{@code Reconciled}). Previously this
+   * triple was hardcoded in three consumers — {@code RecoveryService.TERMINAL_STATES}, {@code
+   * WorkflowInspectionService.RECONCILE_TERMINAL_STATES} (4.6 P1), and (this story) the
+   * conflict-detection terminal-run guard + sweep — a rename/addition in any one silently diverged
+   * the others. All now route through {@link #isTerminal()}.
+   */
+  private static final Set<WorkflowState> TERMINAL_STATES =
+      Collections.unmodifiableSet(EnumSet.of(COMPLETED, TAKEN_OVER, RECONCILED));
+
   private final String value;
 
   WorkflowState(String value) {
@@ -64,6 +78,16 @@ public enum WorkflowState implements RegistryValue {
   @Override
   public String value() {
     return value;
+  }
+
+  /**
+   * Story 4.30 (Reconciliation 1) — {@code true} for the terminal states a run can never leave
+   * ({@code Completed}/{@code TakenOver}/{@code Reconciled}). The single terminality predicate
+   * shared by the reconcile guard, the allowed-actions overlay, and the conflict-detection
+   * guard/sweep.
+   */
+  public boolean isTerminal() {
+    return TERMINAL_STATES.contains(this);
   }
 
   static WorkflowState fromValue(String rawValue) {
