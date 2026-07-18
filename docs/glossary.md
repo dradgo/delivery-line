@@ -123,7 +123,11 @@ The developer action that stops orchestrator dispatch, cancels the in-flight and
 executions (moving them to a `cancelled_for_takeover` status), and transitions the run to the
 `TakenOver` terminal state while preserving all prior context (artifacts, audit trail, PR link).
 **Non-reversible in Epic 3** — the developer continues the work in the linked GitHub PR; Epic 4
-adds takeover-revert and operator-side closure.
+adds takeover-revert and operator-side closure. Takeover is a **separate** developer action, not
+one of the six recovery actions surfaced on the operator recovery Decision Bar; for when to take
+over versus [pause](#pause), see the
+"Pause vs Takeover" section of
+[`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md).
 
 **See also:** [`execution-walkthrough.md`](execution-walkthrough.md) ("When and how to take
 over").
@@ -492,6 +496,97 @@ surface over it. The surface reuses existing vocabulary throughout — `project`
 
 ---
 
+## Epic 4 vocabulary (failure handling & recovery)
+
+These terms are registered here per glossary discipline; Epic 6 story 6.2 normalizes wording.
+They name the operator recovery surface — see
+[`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md) for the end-to-end
+walkthrough.
+
+### resume
+
+The [recovery action](#recovery-action) that returns a **paused** [run](#run) to its prior
+executing state and re-enqueues runner work — the reversible counterpart to [pause](#pause).
+Surfaced as **Resume run** on the recovery Decision Bar. A resume that would bypass an
+unresolved [conflict](#conflict) is blocked by the reconciliation dispatch gate.
+
+**See also:** [`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md).
+
+### reconcile
+
+The [recovery action](#recovery-action) that resolves a [conflict](#conflict) between the
+internal run state and the external Linear / GitHub state. The operator reviews both snapshots
+(Internal / External) and picks a **reconciliation decision** — `accept_external_state`,
+`accept_internal_state`, `mark_completed_externally`, or `mark_failed_externally` — with a
+required reason; the safe-first option is marked Recommended. Surfaced as **Reconcile
+conflict**.
+
+**See also:** [`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md),
+[conflict](#conflict).
+
+### rerun-from-step
+
+The [recovery action](#recovery-action) that re-executes a run from a chosen **safe step**
+(Investigating or Executing); artifacts produced at or after that step are superseded and the
+corresponding approval is invalidated. A destructive, reason-required action surfaced as
+**Rerun from step**.
+
+**See also:** [`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md).
+
+### pause
+
+The [recovery action](#recovery-action) that halts orchestrator dispatch and cancels in-flight +
+queued runner work for a run, **reversibly** — the run can be [resumed](#resume) later. Also
+fired **automatically** by the orchestrator ("auto-pause") when it detects an
+[integration conflict](#conflict), because the safe posture under an uncertain external state is
+to stop and let an operator decide. Distinct from [takeover](#takeover), which is one-way.
+Surfaced as **Pause run**.
+
+**See also:** [`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md),
+[takeover](#takeover).
+
+### classify
+
+The [recovery action](#recovery-action) that records an operator's **failure taxonomy**
+judgment on a failed run — one of six governed values (`specification_gap`, `context_gap`,
+`agent_execution_failure`, `review_rejection`, `integration_or_merge_failure`,
+`tooling_or_infrastructure_failure`) for cross-run pattern analysis. This operator-applied,
+post-hoc **taxonomy** axis is deliberately separate from the runner-scoped, machine-set
+`FailureCategory` (the [failure](#failure) category) — both can be set on one run. Surfaced as
+**Classify failure** with humanized labels + descriptions + examples.
+
+**See also:** [`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md),
+[failure](#failure).
+
+### conflict
+
+An **integration conflict** — a detected divergence between a run's internal state and the
+external system's state (an `external_state_advanced` or `external_state_reverted` situation,
+where the Linear ticket or GitHub PR moved underneath the run). A conflict [auto-pauses](#pause)
+the run and is resolved with [reconcile](#reconcile). See [drift](#drift) for the related
+integration-link condition the recovery ranker keys on (and how it differs from artifact-lineage
+drift).
+
+**See also:** [`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md),
+[reconcile](#reconcile).
+
+### drift
+
+**Integration drift** — a run's internal state diverging from its external Linear / GitHub
+integration link, which the system marks `stale` or `failed`. When a run has drifted, the
+recovery ranker (`RecommendationService`) downgrades every safe *mutating* action to caution
+except [reconcile](#reconcile) and [classify](#classify), steering the operator to resolve the
+divergence first. Closely related to an integration [conflict](#conflict): a conflict is the
+*detected external-state divergence event* (`external_state_advanced` / `external_state_reverted`)
+that auto-pauses the run, while drift is the *stale/failed link condition* the ranker keys on.
+Distinct from **artifact drift** — a run's persisted [artifact](#artifact) lineage diverging from
+its expected state (a partial write / failed reconciliation), which the artifact-reconciliation
+surface detects and repairs.
+
+**See also:** [`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md).
+
+---
+
 ## Linked from
 
 This glossary is referenced from:
@@ -501,6 +596,7 @@ This glossary is referenced from:
 - [`execution-walkthrough.md`](execution-walkthrough.md) — "Concepts you just used" footer (Epic 3 vocabulary).
 - [`project-configuration-walkthrough.md`](project-configuration-walkthrough.md) — "Concepts you just used" footer (Epic 3c vocabulary).
 - [`per-step-execution-control-walkthrough.md`](per-step-execution-control-walkthrough.md) — "Concepts you just used" footer (Epic 3d vocabulary).
+- [`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md) — "Concepts you just used" footer (Epic 4 vocabulary).
 - [`setup-local.md`](setup-local.md) — "See also" footer.
 
 Epic 6 stories (6.1 / 6.2) will wire cross-links from `failure-recovery-walkthrough.md`
