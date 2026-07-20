@@ -35,6 +35,8 @@ When you add one, append its row to the index table here.
 | [0033](0033-recovery-service-scope-lift.md) | RecoveryService Scope Lift (Retire the Epic-1 Scope-Protection Tripwire) | Proposed (2026-07-08) |
 | [0034](0034-rerun-safe-boundaries.md) | Rerun-from-Step Restricted to Safe Step Boundaries (Investigating/Executing) | Proposed (2026-07-11) |
 | [0035](0035-failure-taxonomy-governance.md) | Failure Taxonomy Governance (Deprecate-Never-Remove) | Proposed (2026-07-12) |
+| [0036](0036-configurable-workflow-run-model.md) | Configurable-Workflow Run-Model (reuse `workflow_runs` + step cursor) | Proposed (2026-07-19) |
+| [0037](0037-per-step-executor-binding.md) | Per-Step Executor Binding (runner kind + credential + BMAD role) | Proposed (2026-07-19) |
 
 ## A note on numbering gaps
 

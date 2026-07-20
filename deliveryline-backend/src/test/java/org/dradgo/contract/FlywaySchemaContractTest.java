@@ -49,7 +49,10 @@ class FlywaySchemaContractTest {
           "split_proposals",
           "split_proposal_feedback",
           "integration_conflicts",
-          "artifact_drift_detected");
+          "artifact_drift_detected",
+          "workflow_definitions",
+          "workflow_definition_steps",
+          "workflow_definition_step_overrides");
 
   // Story 3e-4 / V26: project_runner_kinds is a pure mapping/association table (composite PK
   // (project_id, step)) — NOT a core table: it deliberately carries no bigserial id / public_id /
@@ -85,7 +88,10 @@ class FlywaySchemaContractTest {
           Map.entry("split_proposals", "splprop_"),
           Map.entry("split_proposal_feedback", "splfb_"),
           Map.entry("integration_conflicts", "icf_"),
-          Map.entry("artifact_drift_detected", "adr_"));
+          Map.entry("artifact_drift_detected", "adr_"),
+          Map.entry("workflow_definitions", "wfd_"),
+          Map.entry("workflow_definition_steps", "wfs_"),
+          Map.entry("workflow_definition_step_overrides", "wso_"));
 
   @Autowired private JdbcTemplate jdbcTemplate;
 
@@ -1860,6 +1866,508 @@ class FlywaySchemaContractTest {
     } finally {
       jdbcTemplate.update("delete from project_runner_kinds where project_id = ?", projectPid);
       jdbcTemplate.update("delete from projects where public_id = ?", projectPid);
+    }
+  }
+
+  @Test
+  void workflowDefinitionsSchemaCarriesExpectedColumnsKindCheckAndActiveKeyIndex() {
+    // Story 3m-2 / V48 (AC2): workflow_definitions is a core table (id/public_id wfd_/created_at/
+    // archived_at retention shape + uq/ck public_id are asserted by the CORE_TABLES tests above).
+    // Probe the definition-specific columns, the kind CHECK, and the one-active-per-key index.
+    assertColumnType("workflow_definitions", "key", "text");
+    assertColumnNullable("workflow_definitions", "key", false);
+    assertColumnType("workflow_definitions", "name", "text");
+    assertColumnNullable("workflow_definitions", "name", false);
+    assertColumnType("workflow_definitions", "kind", "text");
+    assertColumnNullable("workflow_definitions", "kind", false);
+
+    // ck_workflow_definitions_kind admits exactly {builtin,custom} (drift-tested against the
+    // DefinitionKind registry by RegistryContractTest).
+    assertConstraintDefinitionContains("ck_workflow_definitions_kind", "builtin");
+    assertConstraintDefinitionContains("ck_workflow_definitions_kind", "custom");
+
+    // Partial unique "one ACTIVE definition per key" index (where archived_at is null).
+    List<Map<String, Object>> activeKeyIndex =
+        jdbcTemplate.queryForList(
+            """
+            select indexname, indexdef
+            from pg_indexes
+            where schemaname = 'public'
+              and tablename = 'workflow_definitions'
+              and indexname = 'uq_workflow_definitions_active_key'
+            """);
+    assertEquals(
+        1,
+        activeKeyIndex.size(),
+        () -> "Missing V48 partial unique index uq_workflow_definitions_active_key");
+    String activeKeyDef = ((String) activeKeyIndex.get(0).get("indexdef")).toLowerCase();
+    assertTrue(activeKeyDef.contains("unique"), () -> "must be UNIQUE: " + activeKeyDef);
+    assertTrue(activeKeyDef.contains("(key)"), () -> "must cover key: " + activeKeyDef);
+    assertTrue(
+        activeKeyDef.contains("archived_at is null"),
+        () -> "must be partial on archived_at is null: " + activeKeyDef);
+
+    // Functional probe: kind CHECK, one-active-per-key rejection, archive-frees-the-slot rotation.
+    String n = uniqueRowSuffix();
+    String key = "def-key-" + n;
+    jdbcTemplate.update(
+        "insert into workflow_definitions (public_id, key, name, kind) values (?, ?, 'D', 'builtin')",
+        "wfd_first" + n,
+        key);
+    try {
+      // A second ACTIVE definition with the same key is rejected by the partial unique index.
+      assertThrows(
+          Exception.class,
+          () ->
+              jdbcTemplate.update(
+                  "insert into workflow_definitions (public_id, key, name, kind) values (?, ?, 'D', 'custom')",
+                  "wfd_dup" + n,
+                  key),
+          "Expected uq_workflow_definitions_active_key to reject a second active definition per key");
+      // kind CHECK rejects an out-of-set value.
+      assertThrows(
+          Exception.class,
+          () ->
+              jdbcTemplate.update(
+                  "insert into workflow_definitions (public_id, key, name, kind) values (?, ?, 'D', 'bogus')",
+                  "wfd_badkind" + n,
+                  "other-key-" + n),
+          "Expected ck_workflow_definitions_kind to reject an out-of-set kind");
+      // Code review D2 — blank key/name are rejected (`not null` alone does NOT reject '').
+      // assertViolatesConstraint pins WHICH constraint fired, so the probe cannot pass on an
+      // unrelated failure (e.g. a public_id format collision).
+      assertViolatesConstraint(
+          assertThrows(
+              Exception.class,
+              () ->
+                  jdbcTemplate.update(
+                      "insert into workflow_definitions (public_id, key, name, kind) values (?, '  ', 'D', 'custom')",
+                      "wfd_blankkey" + n),
+              "Expected ck_workflow_definitions_key_not_blank to reject a blank key"),
+          "ck_workflow_definitions_key_not_blank");
+      assertViolatesConstraint(
+          assertThrows(
+              Exception.class,
+              () ->
+                  jdbcTemplate.update(
+                      "insert into workflow_definitions (public_id, key, name, kind) values (?, ?, '', 'custom')",
+                      "wfd_blankname" + n,
+                      "blank-name-key-" + n),
+              "Expected ck_workflow_definitions_name_not_blank to reject a blank name"),
+          "ck_workflow_definitions_name_not_blank");
+      // Archiving the active row frees the slot for a fresh definition of the same key.
+      jdbcTemplate.update(
+          "update workflow_definitions set archived_at = now() where public_id = ?",
+          "wfd_first" + n);
+      jdbcTemplate.update(
+          "insert into workflow_definitions (public_id, key, name, kind) values (?, ?, 'D', 'custom')",
+          "wfd_rotated" + n,
+          key);
+    } finally {
+      jdbcTemplate.update("delete from workflow_definitions where key = ?", key);
+      jdbcTemplate.update("delete from workflow_definitions where key = ?", "other-key-" + n);
+    }
+  }
+
+  @Test
+  void workflowDefinitionStepsSchemaCarriesExpectedColumnsChecksForeignKeyAndUniqueIndex() {
+    // Story 3m-2 / V48 (AC3): workflow_definition_steps is a core table (id/public_id
+    // wfs_/created_at
+    // /archived_at retention shape asserted by the CORE_TABLES tests). Probe the step columns, the
+    // artifact_kind CHECK (nullable), the DD-1 free-text columns (NO CHECK), the definition_id FK,
+    // and the (definition_id, step_index) unique index.
+    assertColumnType("workflow_definition_steps", "definition_id", "bigint");
+    assertColumnNullable("workflow_definition_steps", "definition_id", false);
+    assertColumnType("workflow_definition_steps", "step_index", "integer");
+    assertColumnNullable("workflow_definition_steps", "step_index", false);
+    assertColumnType("workflow_definition_steps", "step_key", "text");
+    assertColumnNullable("workflow_definition_steps", "step_key", false);
+    assertColumnType("workflow_definition_steps", "runner_kind", "text");
+    assertColumnNullable("workflow_definition_steps", "runner_kind", true);
+    assertColumnType("workflow_definition_steps", "bmad_role", "text");
+    assertColumnNullable("workflow_definition_steps", "bmad_role", true);
+    assertColumnType("workflow_definition_steps", "human_gated", "boolean");
+    assertColumnNullable("workflow_definition_steps", "human_gated", false);
+    assertColumnType("workflow_definition_steps", "produces_artifact_kind", "text");
+    assertColumnNullable("workflow_definition_steps", "produces_artifact_kind", true);
+
+    // human_gated defaults false.
+    String humanGatedDefault =
+        jdbcTemplate.queryForObject(
+            """
+            select column_default
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'workflow_definition_steps'
+              and column_name = 'human_gated'
+            """,
+            String.class);
+    assertEquals(
+        "false",
+        humanGatedDefault,
+        () ->
+            "workflow_definition_steps.human_gated must default false but was: "
+                + humanGatedDefault);
+
+    // ck_workflow_definition_steps_artifact_kind admits the 9 kinds (drift-tested against the
+    // ArtifactKind registry by RegistryContractTest).
+    assertConstraintDefinitionContains("ck_workflow_definition_steps_artifact_kind", "brief");
+    assertConstraintDefinitionContains("ck_workflow_definition_steps_artifact_kind", "ux_design");
+    assertConstraintDefinitionContains("ck_workflow_definition_steps_artifact_kind", "retro");
+
+    // DD-1: step_key and runner_kind are free text — NO DB CHECK constrains them.
+    Integer freeTextChecks =
+        jdbcTemplate.queryForObject(
+            "select count(*) from pg_constraint where conname in"
+                + " ('ck_workflow_definition_steps_step_key', 'ck_workflow_definition_steps_runner_kind')",
+            Integer.class);
+    assertEquals(
+        0,
+        freeTextChecks,
+        () -> "step_key/runner_kind must have NO DB CHECK (DD-1) but found " + freeTextChecks);
+
+    // FK to workflow_definitions.id (ON DELETE RESTRICT ON UPDATE CASCADE).
+    assertConstraintDefinitionContains("fk_workflow_definition_steps_definition", "definition_id");
+    assertConstraintDefinitionContains(
+        "fk_workflow_definition_steps_definition", "ON DELETE RESTRICT");
+    assertConstraintDefinitionContains(
+        "fk_workflow_definition_steps_definition", "ON UPDATE CASCADE");
+
+    // (definition_id, step_index) unique index.
+    List<Map<String, Object>> stepIndex =
+        jdbcTemplate.queryForList(
+            """
+            select indexname, indexdef
+            from pg_indexes
+            where schemaname = 'public'
+              and tablename = 'workflow_definition_steps'
+              and indexname = 'uq_workflow_definition_steps_index'
+            """);
+    assertEquals(
+        1, stepIndex.size(), () -> "Missing V48 unique index uq_workflow_definition_steps_index");
+    String stepIndexDef = ((String) stepIndex.get(0).get("indexdef")).toLowerCase();
+    assertTrue(stepIndexDef.contains("unique"), () -> "must be UNIQUE: " + stepIndexDef);
+    assertTrue(
+        stepIndexDef.contains("definition_id") && stepIndexDef.contains("step_index"),
+        () -> "must cover (definition_id, step_index): " + stepIndexDef);
+    // Code review D1 — PARTIAL on archived_at, matching the other two V48 tables. A full index
+    // would
+    // let an archived tombstone permanently burn its (definition_id, step_index) slot, so 3m-9's
+    // archive-and-replace edit could never reuse an index position.
+    assertTrue(
+        stepIndexDef.contains("archived_at is null"),
+        () -> "must be partial on archived_at is null: " + stepIndexDef);
+
+    // Code review D2 — the blank/negative guards that keep the DB in agreement with the
+    // StepDefinition compact-constructor invariants (a persistable-but-un-hydratable row is a 500).
+    assertConstraintDefinitionContains(
+        "ck_workflow_definition_steps_step_key_not_blank", "btrim(step_key)");
+    assertConstraintDefinitionContains(
+        "ck_workflow_definition_steps_step_index_non_negative", "step_index >= 0");
+
+    // Functional probe: seed a definition, then exercise the unique index, artifact_kind CHECK, and
+    // FK rejection.
+    String n = uniqueRowSuffix();
+    String defPid = "wfd_stepschema" + n;
+    jdbcTemplate.update(
+        "insert into workflow_definitions (public_id, key, name, kind) values (?, ?, 'D', 'custom')",
+        defPid,
+        "step-schema-key-" + n);
+    Long defId =
+        jdbcTemplate.queryForObject(
+            "select id from workflow_definitions where public_id = ?", Long.class, defPid);
+    try {
+      jdbcTemplate.update(
+          "insert into workflow_definition_steps (public_id, definition_id, step_index, step_key,"
+              + " produces_artifact_kind) values (?, ?, 0, 'analyst', 'brief')",
+          "wfs_first" + n,
+          defId);
+      // A second step at the same (definition_id, step_index) is rejected.
+      assertThrows(
+          Exception.class,
+          () ->
+              jdbcTemplate.update(
+                  "insert into workflow_definition_steps (public_id, definition_id, step_index, step_key)"
+                      + " values (?, ?, 0, 'pm')",
+                  "wfs_dupindex" + n,
+                  defId),
+          "Expected uq_workflow_definition_steps_index to reject a duplicate (definition_id, step_index)");
+      // A null produces_artifact_kind is allowed (a step that produces no typed artifact).
+      jdbcTemplate.update(
+          "insert into workflow_definition_steps (public_id, definition_id, step_index, step_key)"
+              + " values (?, ?, 1, 'custom-free-text-key')",
+          "wfs_noartifact" + n,
+          defId);
+      // artifact_kind CHECK rejects an out-of-set non-null value.
+      assertThrows(
+          Exception.class,
+          () ->
+              jdbcTemplate.update(
+                  "insert into workflow_definition_steps (public_id, definition_id, step_index, step_key,"
+                      + " produces_artifact_kind) values (?, ?, 2, 'x', 'bogus_kind')",
+                  "wfs_badkind" + n,
+                  defId),
+          "Expected ck_workflow_definition_steps_artifact_kind to reject an out-of-set kind");
+      // FK rejects a dangling definition_id.
+      assertThrows(
+          Exception.class,
+          () ->
+              jdbcTemplate.update(
+                  "insert into workflow_definition_steps (public_id, definition_id, step_index, step_key)"
+                      + " values (?, 987654321, 0, 'x')",
+                  "wfs_danglingdef" + n),
+          "Expected fk_workflow_definition_steps_definition to reject a dangling definition_id");
+      // Code review D2 — a blank step_key is rejected (`not null` alone does NOT reject '').
+      assertViolatesConstraint(
+          assertThrows(
+              Exception.class,
+              () ->
+                  jdbcTemplate.update(
+                      "insert into workflow_definition_steps (public_id, definition_id, step_index, step_key)"
+                          + " values (?, ?, 5, '   ')",
+                      "wfs_blankkey" + n,
+                      defId),
+              "Expected ck_workflow_definition_steps_step_key_not_blank to reject a blank step_key"),
+          "ck_workflow_definition_steps_step_key_not_blank");
+      // Code review D2 — a negative step_index is rejected (StepDefinition requires >= 0).
+      assertViolatesConstraint(
+          assertThrows(
+              Exception.class,
+              () ->
+                  jdbcTemplate.update(
+                      "insert into workflow_definition_steps (public_id, definition_id, step_index, step_key)"
+                          + " values (?, ?, -1, 'analyst')",
+                      "wfs_negindex" + n,
+                      defId),
+              "Expected ck_workflow_definition_steps_step_index_non_negative to reject step_index < 0"),
+          "ck_workflow_definition_steps_step_index_non_negative");
+      // Code review D1 — archiving a step FREES its (definition_id, step_index) slot, so the 3m-9
+      // archive-and-replace edit can reuse the position. This is the rotation probe the other two
+      // V48 tables already carry; its absence here is what let the non-partial index through.
+      jdbcTemplate.update(
+          "update workflow_definition_steps set archived_at = now() where public_id = ?",
+          "wfs_first" + n);
+      jdbcTemplate.update(
+          "insert into workflow_definition_steps (public_id, definition_id, step_index, step_key,"
+              + " produces_artifact_kind) values (?, ?, 0, 'analyst-v2', 'brief')",
+          "wfs_rotated" + n,
+          defId);
+    } finally {
+      jdbcTemplate.update("delete from workflow_definition_steps where definition_id = ?", defId);
+      jdbcTemplate.update("delete from workflow_definitions where public_id = ?", defPid);
+    }
+  }
+
+  @Test
+  void workflowDefinitionStepOverridesSchemaCarriesColumnsForeignKeysAndActiveIndex() {
+    // Story 3m-2 / V48 (AC4, DD-2): the per-project executor override table — DORMANT in 3m-2 (no
+    // writer until 3m-4). Core retention shape + public_id wso_ format are asserted by the
+    // CORE_TABLES tests. Probe the override columns, the two bigint surrogate FKs, and the
+    // one-active-per-(project,step) partial unique index.
+    assertColumnType("workflow_definition_step_overrides", "project_id", "bigint");
+    assertColumnNullable("workflow_definition_step_overrides", "project_id", false);
+    assertColumnType("workflow_definition_step_overrides", "step_id", "bigint");
+    assertColumnNullable("workflow_definition_step_overrides", "step_id", false);
+    assertColumnType("workflow_definition_step_overrides", "runner_kind", "text");
+    assertColumnNullable("workflow_definition_step_overrides", "runner_kind", true);
+    assertColumnType("workflow_definition_step_overrides", "bmad_role", "text");
+    assertColumnNullable("workflow_definition_step_overrides", "bmad_role", true);
+
+    assertConstraintDefinitionContains("fk_wf_step_overrides_projects", "project_id");
+    assertConstraintDefinitionContains("fk_wf_step_overrides_projects", "ON DELETE RESTRICT");
+    assertConstraintDefinitionContains("fk_wf_step_overrides_step", "step_id");
+    assertConstraintDefinitionContains("fk_wf_step_overrides_step", "ON DELETE RESTRICT");
+
+    List<Map<String, Object>> activeIndex =
+        jdbcTemplate.queryForList(
+            """
+            select indexname, indexdef
+            from pg_indexes
+            where schemaname = 'public'
+              and tablename = 'workflow_definition_step_overrides'
+              and indexname = 'uq_wf_step_overrides_active'
+            """);
+    assertEquals(
+        1,
+        activeIndex.size(),
+        () -> "Missing V48 partial unique index uq_wf_step_overrides_active");
+    String activeDef = ((String) activeIndex.get(0).get("indexdef")).toLowerCase();
+    assertTrue(activeDef.contains("unique"), () -> "must be UNIQUE: " + activeDef);
+    assertTrue(
+        activeDef.contains("project_id") && activeDef.contains("step_id"),
+        () -> "must cover (project_id, step_id): " + activeDef);
+    assertTrue(
+        activeDef.contains("archived_at is null"),
+        () -> "must be partial on archived_at is null: " + activeDef);
+
+    // Functional probe: seed a project + definition + step, then exercise the dedup index, archive
+    // rotation, and FK rejection.
+    // Code review — every seeded row is created INSIDE the try so the finally always reclaims it.
+    // Seeding before the try leaks rows on an early failure, and because these FKs are ON DELETE
+    // RESTRICT the orphans then block unrelated cleanup and poison the shared Postgres
+    // ([[flywayschema-restrict-fk-probe-rows-leak]]).
+    String n = uniqueRowSuffix();
+    String defPid = "wfd_ovr" + n;
+    String seededProjectPid = null;
+    Long seededProjectId = null;
+    Long seededDefId = null;
+    try {
+      final String projectPid = seedProject();
+      seededProjectPid = projectPid;
+      final Long projectId =
+          jdbcTemplate.queryForObject(
+              "select id from projects where public_id = ?", Long.class, projectPid);
+      seededProjectId = projectId;
+      jdbcTemplate.update(
+          "insert into workflow_definitions (public_id, key, name, kind) values (?, ?, 'D', 'builtin')",
+          defPid,
+          "ovr-key-" + n);
+      final Long defId =
+          jdbcTemplate.queryForObject(
+              "select id from workflow_definitions where public_id = ?", Long.class, defPid);
+      seededDefId = defId;
+      jdbcTemplate.update(
+          "insert into workflow_definition_steps (public_id, definition_id, step_index, step_key)"
+              + " values (?, ?, 0, 'analyst')",
+          "wfs_ovr" + n,
+          defId);
+      final Long stepId =
+          jdbcTemplate.queryForObject(
+              "select id from workflow_definition_steps where public_id = ?",
+              Long.class,
+              "wfs_ovr" + n);
+      jdbcTemplate.update(
+          "insert into workflow_definition_step_overrides (public_id, project_id, step_id, runner_kind)"
+              + " values (?, ?, ?, 'claude')",
+          "wso_first" + n,
+          projectId,
+          stepId);
+      // A second ACTIVE override for the same (project, step) is rejected.
+      assertThrows(
+          Exception.class,
+          () ->
+              jdbcTemplate.update(
+                  "insert into workflow_definition_step_overrides (public_id, project_id, step_id, runner_kind)"
+                      + " values (?, ?, ?, 'codex')",
+                  "wso_dup" + n,
+                  projectId,
+                  stepId),
+          "Expected uq_wf_step_overrides_active to reject a second active override per (project, step)");
+      // Archiving frees the slot.
+      jdbcTemplate.update(
+          "update workflow_definition_step_overrides set archived_at = now() where public_id = ?",
+          "wso_first" + n);
+      jdbcTemplate.update(
+          "insert into workflow_definition_step_overrides (public_id, project_id, step_id, runner_kind)"
+              + " values (?, ?, ?, 'codex')",
+          "wso_rotated" + n,
+          projectId,
+          stepId);
+      // FK rejects a dangling step_id.
+      assertThrows(
+          Exception.class,
+          () ->
+              jdbcTemplate.update(
+                  "insert into workflow_definition_step_overrides (public_id, project_id, step_id)"
+                      + " values (?, ?, 987654321)",
+                  "wso_danglingstep" + n,
+                  projectId),
+          "Expected fk_wf_step_overrides_step to reject a dangling step_id");
+    } finally {
+      // Delete children before parents — the FKs are ON DELETE RESTRICT, so a surviving child would
+      // block the parent delete and strand rows in the shared Postgres.
+      if (seededProjectId != null) {
+        jdbcTemplate.update(
+            "delete from workflow_definition_step_overrides where project_id = ?", seededProjectId);
+      }
+      if (seededDefId != null) {
+        jdbcTemplate.update(
+            "delete from workflow_definition_steps where definition_id = ?", seededDefId);
+      }
+      jdbcTemplate.update("delete from workflow_definitions where public_id = ?", defPid);
+      if (seededProjectPid != null) {
+        jdbcTemplate.update("delete from projects where public_id = ?", seededProjectPid);
+      }
+    }
+  }
+
+  @Test
+  void projectsAndWorkflowRunsCarryNullableDefinitionCursorColumnsWithLegacyNullParity() {
+    // Story 3m-2 / V48 (AC5/AC6/AC10): projects gains a nullable workflow_definition_id (the
+    // config),
+    // workflow_runs gains a nullable workflow_definition_id (the snapshot) + current_step_index
+    // (the
+    // cursor). All nullable/additive; a row with null definition is byte-identical to pre-3m
+    // (null-binding parity). No new WorkflowState value / transition edge is added here.
+    assertColumnType("projects", "workflow_definition_id", "bigint");
+    assertColumnNullable("projects", "workflow_definition_id", true);
+    assertColumnType("workflow_runs", "workflow_definition_id", "bigint");
+    assertColumnNullable("workflow_runs", "workflow_definition_id", true);
+    assertColumnType("workflow_runs", "current_step_index", "integer");
+    assertColumnNullable("workflow_runs", "current_step_index", true);
+
+    // Both new FKs point to workflow_definitions.id, ON DELETE RESTRICT ON UPDATE CASCADE.
+    assertConstraintDefinitionContains("fk_projects_workflow_definition", "workflow_definition_id");
+    assertConstraintDefinitionContains("fk_projects_workflow_definition", "ON DELETE RESTRICT");
+    assertConstraintDefinitionContains(
+        "fk_workflow_runs_workflow_definition", "workflow_definition_id");
+    assertConstraintDefinitionContains(
+        "fk_workflow_runs_workflow_definition", "ON DELETE RESTRICT");
+
+    // Code review — Postgres does NOT auto-index the referencing side of a FK, so both new FK child
+    // columns carry an explicit index; without them every RESTRICT check sequentially scans the
+    // referencing table (workflow_runs being the largest in the schema) under lock.
+    assertIndexDefinitionContains("ix_projects_workflow_definition_id", "workflow_definition_id");
+    assertIndexDefinitionContains(
+        "ix_workflow_runs_workflow_definition_id", "workflow_definition_id");
+
+    // Null-binding parity: a project + run with a null definition binding + null cursor insert
+    // cleanly (the legacy pipeline path is untouched — nothing reads the cursor).
+    // Code review — every probe row is inserted INSIDE the try so the finally always reclaims it
+    // ([[flywayschema-restrict-fk-probe-rows-leak]]); the legacy-parity assertions below sit
+    // between
+    // the inserts, so seeding outside the try would strand rows on any assertion failure.
+    String n = uniqueRowSuffix();
+    String run = "run_defcursor" + n;
+    String defPid = "wfd_runbind" + n;
+    try {
+      jdbcTemplate.update(
+          "insert into workflow_runs (public_id, current_state) values (?, 'Inbox')", run);
+      Map<String, Object> row =
+          jdbcTemplate.queryForMap(
+              "select workflow_definition_id, current_step_index from workflow_runs where public_id = ?",
+              run);
+      assertEquals(
+          null, row.get("workflow_definition_id"), "legacy run must have null definition id");
+      assertEquals(null, row.get("current_step_index"), "legacy run must have null cursor");
+
+      // The FK admits a real definition id and rejects a dangling one (proving the binding is
+      // wired).
+      jdbcTemplate.update(
+          "insert into workflow_definitions (public_id, key, name, kind) values (?, ?, 'D', 'builtin')",
+          defPid,
+          "runbind-key-" + n);
+      Long defId =
+          jdbcTemplate.queryForObject(
+              "select id from workflow_definitions where public_id = ?", Long.class, defPid);
+      jdbcTemplate.update(
+          "update workflow_runs set workflow_definition_id = ?, current_step_index = 0 where public_id = ?",
+          defId,
+          run);
+      assertThrows(
+          Exception.class,
+          () ->
+              jdbcTemplate.update(
+                  "update workflow_runs set workflow_definition_id = 987654321 where public_id = ?",
+                  run),
+          "Expected fk_workflow_runs_workflow_definition to reject a dangling definition id");
+    } finally {
+      // Clear the FK reference BEFORE deleting the definition (ON DELETE RESTRICT).
+      jdbcTemplate.update(
+          "update workflow_runs set workflow_definition_id = null, current_step_index = null where public_id = ?",
+          run);
+      jdbcTemplate.update("delete from workflow_runs where public_id = ?", run);
+      jdbcTemplate.update("delete from workflow_definitions where public_id = ?", defPid);
     }
   }
 

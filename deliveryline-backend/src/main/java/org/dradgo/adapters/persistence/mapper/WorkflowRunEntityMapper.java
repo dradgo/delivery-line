@@ -27,6 +27,9 @@ public class WorkflowRunEntityMapper {
         entity.getSpecRejectionLoopCount(),
         entity.isEscalationMarkerSet(),
         entity.getProjectId(),
-        entity.getParentRunId());
+        entity.getParentRunId(),
+        // Story 3m-2 (AC6/AC10) — the definition-cursor fields (null for a legacy run).
+        entity.getWorkflowDefinitionId(),
+        entity.getCurrentStepIndex());
   }
 }

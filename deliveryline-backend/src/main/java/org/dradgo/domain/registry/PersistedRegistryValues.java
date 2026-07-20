@@ -148,4 +148,17 @@ public final class PersistedRegistryValues {
   public static ReviewOutcome stepReviewOutcome(String rawValue) {
     return ReviewOutcome.fromValue(rawValue, "step_reviews.outcome");
   }
+
+  // Story 3m-2 (AC7/AC10) — the two CHECK'd configurable-workflow persistence boundaries. kind is
+  // NOT NULL (fail fast on null/unknown); produces_artifact_kind is nullable (null = "no typed
+  // artifact", a non-null unknown still fails fast). step_key / runner_kind are NOT registry-parsed
+  // boundaries (DD-1, free/opaque text). Dormant in 3m-2 — read by 3m-3.
+  public static DefinitionKind workflowDefinitionKind(String rawValue) {
+    return DefinitionKind.fromValue(rawValue, "workflow_definitions.kind");
+  }
+
+  public static ArtifactKind stepDefinitionArtifactKind(String rawValue) {
+    return ArtifactKind.fromNullableValue(
+        rawValue, "workflow_definition_steps.produces_artifact_kind");
+  }
 }

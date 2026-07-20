@@ -50,6 +50,10 @@ public final class DomainRegistry {
   private static final Set<String> PROJECT_RUNNER_STEPS = valuesOf(ProjectRunnerStep.values());
   private static final Set<String> CONNECTOR_KINDS = valuesOf(ConnectorKind.values());
   private static final Set<String> REVIEW_OUTCOMES = valuesOf(ReviewOutcome.values());
+  // Story 3m-2 (AC7) — configurable-workflow value sets.
+  private static final Set<String> DEFINITION_KINDS = valuesOf(DefinitionKind.values());
+  private static final Set<String> BMAD_STEP_KEYS = valuesOf(BmadStepKey.values());
+  private static final Set<String> ARTIFACT_KINDS = valuesOf(ArtifactKind.values());
   private static final Map<String, String> PUBLIC_ID_PREFIXES = PublicIdPrefixes.prefixMap();
 
   private DomainRegistry() {}
@@ -160,6 +164,18 @@ public final class DomainRegistry {
 
   public static Set<String> reviewOutcomes() {
     return REVIEW_OUTCOMES;
+  }
+
+  public static Set<String> definitionKinds() {
+    return DEFINITION_KINDS;
+  }
+
+  public static Set<String> bmadStepKeys() {
+    return BMAD_STEP_KEYS;
+  }
+
+  public static Set<String> artifactKinds() {
+    return ARTIFACT_KINDS;
   }
 
   public static Map<String, String> publicIdPrefixes() {

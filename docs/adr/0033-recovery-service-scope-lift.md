@@ -1,6 +1,6 @@
 # ADR 0033 — RecoveryService Scope Lift (Retire the Epic-1 Scope-Protection Tripwire)
 
-**Status:** Proposed (2026-07-08) — to be confirmed on merge of story 4-28
+**Status:** Accepted (proposed 2026-07-08; confirmed 2026-07-19 on the merge/close of story 4-28, verified by story 4-29's Epic-4 closure gate)
 **Driver:** Epic 4 (Failure Handling, Recovery & Reconciliation) fulfils the deeper-recovery scope that story 1.18 deliberately deferred. Story 1.18 AC11 installed an ArchUnit tripwire (`RECOVERY_SERVICE_IS_SCOPE_PROTECTED`) that failed the build the moment `RecoveryService` grew any public method beyond its Epic-1 baseline. That tripwire has done its job — it kept the deeper surface out until an epic justified it — and now stands in the way of the very stories (4.5–4.9) it was reserving room for. Story 4.28 (the cross-cutting Epic-4 closure story, mirroring the 1.23 / 2.29 / 3.36 close gates) lifts the tripwire and replaces it with this governing ADR.
 
 ## Context

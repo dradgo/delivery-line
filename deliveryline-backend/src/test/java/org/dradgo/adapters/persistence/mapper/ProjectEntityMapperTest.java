@@ -69,4 +69,38 @@ class ProjectEntityMapperTest {
     assertThat(project.reviewerModelKind()).isEqualTo("claude-opus");
     assertThatCode(() -> mapper.toDomain(entity)).doesNotThrowAnyException();
   }
+
+  // Story 3m-2 (AC5) code-review patch — the workflow_definition_id binding must survive a
+  // read-modify-write. The absence of exactly this test is what let the ProjectManagementService
+  // clobber (the 21-arg back-compat ctor defaulting the field to null) reach review undetected.
+
+  @Test
+  void workflowDefinitionIdRoundTripsThroughToDomain() {
+    ProjectEntity entity = baseEntity();
+    entity.setWorkflowDefinitionId(42L);
+
+    assertThat(mapper.toDomain(entity).workflowDefinitionId()).isEqualTo(42L);
+  }
+
+  @Test
+  void nullWorkflowDefinitionIdStaysNullMeaningLegacyPipeline() {
+    ProjectEntity entity = baseEntity();
+    entity.setWorkflowDefinitionId(null);
+
+    assertThat(mapper.toDomain(entity).workflowDefinitionId()).isNull();
+  }
+
+  @Test
+  void updateRoundTripPreservesWorkflowDefinitionIdRatherThanClobberingIt() {
+    ProjectEntity persisted = baseEntity();
+    persisted.setWorkflowDefinitionId(7L);
+
+    // Read the persisted row into the domain, then write it straight back — the binding must
+    // survive. A caller that rebuilt the Project via the back-compat ctor (dropping the field)
+    // would silently revert the project to the legacy hardcoded pipeline.
+    Project readBack = mapper.toDomain(persisted);
+    ProjectEntity updated = mapper.applyEditableColumns(persisted, readBack);
+
+    assertThat(updated.getWorkflowDefinitionId()).isEqualTo(7L);
+  }
 }

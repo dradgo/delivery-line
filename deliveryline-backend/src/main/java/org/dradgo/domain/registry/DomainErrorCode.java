@@ -360,7 +360,20 @@ public enum DomainErrorCode implements RegistryValue {
   // CONFLICT / ARTIFACT_LINEAGE_ALREADY_EXISTS (409) — no new code. There is NO generic
   // ACTION_NOT_ALLOWED code — the endpoint role gate reuses INVALID_REVIEWER_ROLE_FOR_ENDPOINT.
   INVALID_LINEAGE_RECOVERY_ACTION("INVALID_LINEAGE_RECOVERY_ACTION"),
-  MISSING_LINEAGE_RECOVERY_FIELD("MISSING_LINEAGE_RECOVERY_FIELD");
+  MISSING_LINEAGE_RECOVERY_FIELD("MISSING_LINEAGE_RECOVERY_FIELD"),
+  // Story 3m-2 (AC8) — three configurable-workflow codes (enum + ProblemDetailsCatalog +
+  // problemTypeUris manifest), registered AHEAD of their throw sites (which land in 3m-3/3m-4);
+  // ProblemDetailsCoverageFoundationContract round-trips every registered code, so registration
+  // alone passes the gate. WORKFLOW_DEFINITION_NOT_FOUND (404) is raised when a run/project
+  // references a definition id that resolves to no row (mirror PROJECT_NOT_FOUND).
+  // STEP_EXECUTOR_NOT_CONFIGURED (422) is the fail-fast dispatch guard for a step whose executor
+  // binding (runner_kind / credential) is incomplete — a config-incomplete request, not a
+  // transient fault or an opaque 500 (3m-4's fast-fail per the 3m-1 review). DEFINITION_STEP_INDEX_
+  // CONFLICT (409) is raised when a custom-definition edit would create a duplicate/non-contiguous
+  // step_index (3m-9), a precondition mismatch mirroring ILLEGAL_TRANSITION's CONFLICT.
+  WORKFLOW_DEFINITION_NOT_FOUND("WORKFLOW_DEFINITION_NOT_FOUND"),
+  STEP_EXECUTOR_NOT_CONFIGURED("STEP_EXECUTOR_NOT_CONFIGURED"),
+  DEFINITION_STEP_INDEX_CONFLICT("DEFINITION_STEP_INDEX_CONFLICT");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

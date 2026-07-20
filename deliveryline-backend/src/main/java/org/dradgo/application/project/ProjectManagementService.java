@@ -188,7 +188,12 @@ public class ProjectManagementService {
             command.autoCreatePullRequest(),
             // Task 4 (DinD Testcontainers sidecar) — editable; full-replace from the update
             // command.
-            command.testcontainersEnabled());
+            command.testcontainersEnabled(),
+            // Story 3m-2 (AC5) — preserve the definition binding across an update (the back-compat
+            // 21-arg ctor would default it to null and silently revert the project to the legacy
+            // hardcoded pipeline). Not editable via this command until 3m-4/3m-8 own the write
+            // path.
+            existing.workflowDefinitionId());
     Project updated = projectStore.update(mutated);
     log.info(
         "project updated projectId={} slug={} ticketSourceKind={} repoHostKind={} status={}",
@@ -259,7 +264,11 @@ public class ProjectManagementService {
             // Task 4 — preserve the testcontainers flag across a status-only change (the
             // back-compat
             // 20-arg ctor would default it to false and silently wipe it).
-            existing.testcontainersEnabled());
+            existing.testcontainersEnabled(),
+            // Story 3m-2 — preserve the definition binding across a status-only change (the
+            // back-compat 21-arg ctor would default it to null and silently revert the project to
+            // the legacy hardcoded pipeline).
+            existing.workflowDefinitionId());
     Project disabled = projectStore.update(mutated);
     log.info(
         "project disabled projectId={} slug={} status={}",
@@ -307,7 +316,9 @@ public class ProjectManagementService {
             existing.pushMode(),
             existing.autoCreatePullRequest(),
             // Task 4 — preserve the testcontainers flag across the status-only re-enable.
-            existing.testcontainersEnabled());
+            existing.testcontainersEnabled(),
+            // Story 3m-2 — preserve the definition binding across the status-only re-enable.
+            existing.workflowDefinitionId());
     Project enabled = projectStore.update(mutated);
     log.info(
         "project enabled projectId={} slug={} status={}",

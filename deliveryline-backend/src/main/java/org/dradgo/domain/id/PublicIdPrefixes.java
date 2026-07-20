@@ -52,7 +52,17 @@ public enum PublicIdPrefixes implements RegistryValue {
   // (category, artifact/operation)). The V45 migration MUST create a public_id CHECK with this
   // exact
   // constraint name or RegistryContractTest fails.
-  ARTIFACT_DRIFT_DETECTED("artifactDrift", "adr_", "ck_artifact_drift_detected_public_id_format");
+  ARTIFACT_DRIFT_DETECTED("artifactDrift", "adr_", "ck_artifact_drift_detected_public_id_format"),
+  // Story 3m-2 (AC2/AC3/AC4) — public_id prefixes for the V48 configurable-workflow tables. Each
+  // constraintName() must exactly equal the migration's format-CHECK name so both
+  // extractPublicIdPrefixesFromSql() and FlywaySchemaContractTest's table-derived
+  // ck_<table>_public_id_format probe resolve the same DB constraint (hence the override uses the
+  // FULL table-derived name, NOT the story's shortened ck_wf_step_overrides_public_id_format).
+  WORKFLOW_DEFINITION("workflowDefinition", "wfd_", "ck_workflow_definitions_public_id_format"),
+  WORKFLOW_DEFINITION_STEP(
+      "workflowDefinitionStep", "wfs_", "ck_workflow_definition_steps_public_id_format"),
+  WORKFLOW_STEP_OVERRIDE(
+      "workflowStepOverride", "wso_", "ck_workflow_definition_step_overrides_public_id_format");
 
   /**
    * Mirrors the V1 SQL CHECK shape: {@code <prefix>[A-Za-z0-9_-]{4,64}}. The full public_id

@@ -754,6 +754,35 @@ public final class ProblemDetailsCatalog {
         HttpStatus.BAD_REQUEST,
         "Missing required lineage recovery field",
         false);
+    // Story 3m-2 (AC8) — the three configurable-workflow codes, registered ahead of their
+    // 3m-3/3m-4/3m-9 throw sites. WORKFLOW_DEFINITION_NOT_FOUND mirrors PROJECT_NOT_FOUND (404);
+    // STEP_EXECUTOR_NOT_CONFIGURED is a config-incomplete fast-fail → UNPROCESSABLE_ENTITY (422),
+    // non-retryable (fixing the binding, not retrying, resolves it); DEFINITION_STEP_INDEX_CONFLICT
+    // is a precondition mismatch on a custom-definition edit → CONFLICT (409). Type URIs
+    // auto-derive.
+    register(
+        metadata,
+        DomainErrorCode.WORKFLOW_DEFINITION_NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        "Workflow definition not found",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.STEP_EXECUTOR_NOT_CONFIGURED,
+        // 422: the modern HttpStatus constant is UNPROCESSABLE_CONTENT —
+        // HttpStatusCode.valueOf(422)
+        // resolves to it (UNPROCESSABLE_ENTITY is the deprecated alias), so the
+        // ProblemDetailsMapper
+        // status round-trip in the foundation gate only stays green with the canonical constant.
+        HttpStatus.UNPROCESSABLE_CONTENT,
+        "Step executor not configured",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.DEFINITION_STEP_INDEX_CONFLICT,
+        HttpStatus.CONFLICT,
+        "Definition step index conflict",
+        false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {
       throw new IllegalStateException("ProblemDetailsCatalog must map every DomainErrorCode");

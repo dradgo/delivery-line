@@ -28,13 +28,16 @@ import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.AllowedAction;
+import org.dradgo.domain.registry.ArtifactKind;
 import org.dradgo.domain.registry.ArtifactOperationStatus;
 import org.dradgo.domain.registry.ArtifactOperationType;
 import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.ArtifactType;
+import org.dradgo.domain.registry.BmadStepKey;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.ConnectorRole;
 import org.dradgo.domain.registry.DataClassification;
+import org.dradgo.domain.registry.DefinitionKind;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.DomainRegistry;
 import org.dradgo.domain.registry.DriftCategory;
@@ -135,6 +138,9 @@ class RegistryContractTest {
     assertEquals(registryValues(ProjectRunnerStep.values()), DomainRegistry.projectRunnerSteps());
     assertEquals(registryValues(ConnectorKind.values()), DomainRegistry.connectorKinds());
     assertEquals(registryValues(ReviewOutcome.values()), DomainRegistry.reviewOutcomes());
+    assertEquals(registryValues(DefinitionKind.values()), DomainRegistry.definitionKinds());
+    assertEquals(registryValues(BmadStepKey.values()), DomainRegistry.bmadStepKeys());
+    assertEquals(registryValues(ArtifactKind.values()), DomainRegistry.artifactKinds());
     assertEquals(PublicIdPrefixes.prefixMap(), DomainRegistry.publicIdPrefixes());
   }
 
@@ -303,6 +309,45 @@ class RegistryContractTest {
     assertEquals(
         DomainRegistry.reviewOutcomes(),
         readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "reviewOutcomes"));
+  }
+
+  @Test
+  void definitionKindAndArtifactKindStayAlignedWithSqlChecksAndApiManifest() throws IOException {
+    // Story 3m-2 (AC7 / DD-1) — the two CHECK-backed configurable-workflow value sets are
+    // drift-tested against BOTH their DB CHECK and their API placeholder (like artifactStatuses):
+    // definition_kind -> ck_workflow_definitions_kind; artifact_kind ->
+    // ck_workflow_definition_steps_artifact_kind (the nullable `is null or ... in (...)` shape,
+    // same
+    // as failure_classification). bmad_step_key has NO DB CHECK (DD-1: step_key is free text), so
+    // it
+    // is drift-tested registry-vs-API only, below.
+    assertFalse(
+        DomainRegistry.definitionKinds().isEmpty(), "DefinitionKind registry must not be empty");
+    assertEquals(
+        DomainRegistry.definitionKinds(), extractConstraintValues("ck_workflow_definitions_kind"));
+    assertEquals(
+        DomainRegistry.definitionKinds(),
+        readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "definitionKinds"));
+
+    assertFalse(
+        DomainRegistry.artifactKinds().isEmpty(), "ArtifactKind registry must not be empty");
+    assertEquals(
+        DomainRegistry.artifactKinds(),
+        extractConstraintValues("ck_workflow_definition_steps_artifact_kind"));
+    assertEquals(
+        DomainRegistry.artifactKinds(),
+        readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "artifactKinds"));
+  }
+
+  @Test
+  void bmadStepKeyStaysAlignedWithApiPlaceholderOnly() throws IOException {
+    // Story 3m-2 (AC7 / DD-1) — bmad_step_key is the preset/catalog vocabulary (3m-5), NOT a DB
+    // CHECK (workflow_definition_steps.step_key is free text so custom definitions author arbitrary
+    // keys). So it is drift-tested registry-vs-API only, mirroring the CHECK-less artifactTypes
+    // leg.
+    assertFalse(DomainRegistry.bmadStepKeys().isEmpty(), "BmadStepKey registry must not be empty");
+    assertEquals(
+        DomainRegistry.bmadStepKeys(), readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "bmadStepKeys"));
   }
 
   @Test
@@ -571,6 +616,16 @@ class RegistryContractTest {
     // step_reviews.connector_role boundary (no such column); the reviewer role lives on
     // project_credentials.connector_role, already covered above.
     registryBoundaries.put("step_reviews.outcome", PersistedRegistryValues::stepReviewOutcome);
+    // Story 3m-2 (AC7/AC10) — the two CHECK'd configurable-workflow boundaries.
+    // workflow_definitions
+    // .kind -> DefinitionKind (NOT NULL) and workflow_definition_steps.produces_artifact_kind ->
+    // ArtifactKind (nullable, but a non-null unknown still fails fast). step_key / runner_kind are
+    // NOT registry-parsed boundaries (DD-1, free/opaque text).
+    registryBoundaries.put(
+        "workflow_definitions.kind", PersistedRegistryValues::workflowDefinitionKind);
+    registryBoundaries.put(
+        "workflow_definition_steps.produces_artifact_kind",
+        PersistedRegistryValues::stepDefinitionArtifactKind);
 
     List<DomainException> thrown = new ArrayList<>();
     for (Map.Entry<String, Function<String, ?>> entry : registryBoundaries.entrySet()) {

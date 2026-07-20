@@ -91,7 +91,71 @@ public record Project(
     // buildStageEnabled/lintStageEnabled: a plain flag with no validation, read on the worker
     // thread
     // (detached POJO, no lazy proxy) by ProjectRuntimeConfigResolver.resolveTestcontainersEnabled.
-    boolean testcontainersEnabled) {
+    boolean testcontainersEnabled,
+    // Story 3m-2 (AC5, ADR 0036) — the project's CONFIG: which workflow definition to run. Nullable
+    // Long FK to workflow_definitions.id (NULL = the legacy hardcoded pipeline; selecting a BMAD /
+    // custom definition is opt-in, and a null value is byte-identical to pre-3m). Read/written by
+    // 3m-3/3m-4; 3m-2 only maps it. No invariant — any positive surrogate id is valid, null is the
+    // canonical "legacy pipeline" value. DD-5: appended at the END (not the story's stale "before
+    // archivedAt") to mirror the real projects column order [added last, V48] AND keep the whole
+    // back-compat-constructor chain + every existing new Project(...) site compiling with a null
+    // default.
+    Long workflowDefinitionId) {
+
+  /**
+   * Story 3m-2 back-compat constructor for the pre-3m 21-arg shape (canonical through {@code
+   * testcontainersEnabled}) — defaults {@code workflowDefinitionId} to {@code null} ⇒ the legacy
+   * hardcoded pipeline (pre-3m parity). Keeps every existing 21-arg (and, transitively, every
+   * shorter) {@code new Project(...)} call site — the mapper, seeder, and ~16 test sites —
+   * compiling unchanged; only the create/update/persistence paths that actually carry a definition
+   * binding use the full 22-arg constructor.
+   */
+  public Project(
+      String publicId,
+      String name,
+      String slug,
+      ProjectStatus status,
+      String repositoryUrl,
+      ConnectorKind ticketSourceKind,
+      ConnectorKind repoHostKind,
+      boolean openspecEnabled,
+      String reviewerModelKind,
+      boolean reviewerGatingEnabled,
+      RunnerKind runnerKind,
+      OffsetDateTime createdAt,
+      OffsetDateTime archivedAt,
+      Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds,
+      String buildCommand,
+      boolean buildStageEnabled,
+      List<String> lintCommands,
+      boolean lintStageEnabled,
+      PushMode pushMode,
+      boolean autoCreatePullRequest,
+      boolean testcontainersEnabled) {
+    this(
+        publicId,
+        name,
+        slug,
+        status,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        reviewerModelKind,
+        reviewerGatingEnabled,
+        runnerKind,
+        createdAt,
+        archivedAt,
+        stepRunnerKinds,
+        buildCommand,
+        buildStageEnabled,
+        lintCommands,
+        lintStageEnabled,
+        pushMode,
+        autoCreatePullRequest,
+        testcontainersEnabled,
+        null);
+  }
 
   /**
    * Back-compat constructor for the pre-task-4 20-arg shape (canonical through {@code

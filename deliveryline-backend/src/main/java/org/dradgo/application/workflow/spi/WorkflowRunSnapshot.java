@@ -13,6 +13,11 @@ import org.dradgo.domain.registry.WorkflowState;
  * and the two spec-rejection loop tracking fields ({@code specRejectionLoopCount} + {@code
  * escalationMarkerSet}) that drive the {@code WorkflowInspectionService} surface introduced by
  * story 2.10.
+ *
+ * <p>Story 3m-2 (AC6/AC10) appends the two nullable definition-cursor fields ({@code
+ * workflowDefinitionId} + {@code currentStepIndex}, ADR 0036). Both are {@code null} for a legacy
+ * run — a run with a null definition is byte-identical to pre-3m (null-binding parity). They are
+ * dormant in 3m-2; the write path is 3m-3.
  */
 public record WorkflowRunSnapshot(
     String publicId,
@@ -22,7 +27,9 @@ public record WorkflowRunSnapshot(
     int specRejectionLoopCount,
     boolean escalationMarkerSet,
     String projectId,
-    String parentRunId) {
+    String parentRunId,
+    Long workflowDefinitionId,
+    Integer currentStepIndex) {
 
   public WorkflowRunSnapshot(
       String publicId,
@@ -58,6 +65,34 @@ public record WorkflowRunSnapshot(
         specRejectionLoopCount,
         escalationMarkerSet,
         projectId,
+        null);
+  }
+
+  /**
+   * Story 3m-2 back-compat constructor for the pre-3m 8-arg shape (canonical through {@code
+   * parentRunId}) — defaults the two definition-cursor fields to {@code null} (legacy pipeline, no
+   * cursor). Keeps every existing {@code new WorkflowRunSnapshot(...)} call site compiling
+   * unchanged; only {@code WorkflowRunEntityMapper.toSnapshot} passes the real cursor values.
+   */
+  public WorkflowRunSnapshot(
+      String publicId,
+      WorkflowState currentState,
+      OffsetDateTime archivedAt,
+      Long version,
+      int specRejectionLoopCount,
+      boolean escalationMarkerSet,
+      String projectId,
+      String parentRunId) {
+    this(
+        publicId,
+        currentState,
+        archivedAt,
+        version,
+        specRejectionLoopCount,
+        escalationMarkerSet,
+        projectId,
+        parentRunId,
+        null,
         null);
   }
 

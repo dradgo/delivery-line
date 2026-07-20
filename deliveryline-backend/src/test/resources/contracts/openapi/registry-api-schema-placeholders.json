@@ -96,6 +96,32 @@
     "concern",
     "fail"
   ],
+  "definitionKinds": [
+    "builtin",
+    "custom"
+  ],
+  "bmadStepKeys": [
+    "analyst",
+    "pm",
+    "ux",
+    "architect",
+    "epics",
+    "story",
+    "dev",
+    "review",
+    "retro"
+  ],
+  "artifactKinds": [
+    "brief",
+    "prd",
+    "ux_design",
+    "architecture",
+    "epics",
+    "story",
+    "code",
+    "review",
+    "retro"
+  ],
   "publicIdPrefixes": {
     "workflowRun": "run_",
     "workflowEvent": "evt_",
@@ -116,7 +142,10 @@
     "splitProposal": "splprop_",
     "splitProposalFeedback": "splfb_",
     "integrationConflict": "icf_",
-    "artifactDrift": "adr_"
+    "artifactDrift": "adr_",
+    "workflowDefinition": "wfd_",
+    "workflowDefinitionStep": "wfs_",
+    "workflowStepOverride": "wso_"
   },
   "problemTypeUris": {
     "ILLEGAL_TRANSITION": "https://deliveryline.local/problems/illegal-transition",
@@ -221,6 +250,9 @@
     "REPAIR_ACTION_NOT_IMPLEMENTED": "https://deliveryline.local/problems/repair-action-not-implemented",
     "ARTIFACT_LINEAGE_MISMATCH": "https://deliveryline.local/problems/artifact-lineage-mismatch",
     "INVALID_LINEAGE_RECOVERY_ACTION": "https://deliveryline.local/problems/invalid-lineage-recovery-action",
-    "MISSING_LINEAGE_RECOVERY_FIELD": "https://deliveryline.local/problems/missing-lineage-recovery-field"
+    "MISSING_LINEAGE_RECOVERY_FIELD": "https://deliveryline.local/problems/missing-lineage-recovery-field",
+    "WORKFLOW_DEFINITION_NOT_FOUND": "https://deliveryline.local/problems/workflow-definition-not-found",
+    "STEP_EXECUTOR_NOT_CONFIGURED": "https://deliveryline.local/problems/step-executor-not-configured",
+    "DEFINITION_STEP_INDEX_CONFLICT": "https://deliveryline.local/problems/definition-step-index-conflict"
   }
 }

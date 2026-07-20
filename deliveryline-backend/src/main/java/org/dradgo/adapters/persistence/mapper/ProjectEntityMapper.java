@@ -74,7 +74,10 @@ public class ProjectEntityMapper {
         entity.getPushMode(),
         entity.isAutoCreatePullRequest(),
         // Task 4 (DinD Testcontainers sidecar) — plain boolean, no parsing needed.
-        entity.isTestcontainersEnabled());
+        entity.isTestcontainersEnabled(),
+        // Story 3m-2 (AC5) — the project's definition binding (nullable Long; null = legacy
+        // pipeline). A plain surrogate FK id, no registry parsing.
+        entity.getWorkflowDefinitionId());
   }
 
   public ProjectEntity toNewEntity(Project project) {
@@ -101,6 +104,8 @@ public class ProjectEntityMapper {
     entity.setAutoCreatePullRequest(project.autoCreatePullRequest());
     // Task 4 (DinD Testcontainers sidecar) — per-project flag round-trips on insert.
     entity.setTestcontainersEnabled(project.testcontainersEnabled());
+    // Story 3m-2 (AC5) — the definition binding round-trips on insert (null = legacy pipeline).
+    entity.setWorkflowDefinitionId(project.workflowDefinitionId());
     entity.setCreatedAt(project.createdAt());
     entity.setArchivedAt(project.archivedAt());
     return entity;
@@ -144,6 +149,10 @@ public class ProjectEntityMapper {
     // Task 4 (DinD Testcontainers sidecar) — editable project config; thread it through update so a
     // read-modify-write round-trip stays lossless (mirrors build/lint/delivery config).
     entity.setTestcontainersEnabled(project.testcontainersEnabled());
+    // Story 3m-2 (AC5) — the definition binding is editable project config (no REST surface yet;
+    // 3m-4/3m-8 own editing). Thread it through update so a read-modify-write round-trip stays
+    // lossless (mirrors testcontainers/delivery config).
+    entity.setWorkflowDefinitionId(project.workflowDefinitionId());
     entity.setArchivedAt(project.archivedAt());
     return entity;
   }

@@ -132,6 +132,12 @@ public class ProjectEntity {
   @Column(name = "testcontainers_enabled", nullable = false)
   private boolean testcontainersEnabled;
 
+  // Story 3m-2 (AC5, ADR 0036) — the project's CONFIG: which workflow definition to run (V48).
+  // Nullable bigint FK to workflow_definitions.id (NULL = legacy hardcoded pipeline). Written by
+  // 3m-3/3m-4; a plain Long, no registry parsing (a surrogate FK id, not an enum-like text column).
+  @Column(name = "workflow_definition_id")
+  private Long workflowDefinitionId;
+
   public Long getId() {
     return id;
   }
@@ -294,5 +300,13 @@ public class ProjectEntity {
 
   public void setTestcontainersEnabled(boolean testcontainersEnabled) {
     this.testcontainersEnabled = testcontainersEnabled;
+  }
+
+  public Long getWorkflowDefinitionId() {
+    return workflowDefinitionId;
+  }
+
+  public void setWorkflowDefinitionId(Long workflowDefinitionId) {
+    this.workflowDefinitionId = workflowDefinitionId;
   }
 }
