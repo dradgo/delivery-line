@@ -28,7 +28,13 @@ export type ConfirmationActionId =
   | 'approveWhenStaleOrConflict'
   | 'stopOrchestrator'
   | 'retryOrRecoverConsequential'
-  | 'takeoverWorkflow';
+  | 'takeoverWorkflow'
+  // Story 4.22 — the deeper recovery_operator confirmations (resume/pause via ConfirmationDialog,
+  // rerun via RationaleCaptureDialog). Reconcile + classify have NO catalog entry — their dialogs
+  // (owned by 4.23 / 4.24) carry their own consequence copy.
+  | 'resumeRun'
+  | 'pauseRun'
+  | 'rerunFromStep';
 
 /** Ordered list form of {@link ConfirmationActionId} for iteration (tests). */
 export const CONFIRMATION_ACTION_IDS: readonly ConfirmationActionId[] = [
@@ -37,6 +43,9 @@ export const CONFIRMATION_ACTION_IDS: readonly ConfirmationActionId[] = [
   'stopOrchestrator',
   'retryOrRecoverConsequential',
   'takeoverWorkflow',
+  'resumeRun',
+  'pauseRun',
+  'rerunFromStep',
 ];
 
 /** A single catalogued confirm-before action. */
@@ -110,5 +119,35 @@ export const CONFIRMATION_CATALOG: Record<ConfirmationActionId, ConfirmationCata
     consequenceTemplate:
       'Stops orchestrator dispatch, cancels all in-flight + queued runner executions, records a developer takeover, and transitions the run to the TakenOver terminal state while preserving all prior context (artifacts, audit trail, and the active GitHub PR link). This action is non-reversible in E3 — Epic 4 will add takeover-revert; until then, a taken-over run can only be closed by an operator action.',
     owningStory: '3.28',
+  },
+  // Story 4.22 (AC3) — resume is the low-severity forward action from Paused (safe), so `info`
+  // (NOT takeover's `danger`): it returns the run to its prior executing state + re-enqueues work.
+  resumeRun: {
+    id: 'resumeRun',
+    requiresConfirmation: true,
+    intent: 'info',
+    consequenceTemplate:
+      'Resume will return the run to its prior executing state and re-enqueue runner work.',
+    owningStory: '4.22',
+  },
+  // Story 4.22 (AC6) — pause is reversible (resumable later), so `warning` — a lower severity than
+  // takeover's `danger`.
+  pauseRun: {
+    id: 'pauseRun',
+    requiresConfirmation: true,
+    intent: 'warning',
+    consequenceTemplate:
+      'Pause will halt orchestrator dispatch and cancel in-flight + queued runner work for this run. The run can be resumed later.',
+    owningStory: '4.22',
+  },
+  // Story 4.22 (AC5) — rerun-from-step supersedes artifacts + invalidates the prior approval, so
+  // `danger`. Rendered via the RationaleCaptureDialog (targetStep select + required reasonText).
+  rerunFromStep: {
+    id: 'rerunFromStep',
+    requiresConfirmation: true,
+    intent: 'danger',
+    consequenceTemplate:
+      'Rerun will re-execute the run from the selected safe step. Artifacts produced at or after that step are superseded and the corresponding approval is invalidated.',
+    owningStory: '4.22',
   },
 };

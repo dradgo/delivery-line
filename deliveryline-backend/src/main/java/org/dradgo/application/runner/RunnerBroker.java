@@ -125,6 +125,38 @@ public class RunnerBroker {
   private final java.util.function.Supplier<
           org.dradgo.application.workflow.WorkflowOrchestrationService>
       workflowOrchestrationServiceSupplier;
+  // Story 3h-1 (AC3) — the pre-review build gate, resolved LAZILY through a Supplier so the
+  // broker↔build-stage constructor cycle is broken (BuildStageService reaches the broker's tail via
+  // a continuation lambda; the broker calls tryGateBehindBuild here). Supplies null in the
+  // package-private test ctors and lean contexts, so mock/no-build dispatches run the inline tail
+  // unchanged: handleSuccess gates behind BUILD only when the resolved value is present AND the
+  // terminal execution was a PR_OUTPUT sub-stage with build config + a workspace.
+  private final java.util.function.Supplier<org.dradgo.application.workflow.BuildStageService>
+      buildStageServiceSupplier;
+  // Story 3h-2 (AC3) — the pre-review lint gate, resolved LAZILY via optional SETTER injection (an
+  // ObjectProvider) so NONE of the broker's ctor sites (incl. the ~5 test ctors) change — the
+  // WorkflowInspectionService optional-setter precedent. Supplies null in lean contexts, so
+  // mock/no-lint dispatches run the tail unchanged. The broker↔lint-stage edge is one-way
+  // (LintStageService reaches the tail via a continuation lambda; the broker calls
+  // tryGateBehindLint
+  // here), so there is no construction cycle to break.
+  private java.util.function.Supplier<org.dradgo.application.workflow.LintStageService>
+      lintStageServiceSupplier = () -> null;
+  // Story 3h-4 (AC2) — the pre-review delivery gate, resolved LAZILY via optional SETTER injection
+  // (an ObjectProvider) so NONE of the broker's ctor sites change — the same lint-gate precedent.
+  // Supplies null in lean contexts, so mock/no-delivery-gate dispatches run the delivery tail
+  // unchanged (push inline). The broker↔delivery-gate edge is one-way (the gate only resolves the
+  // push mode and decides park-vs-pass; it runs no command and does not reach the broker back), so
+  // there is no construction cycle to break.
+  private java.util.function.Supplier<org.dradgo.application.workflow.DeliveryGateService>
+      deliveryGateServiceSupplier = () -> null;
+  // Story 3h-5 (AC2/AC4) — stamps ci_status='pending' after a successful backend push, resolved
+  // LAZILY via optional SETTER injection (an ObjectProvider) so NONE of the broker's ctor sites
+  // change (the same lint/delivery-gate precedent). Supplies null in lean test contexts, so
+  // mock/no-CI dispatches run the tail unchanged (nothing stamped ⇒ the sweep finds nothing). The
+  // capability gate + defensive probe live in CiPollStampService, not here.
+  private java.util.function.Supplier<org.dradgo.application.workflow.ci.CiPollStampService>
+      ciPollStampServiceSupplier = () -> null;
   // Story 3.10 (OQ-1) — resolves the run's Linear ticketRef for the EXECUTION-stage deterministic
   // branch (story 3.9 AC2) so prepareWorkspace checks out the right branch and captureAndPush
   // pushes
@@ -306,7 +338,12 @@ public class RunnerBroker {
       // ctors stable; resolves to null when the bean is absent (lean/mock contexts) → no-op ingest.
       org.springframework.beans.factory.ObjectProvider<
               org.dradgo.application.clarification.ClarificationIngestService>
-          clarificationIngestServiceProvider) {
+          clarificationIngestServiceProvider,
+      // Story 3h-1 (AC3) — the pre-review build gate. ObjectProvider keeps the package-private test
+      // ctors stable; resolves to null when the bean is absent (lean/mock contexts) → inline tail.
+      org.springframework.beans.factory.ObjectProvider<
+              org.dradgo.application.workflow.BuildStageService>
+          buildStageServiceProvider) {
     this(
         recordPort,
         eventPort,
@@ -335,7 +372,10 @@ public class RunnerBroker {
         // broker), but kept lazy for ctor-stability symmetry with the other callbacks.
         (java.util.function.Supplier<
                 org.dradgo.application.clarification.ClarificationIngestService>)
-            clarificationIngestServiceProvider::getIfAvailable);
+            clarificationIngestServiceProvider::getIfAvailable,
+        // Story 3h-1 — lazy: resolved at handleSuccess time (breaks the broker↔build-stage cycle).
+        (java.util.function.Supplier<org.dradgo.application.workflow.BuildStageService>)
+            buildStageServiceProvider::getIfAvailable);
   }
 
   RunnerBroker(
@@ -373,6 +413,7 @@ public class RunnerBroker {
         null,
         () -> null,
         null,
+        () -> null,
         () -> null,
         () -> null);
   }
@@ -415,6 +456,7 @@ public class RunnerBroker {
         () -> null,
         null,
         () -> null,
+        () -> null,
         () -> null);
   }
 
@@ -441,7 +483,9 @@ public class RunnerBroker {
       java.util.function.Supplier<org.dradgo.application.integration.IntegrationLinkService>
           integrationLinkServiceSupplier,
       java.util.function.Supplier<org.dradgo.application.clarification.ClarificationIngestService>
-          clarificationIngestServiceSupplier) {
+          clarificationIngestServiceSupplier,
+      java.util.function.Supplier<org.dradgo.application.workflow.BuildStageService>
+          buildStageServiceSupplier) {
     this.recordPort = Objects.requireNonNull(recordPort, "recordPort");
     this.eventPort = Objects.requireNonNull(eventPort, "eventPort");
     this.executionService = Objects.requireNonNull(executionService, "executionService");
@@ -475,7 +519,51 @@ public class RunnerBroker {
         clarificationIngestServiceSupplier == null
             ? () -> null
             : clarificationIngestServiceSupplier;
+    this.buildStageServiceSupplier =
+        buildStageServiceSupplier == null ? () -> null : buildStageServiceSupplier;
     this.objectMapper = new ObjectMapper();
+  }
+
+  /**
+   * Story 3h-2 (AC3) — optional setter injection of the lint gate (via an {@link
+   * org.springframework.beans.factory.ObjectProvider} so the resolution is lazy + absent-tolerant).
+   * Keeps every broker ctor site untouched; production Spring wires the {@code LintStageService}
+   * bean, lean test contexts leave the default {@code () -> null} (no lint gate ⇒ tail unchanged).
+   */
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setLintStageServiceProvider(
+      org.springframework.beans.factory.ObjectProvider<
+              org.dradgo.application.workflow.LintStageService>
+          provider) {
+    this.lintStageServiceSupplier = provider::getIfAvailable;
+  }
+
+  /**
+   * Story 3h-4 (AC2) — optional setter injection of the delivery gate (via an {@link
+   * org.springframework.beans.factory.ObjectProvider} so the resolution is lazy + absent-tolerant).
+   * Keeps every broker ctor site untouched; production Spring wires the {@code DeliveryGateService}
+   * bean, lean test contexts leave the default {@code () -> null} (no delivery gate ⇒ push inline).
+   */
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setDeliveryGateServiceProvider(
+      org.springframework.beans.factory.ObjectProvider<
+              org.dradgo.application.workflow.DeliveryGateService>
+          provider) {
+    this.deliveryGateServiceSupplier = provider::getIfAvailable;
+  }
+
+  /**
+   * Story 3h-5 (AC2/AC4) — optional setter injection of the CI-poll stamp service (via an {@link
+   * org.springframework.beans.factory.ObjectProvider} so the resolution is lazy + absent-tolerant).
+   * Keeps every broker ctor site untouched; production Spring wires the {@code CiPollStampService}
+   * bean, lean test contexts leave the default {@code () -> null} (no stamp ⇒ tail unchanged).
+   */
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setCiPollStampServiceProvider(
+      org.springframework.beans.factory.ObjectProvider<
+              org.dradgo.application.workflow.ci.CiPollStampService>
+          provider) {
+    this.ciPollStampServiceSupplier = provider::getIfAvailable;
   }
 
   // Story 3a-1 test ctor (repo seam + a resolved orchestration instance) — wraps the instance in a
@@ -518,6 +606,7 @@ public class RunnerBroker {
         repositoryWorkspaceService,
         () -> workflowOrchestrationService,
         null,
+        () -> null,
         () -> null,
         () -> null);
   }
@@ -811,7 +900,10 @@ public class RunnerBroker {
               resolvedTicketRef,
               executionSubStage,
               // Story 3c-7 (AC2) — per-run OpenSpec opt-in resolved from the run's Project.
-              resolveDispatchOpenSpec(workflowRunId));
+              resolveDispatchOpenSpec(workflowRunId),
+              // DinD Testcontainers Task 6 — per-run testcontainers opt-in resolved from the run's
+              // Project.
+              resolveDispatchTestcontainers(workflowRunId));
       RunnerDispatchAck ack = runnerAdapter.dispatch(request);
 
       // Story 3.2 AC8: emit RUNNER_DISPATCHED on the docker path (replaces the legacy
@@ -1114,7 +1206,10 @@ public class RunnerBroker {
                 composed.resolvedTicketRef(),
                 composed.executionSubStage(),
                 // Story 3c-7 (AC2) — per-run OpenSpec opt-in resolved from the run's Project.
-                resolveDispatchOpenSpec(workflowRunId));
+                resolveDispatchOpenSpec(workflowRunId),
+                // DinD Testcontainers Task 6 — per-run testcontainers opt-in resolved from the
+                // run's Project.
+                resolveDispatchTestcontainers(workflowRunId));
         // Story 3.19 (AC5) — time the adapter dispatch (histogram, tagged stage) + count
         // dispatches.
         io.micrometer.core.instrument.Timer.Sample dispatchSample =
@@ -1146,7 +1241,17 @@ public class RunnerBroker {
           idempotencyService.complete(
               idempotencyKey, runnerExecutionId, IdempotencyRecordStatus.FAILED);
         }
-        FailureCategory category = FailureCategory.RUNNER_CRASH;
+        // DinD Testcontainers Task 6 — a DockerRunnerAdapter dispatch failure is RUNNER_CRASH by
+        // default, EXCEPT when the adapter already knows the precise category (today: a
+        // pre-dispatch DinD sidecar provisioning failure), signalled via the typed
+        // RunnerDispatchException so it is recorded as TESTCONTAINERS_INFRA_FAILED instead of the
+        // generic crash bucket.
+        FailureCategory category =
+            dispatchError
+                    instanceof
+                    org.dradgo.application.runner.spi.RunnerDispatchException typedFailure
+                ? typedFailure.failureCategory()
+                : FailureCategory.RUNNER_CRASH;
         recordFailedBestEffort(runnerExecutionId, category);
         if (isReview) {
           // Story 3d-2 (AC6) — graceful degrade: a reviewer dispatch fault never strands the run.
@@ -1237,6 +1342,35 @@ public class RunnerBroker {
         project.publicId(),
         openspec);
     return openspec;
+  }
+
+  /**
+   * DinD Testcontainers Task 6 — the per-run testcontainers opt-in resolved from the run's Project
+   * via {@link
+   * org.dradgo.application.project.ProjectRuntimeConfigResolver#resolveTestcontainersEnabled} and
+   * threaded onto the {@link RunnerDispatchRequest} so {@code DockerRunnerAdapter} gates the DinD
+   * sidecar provisioning from {@code request.testcontainersEnabled()} — mirrors {@link
+   * #resolveDispatchOpenSpec} exactly (R2: resolve-in-broker, pass-via-request). The {@code
+   * default} project seeds {@code false} (no global fallback property exists for this flag), so a
+   * single-project deployment that never opts in stays byte-identical (no sidecar). Falls back to
+   * {@code false} only in the lean broker unit contexts where no resolver is wired.
+   */
+  private boolean resolveDispatchTestcontainers(String workflowRunId) {
+    if (projectRuntimeConfigResolver == null) {
+      log.info(
+          "testcontainers resolved workflowRunId={} projectId={} testcontainers=false"
+              + " source=no_resolver",
+          workflowRunId,
+          "none");
+      return false;
+    }
+    boolean testcontainers =
+        projectRuntimeConfigResolver.resolveTestcontainersEnabled(workflowRunId);
+    log.info(
+        "testcontainers resolved workflowRunId={} testcontainers={} source=run_project",
+        workflowRunId,
+        testcontainers);
+    return testcontainers;
   }
 
   /**
@@ -1493,6 +1627,17 @@ public class RunnerBroker {
       if (row.status() == RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER) {
         log.info(
             "onResult ignored runnerExecutionId={} workflowRunId={} reason=cancelled_for_takeover",
+            runnerExecutionId,
+            workflowRunId);
+        completionOutcome = "late_result";
+        return;
+      }
+      // Story 4.8 (AC4) — a container that finishes inside the pause race window (pause flipped
+      // the row while the container was still exiting) is logged + ignored, mirroring the takeover
+      // arm above. Driving a transition here would attempt an illegal edge on a Paused run.
+      if (row.status() == RunnerExecutionStatus.CANCELLED_FOR_PAUSE) {
+        log.info(
+            "onResult ignored runnerExecutionId={} workflowRunId={} reason=cancelled_for_pause",
             runnerExecutionId,
             workflowRunId);
         completionOutcome = "late_result";
@@ -2059,10 +2204,12 @@ public class RunnerBroker {
     // of
     // the injected provider key). On a hit: record the execution FAILED with runner_secret_leak,
     // emit RUNNER_FAILED with leakedFile + category names (never a value), quarantine the workspace
-    // (Trap T10), and return. Per AC4 this does NOT drive the workflow-run state (the
-    // EXECUTING→FAILED
-    // transition allowlist is deliberately narrow — story 1.13 — and leak handling is scoped to the
-    // execution + event + quarantine); operator-driven recovery owns the run-state path.
+    // (Trap T10), drive the run to FAILED, and return. The leak previously stopped at the
+    // execution + event + quarantine on the theory that operator-driven recovery owned the
+    // run-state path — but nothing ever moved the run, so it sat in EXECUTING forever: the timeout
+    // scan skips a terminal execution row and RecommendationService offers no actions for a
+    // non-FAILED run. Driving FAILED here is what opens the recovery path it already classifies as
+    // a risky-retry category.
     // Story 3.5 review note (defaultKind coupling): the scan re-resolves the injected key for
     // runnerProperties.docker().defaultKind(), which is the SAME source the dispatch path uses when
     // building the RunnerDispatchRequest (see :288 above) — so the substring detector compares
@@ -2122,6 +2269,11 @@ public class RunnerBroker {
           runnerExecutionId,
           secretScan.leakedFile(),
           secretScan.detectedCategories());
+      driveWorkflowFailed(
+          workflowRunId,
+          runnerExecutionId,
+          FailureCategory.RUNNER_SECRET_LEAK,
+          "runner_secret_leak");
       log.warn(
           "onResult secret-leak runnerExecutionId={} workflowRunId={} leakedFile={} categories={}",
           runnerExecutionId,
@@ -2149,6 +2301,412 @@ public class RunnerBroker {
     // RuntimeExceptions).
     captureTokenUsage(workflowRunId, runnerExecutionId, parsed);
 
+    // Story 3.12 (AC1 / Task 3) — derive the EXECUTION sub-stage ONCE (drives the build-gate
+    // decision below + the deferred/inline delivery tail). Null for non-EXECUTION stages. The
+    // sub-stage is run-level (driven by "an approved plan exists") and stable mid-execution.
+    ExecutionSubStage executionSubStage =
+        row.stage() == RunnerStage.EXECUTION
+            ? contextBundleService.deriveExecutionSubStage(workflowRunId)
+            : null;
+
+    // Story 3h-1 (AC3) — when the build gate applies to a PR_OUTPUT success, defer the delivery
+    // tail
+    // (captureAndPush + WaitingForReview + reviewer enqueue) behind a backend-side BUILD run:
+    // BuildStageService reserves a BUILD execution row + registers the afterCommit build hook, and
+    // the tail runs (via the continuation below) only on BUILD success. When the gate does not
+    // apply
+    // (disabled / no command / no workspace / non-pr-output / no build service) the tail runs
+    // INLINE
+    // exactly where captureAndPush fired pre-3h (byte-identical). 3h-4 later moves this behind the
+    // WaitingForDelivery gate.
+    final String prOutputArtifactIdFinal = prOutputArtifactId;
+    final String prOutputResolvedDiffFinal = prOutputResolvedDiff;
+    final ExecutionSubStage executionSubStageFinal = executionSubStage;
+    // The INLINE delivery step (captureAndPush + validate/enrich + recordCompleted + auto-advance),
+    // captured as a lambda so the BUILD, LINT, and DELIVERY gates can chain in front of it. In
+    // `auto` push mode this fires exactly where captureAndPush did pre-3h (byte-identical).
+    Runnable deliverInline =
+        () ->
+            completeExecutionTailAndAdvance(
+                runnerExecutionId,
+                workflowRunId,
+                row,
+                parsed,
+                correlationId,
+                prOutputArtifactIdFinal,
+                prOutputResolvedDiffFinal,
+                executionSubStageFinal);
+    // Story 3h-4 (AC2) — the DELIVERY gate sits BETWEEN the lint gate and the inline delivery: in
+    // `auto` push mode (or no gate / no workspace) it is a pass-through that runs deliverInline; in
+    // `manual`/`approve` mode it finalizes the producing PR_OUTPUT rex and PARKS the run at
+    // WaitingForDelivery instead of pushing (approve_delivery later resumes/records). This is the
+    // chain's new innermost step: build -> lint -> DELIVERY -> deliver.
+    Runnable tail =
+        () ->
+            tryDeliveryGateOrDeliver(
+                workflowRunId,
+                runnerExecutionId,
+                correlationId,
+                row,
+                executionSubStageFinal,
+                deliverInline);
+    // Story 3h-2 (AC3) — the LINT gate chains AFTER the BUILD gate onto the SAME tail: BUILD's
+    // success continuation is not the tail itself but tryLintGateOrTail, which runs the
+    // backend-side
+    // lint (parking at WaitingForLintApproval on a critical finding) and only runs the tail when
+    // lint
+    // produces no critical finding (or the lint gate does not apply). Post-3h-4 the tail it runs is
+    // the DELIVERY gate (which itself decides push-vs-park), not the raw inline delivery.
+    Runnable afterBuild =
+        () ->
+            tryLintGateOrTail(
+                workflowRunId, runnerExecutionId, correlationId, row, executionSubStageFinal, tail);
+
+    org.dradgo.application.workflow.BuildStageService buildStageService =
+        buildStageServiceSupplier.get();
+    boolean gatedBehindBuild = false;
+    if (buildStageService != null
+        && row.stage() == RunnerStage.EXECUTION
+        && executionSubStage == ExecutionSubStage.PR_OUTPUT) {
+      gatedBehindBuild =
+          buildStageService.tryGateBehindBuild(
+              workflowRunId, runnerExecutionId, correlationId, afterBuild);
+    }
+    if (!gatedBehindBuild) {
+      afterBuild.run();
+    }
+  }
+
+  /**
+   * Story 3h-2 (AC3/AC4) — the LINT gate seam: for a PR_OUTPUT success (post-BUILD), reserve a LINT
+   * execution + defer the backend-side lint run behind the tail. When the lint gate applies it
+   * takes ownership of the tail (running it only on no-critical findings, else parking at
+   * WaitingForLintApproval); when it does not apply (disabled / no commands / no workspace /
+   * non-pr-output / no lint service) the tail runs directly (byte-identical to pre-3h-2).
+   */
+  private void tryLintGateOrTail(
+      String workflowRunId,
+      String runnerExecutionId,
+      String correlationId,
+      RunnerExecutionSnapshot row,
+      ExecutionSubStage executionSubStage,
+      Runnable tail) {
+    org.dradgo.application.workflow.LintStageService lintStageService =
+        lintStageServiceSupplier.get();
+    boolean gatedBehindLint = false;
+    if (lintStageService != null
+        && row.stage() == RunnerStage.EXECUTION
+        && executionSubStage == ExecutionSubStage.PR_OUTPUT) {
+      gatedBehindLint =
+          lintStageService.tryGateBehindLint(workflowRunId, runnerExecutionId, correlationId, tail);
+    }
+    if (!gatedBehindLint) {
+      tail.run();
+    }
+  }
+
+  /**
+   * Story 3h-4 (AC2/AC4) — the DELIVERY gate seam: for a PR_OUTPUT success (post-BUILD, post-LINT),
+   * resolve the run's push mode. In {@code auto} mode (or when no delivery-gate bean is wired, or
+   * there is no workspace/repoRef to deliver) it is a pass-through — the inline delivery runs
+   * exactly where {@code captureAndPush} fired pre-3h. In {@code manual}/{@code approve} mode the
+   * gate finalizes the producing execution and PARKS the run at {@code WaitingForDelivery} (taking
+   * ownership of the tail — {@code approve_delivery} later performs the push or records the manual
+   * delivery). The gate applies only to a PR_OUTPUT EXECUTION success, mirroring the build/lint
+   * gates.
+   */
+  private void tryDeliveryGateOrDeliver(
+      String workflowRunId,
+      String runnerExecutionId,
+      String correlationId,
+      RunnerExecutionSnapshot row,
+      ExecutionSubStage executionSubStage,
+      Runnable deliverInline) {
+    org.dradgo.application.workflow.DeliveryGateService deliveryGateService =
+        deliveryGateServiceSupplier.get();
+    boolean gatedBehindDelivery = false;
+    if (deliveryGateService != null
+        && row.stage() == RunnerStage.EXECUTION
+        && executionSubStage == ExecutionSubStage.PR_OUTPUT) {
+      gatedBehindDelivery =
+          deliveryGateService.tryGateBehindDelivery(
+              workflowRunId, runnerExecutionId, correlationId, deliverInline);
+    }
+    if (!gatedBehindDelivery) {
+      deliverInline.run();
+    }
+  }
+
+  /**
+   * Story 3h-2 (AC5; code-review 2026-07-06, Decision 4 P1) — resume the delivery tail after an
+   * operator {@code approve_lint} dismissed the lint gate. Re-derivable from {@code
+   * (workflowRunId)} alone (the in-memory tail continuation is long gone by approval time): resolve
+   * the producing PR_OUTPUT execution, push its workspace, ENRICH the ingested pr-output artifact
+   * with the authoritative push refs + diff via the SAME {@link #enrichPrOutputArtifact} + {@link
+   * #linkGitHubPrBestEffort} helpers the pass path uses (one seam, two callers) — so the advisory
+   * reviewer reads an enriched/reviewable artifact rather than the diff-less v1
+   * ([[proutput-advisory-review-missing-diff]]) — finalize the producing execution, and enqueue the
+   * reviewer. The {@code WaitingForLintApproval -> WaitingForReview} transition is owned by {@code
+   * LintApprovalService.approveLint} (synchronous, in the command tx); by the time this runs the
+   * run is already {@code WaitingForReview}. Idempotent — {@code captureAndPush} self-gates on
+   * "workspace exists + uncommitted changes", the enrich UPDATE is keyed per rex, the finalize
+   * tolerates an already-terminal row, and the reviewer enqueue is idempotency-keyed — so a
+   * replayed approval neither double-pushes nor double-enqueues (AC8). Called post-commit by {@code
+   * LintApprovalService}.
+   */
+  public void resumeDeliveryTailFromGate(String workflowRunId, String correlationId) {
+    resumeDeliveryTailFromGate(workflowRunId, correlationId, false);
+  }
+
+  public void resumeDeliveryTailFromGateOrThrow(String workflowRunId, String correlationId) {
+    resumeDeliveryTailFromGate(workflowRunId, correlationId, true);
+  }
+
+  private void resumeDeliveryTailFromGate(
+      String workflowRunId, String correlationId, boolean failOnPushFailure) {
+    Optional<RunnerExecutionSnapshot> prOutput =
+        recordPort.findLatestByWorkflowRunPublicIdAndStage(workflowRunId, RunnerStage.EXECUTION);
+    if (prOutput.isEmpty()) {
+      log.warn(
+          "resumeDeliveryTailFromGate found no producing EXECUTION execution workflowRunId={} — "
+              + "cannot resume",
+          workflowRunId);
+      return;
+    }
+    String prOutputRunnerExecutionId = prOutput.get().publicId();
+
+    // captureAndPush — best-effort. The run has already left the lint gate (approve_lint
+    // transitioned
+    // it to WaitingForReview in-tx) and WaitingForReview has no ->Failed edge, so a push rejection
+    // is
+    // logged (operator/reconciliation owns an unpushed branch) rather than driving the run Failed.
+    Optional<RepositoryWorkspaceService.RepositoryPushOutcome> pushOutcome = Optional.empty();
+    if (repositoryWorkspaceService != null) {
+      try {
+        pushOutcome = repositoryWorkspaceService.captureAndPush(prOutputRunnerExecutionId);
+      } catch (GitCommandException pushFailure) {
+        if (failOnPushFailure) {
+          throw pushFailure;
+        }
+        log.warn(
+            "resumeDeliveryTailFromGate git push rejected workflowRunId={} runnerExecutionId={} "
+                + "category={} (proceeding to review)",
+            workflowRunId,
+            prOutputRunnerExecutionId,
+            pushFailure.failureCategory().value());
+      }
+    }
+
+    // Decision 4 (P1) — enrich the ingested pr-output artifact with the AUTHORITATIVE
+    // captureAndPush
+    // refs + diff, exactly as the pass path does (validateAndEnrichPrOutput ->
+    // enrichPrOutputArtifact
+    // + linkGitHubPrBestEffort). The in-memory runner result is gone by approve time, so the
+    // enrichment base (prRef) + artifact id are re-derived from the persisted latest pr-output
+    // artifact. Only runs when captureAndPush produced authoritative refs (a changes-bearing push);
+    // a clean/no-op push leaves the artifact as-is (no Fail drive — the run already left the gate).
+    if (pushOutcome.isPresent()) {
+      ResolvedPrOutputArtifact resolved = resolvePrOutputArtifactForResume(workflowRunId);
+      if (resolved != null) {
+        RepositoryWorkspaceService.RepositoryPushOutcome actual = pushOutcome.get();
+        String effectiveDiff =
+            actual.diff() != null && !actual.diff().isBlank()
+                ? boundPrOutputDiff(
+                    actual.diff(), prOutputRunnerExecutionId, workflowRunId, resolved.artifactId())
+                : null;
+        enrichPrOutputArtifact(
+            prOutputRunnerExecutionId,
+            workflowRunId,
+            resolved.artifactId(),
+            resolved.prRef(),
+            actual,
+            effectiveDiff,
+            correlationId);
+        linkGitHubPrBestEffort(prOutputRunnerExecutionId, workflowRunId, actual, correlationId);
+      } else {
+        log.warn(
+            "resumeDeliveryTailFromGate could not resolve the pr-output artifact to enrich "
+                + "workflowRunId={} — advancing to review without enrichment",
+            workflowRunId);
+      }
+    }
+
+    // Finalize the producing PR_OUTPUT execution (it was finalized at park; a terminal row is a
+    // no-op). Idempotent.
+    try {
+      executionService.recordCompleted(prOutputRunnerExecutionId);
+    } catch (DomainException alreadyTerminal) {
+      if (alreadyTerminal.errorCode() != DomainErrorCode.ILLEGAL_TRANSITION) {
+        throw alreadyTerminal;
+      }
+      log.info(
+          "resumeDeliveryTailFromGate producing execution already terminal runnerExecutionId={}",
+          prOutputRunnerExecutionId);
+    }
+
+    // Story 3h-5 (AC2/AC4) — the APPROVE-mode (lint-approve resume) delivery path: after a
+    // successful, changes-bearing backend push, stamp the run pending a CI poll (capability-gated
+    // inside the stamp service). A clean/no-op push or a manual project is never stamped.
+    stampCiPollPendingIfCommitted(workflowRunId, pushOutcome);
+
+    // Enqueue the reviewer over the now-enriched artifact. The run is ALREADY WaitingForReview
+    // (approve_lint transitioned it in-tx), so this only enqueues — no transition here.
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        workflowOrchestrationServiceSupplier.get();
+    if (orchestration != null) {
+      orchestration.enqueueReviewerAfterLintApproval(
+          workflowRunId, prOutputRunnerExecutionId, correlationId);
+    } else {
+      log.warn(
+          "resumeDeliveryTailFromGate cannot enqueue reviewer (no orchestration bean) "
+              + "workflowRunId={}",
+          workflowRunId);
+    }
+  }
+
+  /**
+   * Story 3h-4 (AC4, Decision 4) — the MANUAL-mode twin of {@link #resumeDeliveryTailFromGate}:
+   * advance a run the operator delivered OUT-OF-BAND (approve_delivery under {@code manual} push
+   * mode) WITHOUT touching git. This is the {@code ingestManualResult}
+   * "advance-without-side-effect" pattern: the backend pushed NOTHING (the operator pushed by
+   * hand), so there is no captureAndPush / enrich / PR-create — only the reviewer enqueue over the
+   * already-ingested pr-output artifact. The {@code WaitingForDelivery -> WaitingForReview}
+   * transition + the {@code delivery.recordedManually} audit event are owned by {@code
+   * DeliveryApprovalService.approveDelivery} (synchronous, in the command tx); by the time this
+   * runs post-commit the run is already {@code WaitingForReview}. Idempotent — the finalize
+   * tolerates an already-terminal producing row and the reviewer enqueue is idempotency-keyed, so a
+   * replayed approve neither re-finalizes nor double-enqueues. Called post-commit by {@code
+   * DeliveryApprovalService}.
+   *
+   * <p>The advisory reviewer degrades best-effort without a backend push (the documented
+   * manual-push limitation, consistent with 3h-5 AC4: "manual push = the backend pushed nothing, so
+   * there is nothing of ours to read").
+   */
+  public void recordManualDeliveryAndEnqueueReviewer(String workflowRunId, String correlationId) {
+    Optional<RunnerExecutionSnapshot> prOutput =
+        recordPort.findLatestByWorkflowRunPublicIdAndStage(workflowRunId, RunnerStage.EXECUTION);
+    if (prOutput.isEmpty()) {
+      log.warn(
+          "recordManualDeliveryAndEnqueueReviewer found no producing EXECUTION execution "
+              + "workflowRunId={} — cannot enqueue reviewer",
+          workflowRunId);
+      return;
+    }
+    String prOutputRunnerExecutionId = prOutput.get().publicId();
+
+    // Finalize the producing PR_OUTPUT execution (it was finalized at gate park; a terminal row is
+    // a
+    // no-op). Idempotent. NEVER captureAndPush / createPullRequest — the delivery was out-of-band.
+    try {
+      executionService.recordCompleted(prOutputRunnerExecutionId);
+    } catch (DomainException alreadyTerminal) {
+      if (alreadyTerminal.errorCode() != DomainErrorCode.ILLEGAL_TRANSITION) {
+        throw alreadyTerminal;
+      }
+      log.info(
+          "recordManualDeliveryAndEnqueueReviewer producing execution already terminal "
+              + "runnerExecutionId={}",
+          prOutputRunnerExecutionId);
+    }
+
+    log.info(
+        "recordManualDeliveryAndEnqueueReviewer workflowRunId={} runnerExecutionId={} "
+            + "(manual push — no git, enqueue reviewer only)",
+        workflowRunId,
+        prOutputRunnerExecutionId);
+    org.dradgo.application.workflow.WorkflowOrchestrationService orchestration =
+        workflowOrchestrationServiceSupplier.get();
+    if (orchestration != null) {
+      orchestration.enqueueReviewerAfterLintApproval(
+          workflowRunId, prOutputRunnerExecutionId, correlationId);
+    } else {
+      log.warn(
+          "recordManualDeliveryAndEnqueueReviewer cannot enqueue reviewer (no orchestration bean) "
+              + "workflowRunId={}",
+          workflowRunId);
+    }
+  }
+
+  /**
+   * Story 3h-2 (code-review 2026-07-06) — re-derive the pr-output artifact id + enrichment base
+   * (prRef) for the {@code approve_lint} resume from persisted state (the in-memory runner result
+   * is gone). Returns {@code null} when no pr-output artifact exists; falls back to an empty prRef
+   * object when the body is missing/unparseable (enrichment still writes the authoritative refs +
+   * diff — only the runner-authored fields like a PR title are then absent).
+   */
+  private ResolvedPrOutputArtifact resolvePrOutputArtifactForResume(String workflowRunId) {
+    Optional<org.dradgo.application.artifact.ArtifactRecordSnapshot> latest =
+        artifactOperationService.findLatestArtifact(workflowRunId, ArtifactType.PR_OUTPUT);
+    if (latest.isEmpty()) {
+      return null;
+    }
+    String artifactId = latest.get().publicId();
+    JsonNode prRef = objectMapper.createObjectNode();
+    Optional<byte[]> body = artifactOperationService.readArtifactBytes(latest.get().storageRef());
+    if (body.isPresent() && body.get().length > 0) {
+      try {
+        JsonNode parsed = objectMapper.readTree(body.get());
+        if (parsed.isObject()) {
+          prRef = parsed;
+        }
+      } catch (java.io.IOException parseFailure) {
+        log.warn(
+            "resumeDeliveryTailFromGate pr-output artifact body unparseable workflowRunId={} "
+                + "artifactId={} — enriching a minimal ref",
+            workflowRunId,
+            artifactId);
+      }
+    }
+    return new ResolvedPrOutputArtifact(artifactId, prRef);
+  }
+
+  private record ResolvedPrOutputArtifact(String artifactId, JsonNode prRef) {}
+
+  /**
+   * Story 3h-1 (Task 6, AC3) — the delivery tail extracted so a build gate can precede it:
+   * captureAndPush (with git-push-failure handling) + pr-output validate/enrich + recordCompleted +
+   * RUNNER_COMPLETED + the stage auto-advance (onSpecStageSucceeded / onPlanStageSucceeded /
+   * onPrOutputStageSucceeded). Runs INLINE where captureAndPush fired pre-3h (byte-identical) when
+   * the build gate does not apply, or as the deferred continuation invoked by {@code
+   * BuildStageService} on BUILD success when it does. Package-private so BuildStageService's
+   * continuation (a broker-side lambda) can reach it; 3h-4 later moves this seam behind the
+   * WaitingForDelivery gate — keep it a single clean call site.
+   */
+  /**
+   * Story 3h-5 (AC2/AC4) — stamp {@code ci_status='pending'} after a successful backend push,
+   * shared by the two and only two backend-push tail sites ({@link
+   * #completeExecutionTailAndAdvance} auto / inline, {@link #resumeDeliveryTailFromGate}
+   * approve-mode resume). Only a changes-bearing push ({@code committed()==true}) is stamped; the
+   * capability gate + defensive probe live in {@code CiPollStampService}. A lean context with no
+   * stamp service wired is a no-op (tail unchanged).
+   */
+  private void stampCiPollPendingIfCommitted(
+      String workflowRunId,
+      Optional<RepositoryWorkspaceService.RepositoryPushOutcome> pushOutcome) {
+    org.dradgo.application.workflow.ci.CiPollStampService stamp = ciPollStampServiceSupplier.get();
+    if (stamp == null) {
+      return;
+    }
+    if (pushOutcome.isPresent() && pushOutcome.get().committed()) {
+      stamp.stampIfCapable(workflowRunId, pushOutcome.get().commitSha());
+    } else {
+      // Story 3h-5 review (D3): no new commit. If this run is mid CI-fix-loop, its re-dispatch
+      // produced nothing to re-poll — escalate the dead-end instead of leaving it silently parked
+      // red. A no-op for every non-CI-fix run (the common case).
+      stamp.escalateStalledCiFixIfNoCommit(workflowRunId);
+    }
+  }
+
+  void completeExecutionTailAndAdvance(
+      String runnerExecutionId,
+      String workflowRunId,
+      RunnerExecutionSnapshot row,
+      JsonNode parsed,
+      String correlationId,
+      String prOutputArtifactId,
+      String prOutputResolvedDiff,
+      ExecutionSubStage executionSubStage) {
+    JsonNode artifactRefs = parsed.path("artifactReferences");
     // Story 3.9 (Decision D0 / OQ-2): if this run had a repo workspace, commit the runner-produced
     // changes, push the branch, and open/update the PR BEFORE marking the execution completed. A
     // push rejection surfaces as a typed GitCommandException (AC7) which we map onto the EXISTING
@@ -2193,16 +2751,6 @@ public class RunnerBroker {
         return;
       }
     }
-
-    // Story 3.12 (AC1 / Task 3) — derive the EXECUTION sub-stage ONCE here (reused by the pr-output
-    // validation/enrichment below AND by the success delegation at the bottom). Null for
-    // non-EXECUTION
-    // stages. The sub-stage is run-level (driven by "an approved plan exists") and stable
-    // mid-execution, so a single derivation is authoritative for both uses.
-    ExecutionSubStage executionSubStage =
-        row.stage() == RunnerStage.EXECUTION
-            ? contextBundleService.deriveExecutionSubStage(workflowRunId)
-            : null;
 
     // Story 3.12 (AC3/AC9, Task 3) — for the pr-output sub-stage: validate the runner-reported
     // branch/commitSha/prReference against the documented formats (AC9 — untrusted runner output,
@@ -2251,6 +2799,12 @@ public class RunnerBroker {
         runnerExecutionId,
         workflowRunId,
         artifactRefs.size());
+
+    // Story 3h-5 (AC2/AC4) — the AUTO/inline delivery path: after a successful, changes-bearing
+    // backend push, stamp the run pending a CI poll (capability-gated inside the stamp service). A
+    // clean/no-op push (committed()==false) or a manual project (never reaches this tail) is never
+    // stamped, so the sweep finds nothing (parity).
+    stampCiPollPendingIfCommitted(workflowRunId, pushOutcome);
 
     // Story 3a-1 (AC2/AC3 — the central gap): once the spec artifact for an INVESTIGATION-stage
     // execution is available + the execution is COMPLETED, delegate the terminal outcome to
@@ -2639,6 +3193,19 @@ public class RunnerBroker {
       // empty set is a belt-and-braces guard — any artifactReference on a review result is
       // rejected.
       case REVIEW -> java.util.EnumSet.noneOf(ArtifactType.class);
+      // Story 3h-1 (AC1) — BUILD is command-only and runs backend-side; it emits NO artifacts-table
+      // artifact (same as REVIEW). BUILD never flows through onResult/handleSuccess in the
+      // backend-side model, so this empty set is a belt-and-braces guard.
+      case BUILD -> java.util.EnumSet.noneOf(ArtifactType.class);
+      // Story 3h-2 (AC1) — LINT is command-only and runs backend-side; it emits NO artifacts-table
+      // artifact (same as BUILD/REVIEW). LINT never flows through onResult/handleSuccess in the
+      // backend-side model, so this empty set is a belt-and-braces guard.
+      case LINT -> java.util.EnumSet.noneOf(ArtifactType.class);
+      // Story 3h-5 (AC2, Decision 3) — CI is a backend-side HTTP read; it emits NO artifacts-table
+      // artifact (same as BUILD/LINT/REVIEW). CI never flows through onResult/handleSuccess, so
+      // this
+      // empty set is a belt-and-braces guard.
+      case CI -> java.util.EnumSet.noneOf(ArtifactType.class);
     };
   }
 
@@ -3551,9 +4118,19 @@ public class RunnerBroker {
           RUNNER_LATE_RESULT,
           // Story 3.5: a secret-leak failure means a result WAS harvested + scanned then rejected,
           // so a subsequent arrival is a duplicate (not a fresh result).
-          RUNNER_SECRET_LEAK ->
+          RUNNER_SECRET_LEAK,
+          // Story 3h-1 (AC5) — a build failure means the PR_OUTPUT runner DID produce a result that
+          // was harvested + built (then failed the gate), so a subsequent arrival is a duplicate.
+          RUNNER_BUILD_FAILED ->
           true;
-      case RUNNER_CRASH, RUNNER_TIMEOUT, ORPHAN -> false;
+      case RUNNER_CRASH,
+          RUNNER_TIMEOUT,
+          ORPHAN,
+          TESTCONTAINERS_INFRA_FAILED,
+          // Story 4.7 [Review D1] — a recovery re-dispatch failure never harvested a runner result,
+          // so a subsequent arrival is not a duplicate.
+          RECOVERY_DISPATCH_FAILED ->
+          false;
     };
   }
 

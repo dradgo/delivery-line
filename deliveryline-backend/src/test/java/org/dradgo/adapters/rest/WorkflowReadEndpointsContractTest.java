@@ -324,6 +324,22 @@ class WorkflowReadEndpointsContractTest {
   }
 
   @Test
+  void detailCiFieldsRenderNullForNeverPushedRun() throws Exception {
+    // Story 3h-5 (AC3) — the CI detail fields are present; a never-pushed/never-polled run renders
+    // ciStatus/ciHeadSha as JSON null (not absent, not an error) and ciFixLoopCount 0.
+    HttpResponse<String> response = get("/api/v1/workflows/" + OTHER_RUN, null);
+    assertThat(response.statusCode()).isEqualTo(200);
+    JsonNode body = mapper.readTree(response.body());
+    assertThat(body.has("ciStatus")).isTrue();
+    assertThat(body.get("ciStatus").isNull()).as("ciStatus null for a never-pushed run").isTrue();
+    assertThat(body.has("ciHeadSha")).isTrue();
+    assertThat(body.get("ciHeadSha").isNull()).isTrue();
+    assertThat(body.get("ciFixLoopCount").asInt()).isZero();
+    assertThat(body.has("ciChecksEnforced")).isTrue();
+    assertThat(body.get("ciChecksEnforced").isBoolean()).isTrue();
+  }
+
+  @Test
   void stepsReturnsPerExecutionTokensOldestFirst(CapturedOutput output) throws Exception {
     // Story 3g-4 (AC1) — /steps returns each runner execution oldest-first with its nullable token
     // counts. Seed out of createdAt order to prove the service sorts.

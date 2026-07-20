@@ -11,6 +11,7 @@ import java.util.Objects;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.PersistedRegistryValues;
 import org.dradgo.domain.registry.ProjectStatus;
+import org.dradgo.domain.registry.PushMode;
 import org.dradgo.domain.registry.RunnerKind;
 
 /**
@@ -76,11 +77,44 @@ public class ProjectEntity {
   @Column(name = "reviewer_gating_enabled", nullable = false)
   private boolean reviewerGatingEnabled;
 
+  // Story 3h-1 (AC2, FR75) — per-project build-validation config (V33). build_command is nullable
+  // opaque text (NULL = no build command, BUILD skipped) mirroring reviewer_model_kind — no DB
+  // CHECK
+  // (validated by the resolver at execution time). build_stage_enabled mirrors openspec_enabled:
+  // NOT NULL, default false ⇒ pre-3h parity.
+  @Column(name = "build_command")
+  private String buildCommand;
+
+  @Column(name = "build_stage_enabled", nullable = false)
+  private boolean buildStageEnabled;
+
+  // Story 3h-2 (AC2, FR76) — per-project lint-validation config (V34). lint_commands is nullable
+  // opaque text: the lint command list serialized newline-delimited (NULL/empty = no lint commands,
+  // LINT skipped) — mirrors build_command's opaque-text posture, no DB CHECK. lint_stage_enabled
+  // mirrors build_stage_enabled: NOT NULL, default false ⇒ pre-3h-2 parity.
+  @Column(name = "lint_commands")
+  private String lintCommands;
+
+  @Column(name = "lint_stage_enabled", nullable = false)
+  private boolean lintStageEnabled;
+
   // Story 3d-3 (AC1) — per-project runner-kind override. Nullable opaque text (NULL = no override);
   // the V20 CHECK pins a non-null value to the RunnerKind value set, so the getter parses through
   // RunnerKind.fromValue (fail fast on an unknown DB value, mirroring the status getter).
   @Column(name = "runner_kind")
   private String runnerKind;
+
+  // Story 3h-4 (AC1, FR78) — per-project delivery config (V38). push_mode is NOT NULL text
+  // defaulting
+  // 'auto', CHECK-constrained (ck_projects_push_mode) to the PushMode value set — so the getter
+  // parses through PushMode.fromValue (fail fast on an unknown DB value, mirroring getRunnerKind()
+  // and the status getter). auto_create_pull_request mirrors build_stage_enabled: NOT NULL boolean,
+  // but default TRUE (pre-3h delivery created a PR).
+  @Column(name = "push_mode", nullable = false)
+  private String pushMode;
+
+  @Column(name = "auto_create_pull_request", nullable = false)
+  private boolean autoCreatePullRequest;
 
   // Stamped from the domain createdAt at insert (updatable=false: created_at is immutable). NOT
   // insertable=false: Hibernate does not refresh an entity after saveAndFlush, so a DB-defaulted
@@ -91,6 +125,18 @@ public class ProjectEntity {
 
   @Column(name = "archived_at")
   private OffsetDateTime archivedAt;
+
+  // Task 4 (DinD Testcontainers sidecar) — per-project opt-in for a dockerd sidecar during a run
+  // (V40). NOT NULL boolean, default false ⇒ pre-task-4 parity (no sidecar), mirrors
+  // openspec_enabled/build_stage_enabled/lint_stage_enabled.
+  @Column(name = "testcontainers_enabled", nullable = false)
+  private boolean testcontainersEnabled;
+
+  // Story 3m-2 (AC5, ADR 0036) — the project's CONFIG: which workflow definition to run (V48).
+  // Nullable bigint FK to workflow_definitions.id (NULL = legacy hardcoded pipeline). Written by
+  // 3m-3/3m-4; a plain Long, no registry parsing (a surrogate FK id, not an enum-like text column).
+  @Column(name = "workflow_definition_id")
+  private Long workflowDefinitionId;
 
   public Long getId() {
     return id;
@@ -176,12 +222,60 @@ public class ProjectEntity {
     this.reviewerGatingEnabled = reviewerGatingEnabled;
   }
 
+  public String getBuildCommand() {
+    return buildCommand;
+  }
+
+  public void setBuildCommand(String buildCommand) {
+    this.buildCommand = buildCommand;
+  }
+
+  public boolean isBuildStageEnabled() {
+    return buildStageEnabled;
+  }
+
+  public void setBuildStageEnabled(boolean buildStageEnabled) {
+    this.buildStageEnabled = buildStageEnabled;
+  }
+
+  public String getLintCommands() {
+    return lintCommands;
+  }
+
+  public void setLintCommands(String lintCommands) {
+    this.lintCommands = lintCommands;
+  }
+
+  public boolean isLintStageEnabled() {
+    return lintStageEnabled;
+  }
+
+  public void setLintStageEnabled(boolean lintStageEnabled) {
+    this.lintStageEnabled = lintStageEnabled;
+  }
+
   public RunnerKind getRunnerKind() {
     return runnerKind == null ? null : RunnerKind.fromValue(runnerKind, "projects.runner_kind");
   }
 
   public void setRunnerKind(RunnerKind runnerKind) {
     this.runnerKind = runnerKind == null ? null : runnerKind.value();
+  }
+
+  public PushMode getPushMode() {
+    return PushMode.fromValue(pushMode, "projects.push_mode");
+  }
+
+  public void setPushMode(PushMode pushMode) {
+    this.pushMode = Objects.requireNonNull(pushMode, "pushMode").value();
+  }
+
+  public boolean isAutoCreatePullRequest() {
+    return autoCreatePullRequest;
+  }
+
+  public void setAutoCreatePullRequest(boolean autoCreatePullRequest) {
+    this.autoCreatePullRequest = autoCreatePullRequest;
   }
 
   public OffsetDateTime getCreatedAt() {
@@ -198,5 +292,21 @@ public class ProjectEntity {
 
   public void setArchivedAt(OffsetDateTime archivedAt) {
     this.archivedAt = archivedAt;
+  }
+
+  public boolean isTestcontainersEnabled() {
+    return testcontainersEnabled;
+  }
+
+  public void setTestcontainersEnabled(boolean testcontainersEnabled) {
+    this.testcontainersEnabled = testcontainersEnabled;
+  }
+
+  public Long getWorkflowDefinitionId() {
+    return workflowDefinitionId;
+  }
+
+  public void setWorkflowDefinitionId(Long workflowDefinitionId) {
+    this.workflowDefinitionId = workflowDefinitionId;
   }
 }

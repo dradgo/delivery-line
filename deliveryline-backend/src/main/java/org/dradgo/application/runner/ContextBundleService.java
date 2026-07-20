@@ -19,6 +19,8 @@ import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.clarification.Clarification;
 import org.dradgo.application.clarification.ClarificationLifecycleSnapshot;
 import org.dradgo.application.clarification.spi.ClarificationReadPort;
+import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
+import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.runner.spi.TicketSummaryProvider;
 import org.dradgo.application.runner.workspace.RepoManifestRef;
 import org.dradgo.application.runner.workspace.RepositoryContextSummary;
@@ -31,6 +33,7 @@ import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.runnercontracts.RunnerContractValidator;
 import org.dradgo.runnercontracts.RunnerContractValidator.ValidationTarget;
@@ -73,13 +76,21 @@ public class ContextBundleService {
   private final ClarificationReadPort clarificationReadPort;
   private final RedactionPolicyService redactionPolicyService;
   private final RunnerContractValidator contractValidator;
+  // Story 3h-1 (Task 7, AC4/AC7) — sources the failed BUILD execution(s) whose already-captured
+  // redacted raw-output is referenced back into a re-dispatched execution bundle as a
+  // {@code build.failure} priorFeedbackReference. NULLABLE: the legacy 4/5/6-arg overloads (unit
+  // tests not exercising the build-fix loop) pass null, in which case no build.failure ref is
+  // emitted (byte-identical to pre-3h). Production DI uses the 7-arg canonical with the real port.
+  private final RunnerExecutionRecordPort runnerExecutionRecordPort;
   private final ObjectMapper objectMapper;
 
   /**
-   * Canonical constructor (story 3.10 — gains {@link ClarificationReadPort}). Production wiring
-   * (Spring DI) always uses this 6-arg form with the real port implementations. The {@link
-   * ClarificationReadPort} sources the incorporated-clarification {@code priorFeedbackReferences}
-   * entries on the execution-stage composition path (AC1).
+   * Canonical constructor (story 3h-1 — gains {@link RunnerExecutionRecordPort} for the {@code
+   * build.failure} feedback reference). Production wiring (Spring DI) always uses this 7-arg form
+   * with the real port implementations. The {@link ClarificationReadPort} sources the
+   * incorporated-clarification {@code priorFeedbackReferences} entries on the execution-stage
+   * composition path (AC1); the {@link RunnerExecutionRecordPort} sources the {@code build.failure}
+   * ones (story 3h-1).
    */
   @Autowired
   public ContextBundleService(
@@ -88,7 +99,8 @@ public class ContextBundleService {
       ApprovalReadPort approvalReadPort,
       ClarificationReadPort clarificationReadPort,
       RedactionPolicyService redactionPolicyService,
-      RunnerContractValidator contractValidator) {
+      RunnerContractValidator contractValidator,
+      RunnerExecutionRecordPort runnerExecutionRecordPort) {
     this.ticketSummaryProvider =
         Objects.requireNonNull(ticketSummaryProvider, "ticketSummaryProvider");
     this.artifactRecordPort = Objects.requireNonNull(artifactRecordPort, "artifactRecordPort");
@@ -98,7 +110,31 @@ public class ContextBundleService {
     this.redactionPolicyService =
         Objects.requireNonNull(redactionPolicyService, "redactionPolicyService");
     this.contractValidator = Objects.requireNonNull(contractValidator, "contractValidator");
+    // Nullable by design (see field javadoc) — no requireNonNull.
+    this.runnerExecutionRecordPort = runnerExecutionRecordPort;
     this.objectMapper = new ObjectMapper();
+  }
+
+  /**
+   * Story 3.10 6-arg overload (pre-3h canonical shape) — delegates with a {@code null} {@link
+   * RunnerExecutionRecordPort}, so no {@code build.failure} feedback references are emitted. Keeps
+   * every existing 6-arg test site compiling unchanged.
+   */
+  public ContextBundleService(
+      TicketSummaryProvider ticketSummaryProvider,
+      ArtifactRecordPort artifactRecordPort,
+      ApprovalReadPort approvalReadPort,
+      ClarificationReadPort clarificationReadPort,
+      RedactionPolicyService redactionPolicyService,
+      RunnerContractValidator contractValidator) {
+    this(
+        ticketSummaryProvider,
+        artifactRecordPort,
+        approvalReadPort,
+        clarificationReadPort,
+        redactionPolicyService,
+        contractValidator,
+        null);
   }
 
   /**
@@ -162,6 +198,11 @@ public class ContextBundleService {
     @Override
     public Optional<ApprovalSnapshot> findLatestApprovedForArtifactLineage(
         String workflowRunPublicId, String artifactType) {
+      throw unwired();
+    }
+
+    @Override
+    public Optional<ApprovalSnapshot> findLatestApprovedForArtifact(String artifactPublicId) {
       throw unwired();
     }
 
@@ -1290,6 +1331,38 @@ public class ContextBundleService {
               workflowRunPublicId, ArtifactType.IMPLEMENTATION_PLAN.value())) {
         references.add(
             new PriorFeedbackReference(rejection.publicId(), "implementationPlan.rejection"));
+      }
+      // Story 3h-1 (Task 7, AC4/AC7) — thread prior BUILD failures into the regenerated execution
+      // bundle so the re-dispatched implementation runner sees why the build failed.
+      // Reference-by-id
+      // ONLY (kind "build.failure"): the referenced BUILD execution's already-captured, redacted
+      // raw-output is the body — NEVER inlined (the 256 KB reference-by-id invariant holds).
+      // Mirrors
+      // the implementationPlan.rejection block above. Nullable port (legacy overloads) → skipped.
+      if (runnerExecutionRecordPort != null) {
+        for (RunnerExecutionSnapshot execution :
+            runnerExecutionRecordPort.findByWorkflowRunPublicIdAndStatusIn(
+                workflowRunPublicId, List.of(RunnerExecutionStatus.FAILED))) {
+          if (execution.stage() == RunnerStage.BUILD) {
+            references.add(new PriorFeedbackReference(execution.publicId(), "build.failure"));
+          } else if (execution.stage() == RunnerStage.LINT) {
+            // Story 3h-2 (Task 7, AC5/AC6) — thread prior LINT gate findings into the regenerated
+            // execution bundle so the re-dispatched implementation runner (via request_lint_fix)
+            // sees which lint findings to fix. Reference-by-id ONLY (kind "lint.findings"): the
+            // referenced LINT execution's already-captured, redacted findings/raw-output are the
+            // body — NEVER inlined (the 256 KB reference-by-id invariant holds).
+            references.add(new PriorFeedbackReference(execution.publicId(), "lint.findings"));
+          } else if (execution.stage() == RunnerStage.CI) {
+            // Story 3h-5 (Task 8, AC2/AC5) — thread prior CI-build failures into the regenerated
+            // execution bundle so the re-dispatched implementation runner (via the CI fix loop)
+            // sees
+            // why CI went red. Reference-by-id ONLY (kind "ci.failure"): the referenced CI
+            // execution's already-captured, redacted check-run output + failure annotations are the
+            // body — NEVER inlined (the 256 KB reference-by-id invariant holds). The runner prompt
+            // treats ci.failure like build.failure (no runner-image / runner.mjs / mock change).
+            references.add(new PriorFeedbackReference(execution.publicId(), "ci.failure"));
+          }
+        }
       }
     }
     for (Clarification clarification :

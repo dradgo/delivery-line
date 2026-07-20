@@ -276,6 +276,38 @@ install** (Trap T-NO-RUNTIME-MUTATION). Wiring a minimal, non-mutating prompt nu
 available skills is deferred to a future story once headless activation is confirmed under real
 execution (story 3.8).
 
+### JDK + Maven toolchain
+
+Both the Codex and Claude runner images carry a pinned **JDK 21** (Temurin, `eclipse-temurin:21-jdk`)
+and **Maven 3.9** (pinned image `maven:3.9-eclipse-temurin-21`), installed in both the production build
+and the conformance-test (`INSTALL_CODEX_CLI=false`) build. These tooling components enable agent
+plans to shell out and run real `mvn` builds and compilation tasks within the container.
+
+**Version pinning + upgrade procedure:**
+
+To upgrade the JDK or Maven base images:
+
+```bash
+docker pull eclipse-temurin:21-jdk           # check latest patch / refresh
+docker pull maven:3.9-eclipse-temurin-21     # check latest patch / refresh
+# Verify the pinned versions are current:
+docker run --rm eclipse-temurin:21-jdk java -version
+docker run --rm maven:3.9-eclipse-temurin-21 mvn -version
+# bump ARG JAVA_IMAGE and ARG MAVEN_IMAGE in runners/codex/Dockerfile (mirror runners/claude/Dockerfile — same PR!)
+docker compose build codex-runner
+docker run --rm deliveryline/codex-runner:latest --self-test   # confirm both tooling versions report
+```
+
+**Shared Maven cache (`/workspace/.m2`):**
+
+A persistent Maven local repository is optionally mounted at `/workspace/.m2` (host path configured as
+`{deliveryline.home}/maven-cache`, enabled by the backend when `deliveryline.runner.maven-cache-enabled=true`).
+When present, the cache survives across runs, avoiding repeated dependency downloads. If the mount is
+absent, Maven falls back to a container-local ephemeral repo and re-downloads on each run.
+
+Per the RUNNER_CONTRACT change rule, a JDK or Maven version bump edits **both** runner Dockerfiles + the
+READMEs in the same PR.
+
 ### Image size / layer count (AC9)
 
 Production image (`INSTALL_CODEX_CLI=true`, real CLIs): **≈ 671 MB, 12 layers** (≈ 671 MB before
@@ -327,6 +359,59 @@ mvn -pl deliveryline-backend test -Dtest=CodexRunnerImageConformanceIT \
 ```
 
 It is excluded from the no-Docker PR tier. Real Codex-API execution is story 3.8 (profile-gated).
+
+## Live build smoke (manual, needs egress)
+
+This verification step confirms Maven resolves against the shared cache with real network egress.
+**Network access is required** — this is **not** a CI gate, but a manual pre-rollout checklist item.
+
+```bash
+# Build the REAL image (installs the agent CLI; needs network).
+docker build -f runners/codex/Dockerfile -t deliveryline/codex-runner:latest .
+
+# Prove Maven resolves against the shared cache with real egress.
+mkdir -p /tmp/dl-m2
+docker run --rm -v /tmp/dl-m2:/workspace/.m2 --entrypoint sh \
+  deliveryline/codex-runner:latest -c \
+  'mvn -version && mvn -q -Dplugin=help help:describe -Dfull=false || true; ls /workspace/.m2 | head'
+```
+
+**Expected output:**
+- Maven 3.9.x version banner
+- `/workspace/.m2` populated with downloaded plugin artifacts on the first run
+- The cache contents reused on subsequent runs (no re-download)
+
+> If egress is unavailable in your environment, record that and defer the smoke to a networked host —
+> do **not** block the commit on it.
+
+## Rollout checklist
+
+Before deploying the Maven cache mount to production, verify:
+
+- [ ] **Build both real images.** Run `docker compose --profile runners build` to build both the
+  Codex and Claude runner images with the real CLIs.
+
+- [ ] **Run both conformance ITs in the Docker CI tier.** Execute:
+  ```bash
+  mvn -pl deliveryline-backend test -Ddocker-runner-it
+  ```
+  Both the Codex and Claude runner conformance tests must pass.
+
+- [ ] **Rebuild the backend.** Rebuild the backend module so the new `maven-cache-enabled` config is
+  picked up:
+  ```bash
+  mvn -pl deliveryline-backend clean install
+  ```
+  Confirm that both the main and test code compile without errors.
+
+- [ ] **Re-run a build-workflow sample.** Execute a workflow with build-stage tasks (`java -version`,
+  `mvn -B test/package/dependency:tree/verify`) and verify they produce exit code 0 with the
+  dependency tree resolved via `/workspace/.m2`. Example: re-run the canonical test lineage (e.g.
+  `FIN-41`, `run_009f4595…`) to confirm the build-half tasks now succeed with real Maven artifact
+  resolution.
+
+> **Future work (out of scope):** MySQL integration, servlet container, and browser automation remain
+> blocked pending separate planner-awareness and Docker-in-Docker (DinD) specifications.
 
 ## Backend integration notes (story 3.8)
 

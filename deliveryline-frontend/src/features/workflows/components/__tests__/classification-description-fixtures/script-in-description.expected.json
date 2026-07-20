@@ -1,0 +1,10 @@
+{
+  "renderedTextContains": [
+    "Danger",
+    "<img src=x onerror=\"window.__classDescXss=1\">",
+    "<script>window.__classDescXss2=1</script>"
+  ],
+  "noScriptElements": true,
+  "noActiveElements": true,
+  "noAnchorElements": true
+}

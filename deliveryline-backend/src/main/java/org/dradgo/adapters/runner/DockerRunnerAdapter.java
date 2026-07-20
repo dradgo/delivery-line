@@ -17,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import org.dradgo.adapters.runner.docker.ContainerState;
 import org.dradgo.adapters.runner.docker.CreateContainerSpec;
+import org.dradgo.adapters.runner.docker.DindSidecarService;
 import org.dradgo.adapters.runner.docker.DockerEngineGateway;
 import org.dradgo.adapters.runner.docker.DockerLogSanitizer;
 import org.dradgo.application.runner.CapturedLogs;
@@ -32,6 +33,7 @@ import org.dradgo.application.runner.RunnerSecretsService;
 import org.dradgo.application.runner.spi.LogGrowthObservation;
 import org.dradgo.application.runner.spi.RawRunnerLog;
 import org.dradgo.application.runner.spi.RecoverableRunnerAdapter;
+import org.dradgo.application.runner.spi.RunnerDispatchException;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
 import org.dradgo.application.runner.spi.WorkspaceLayout;
@@ -68,6 +70,7 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
   private static final String CONTAINER_INPUT_MOUNT = "/workspace/input";
   private static final String CONTAINER_OUTPUT_MOUNT = "/workspace/output";
   private static final String CONTAINER_LOGS_MOUNT = "/workspace/logs";
+  private static final String CONTAINER_MAVEN_CACHE_MOUNT = "/workspace/.m2";
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
   private final RunnerScratchStore scratchStore;
@@ -89,6 +92,12 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
   private final Clock clock;
   private final ConcurrentMap<String, String> rexIdToContainerId = new ConcurrentHashMap<>();
   private final ConcurrentMap<String, LogGrowthObservation> rexIdToLastLogObservation =
+      new ConcurrentHashMap<>();
+  // DinD Testcontainers Task 6 — per-rex provisioned sidecar handle, mirroring rexIdToContainerId.
+  // Populated on successful provision (dispatch), removed + torn down on a post-provision dispatch
+  // failure and in cancel(...). Normal-completion teardown is the sweep's job (Task 7) — this map
+  // only covers the in-process lifecycle paths this adapter itself drives.
+  private final ConcurrentMap<String, DindSidecarService.DindHandle> rexIdToDindHandle =
       new ConcurrentHashMap<>();
 
   // Story 3d-2 (AC1) — per-project reviewer-credential resolution for a REVIEW dispatch. Optional
@@ -127,6 +136,30 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
   void setProjectConnectorResolver(
       org.dradgo.application.project.ProjectConnectorResolver projectConnectorResolver) {
     this.projectConnectorResolver = projectConnectorResolver;
+  }
+
+  // DinD Testcontainers Task 6 — per-run dockerd sidecar lifecycle for a testcontainersEnabled
+  // EXECUTION dispatch. Optional SETTER injection (mirroring the resolvers above) so none of the
+  // four telescoping ctors — nor their test sites — change (dodges the
+  // [[docker-adapter-ctor-dep-fans-out]] trap); null in lean unit slices / mock profiles / any
+  // deployment without the DindSidecarService bean, where a testcontainers-flagged dispatch simply
+  // never provisions (byte-identical to the flag being off).
+  @Nullable private DindSidecarService dindSidecarService;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setDindSidecarService(DindSidecarService dindSidecarService) {
+    this.dindSidecarService = dindSidecarService;
+  }
+
+  // Story: runner JDK+Maven — mount the shared Maven local repo so repeat build runs reuse
+  // downloaded artifacts. Default ON in production; the unit test toggles via the setter, and a
+  // bare `new DockerRunnerAdapter(...)` leaves it false (existing 3-mount tests unaffected).
+  private boolean mavenCacheEnabled;
+
+  @org.springframework.beans.factory.annotation.Value(
+      "${deliveryline.runner.maven-cache-enabled:true}")
+  void setMavenCacheEnabled(boolean mavenCacheEnabled) {
+    this.mavenCacheEnabled = mavenCacheEnabled;
   }
 
   @org.springframework.beans.factory.annotation.Autowired
@@ -260,10 +293,23 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
     // the reviewed artifact referenced BY PATH in the bundle; the runner reads its content from the
     // mounted input dir (ContextBundleService.assembleForReview). Materialize that content into
     // input/<referencePath> now, before the container is created. Without it the reviewer sees a
-    // dangling reference and emits a fail-verdict -> RUNNER_CONTRACT_VIOLATION. Gated to REVIEW to
-    // keep every other stage byte-identical; skipped in lean slices where the materializer is
-    // unwired.
-    if (request.stage() == org.dradgo.domain.registry.RunnerStage.REVIEW
+    // dangling reference and emits a fail-verdict -> RUNNER_CONTRACT_VIOLATION.
+    //
+    // 2026-07-05 (run_08880e2c / FIN-40) — the SAME dangling-reference class also bit EXECUTION:
+    // the
+    // implementation-plan / pr-output bundle carries approvedSpecificationReference (and, on the
+    // PR_OUTPUT sub-stage, approvedImplementationPlanReference) BY PATH only. The 2026-07-01 fix
+    // was
+    // scoped to REVIEW, so the planning runner never found the approved spec in its checkout, wrote
+    // "spec file is not present", and produced a plan that DIVERGED from the approved design (three
+    // rejections + escalation). Extend the gate to EXECUTION so the planner reads the approved spec
+    // the same way the reviewer does — the materializer already handles those singular slots
+    // (ReviewInputArtifactMaterializer lines 88-89). INVESTIGATION has no approved-spec reference
+    // to
+    // mount and BUILD runs backend-side (never reaches this adapter), so both stay byte-identical.
+    // Skipped in lean slices where the materializer is unwired.
+    if ((request.stage() == org.dradgo.domain.registry.RunnerStage.REVIEW
+            || request.stage() == org.dradgo.domain.registry.RunnerStage.EXECUTION)
         && reviewInputArtifactMaterializer != null) {
       reviewInputArtifactMaterializer.materialize(rexId, bundleBytes);
     }
@@ -325,53 +371,130 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
       containerEnv.put("DELIVERYLINE_RUNNER_OPENSPEC", "true");
     }
 
-    List<CreateContainerSpec.BindMount> mounts = new ArrayList<>();
-    mounts.add(new CreateContainerSpec.BindMount(layout.input(), CONTAINER_INPUT_MOUNT, true));
-    mounts.add(new CreateContainerSpec.BindMount(layout.output(), CONTAINER_OUTPUT_MOUNT, false));
-    mounts.add(new CreateContainerSpec.BindMount(layout.logs(), CONTAINER_LOGS_MOUNT, false));
-
-    // Story 3.9 AC2/AC4 (Decision D0/D3) — when the dispatch carries a repositoryRef AND the
-    // repository-workspace service is wired, clone the linked repo and add a /workspace/repo (rw)
-    // mount. Every mock + no-repo dispatch (repositoryRef == null) is byte-for-byte unchanged.
-    // Read the nullable field once into a local so the null-guard and the dereference observe the
-    // same value (the field is injected via ObjectProvider and absent in mock/no-repo profiles).
-    if (request.repositoryRef() != null) {
-      RepositoryWorkspaceService workspaceService = this.repositoryWorkspaceService;
-      if (workspaceService == null) {
-        throw new IllegalStateException(
-            "repository workspace service is unavailable for repositoryRef-bearing dispatch");
+    // DinD Testcontainers Task 6 — gated per-run dockerd sidecar provisioning, mirroring the
+    // openspecEnabled seam directly above: the adapter reads request.testcontainersEnabled()
+    // (resolved in RunnerBroker from the run's Project via
+    // ProjectRuntimeConfigResolver.resolveTestcontainersEnabled) rather than holding a
+    // ProjectRuntimeConfigResolver dependency itself — no adapter->application-service dep, and
+    // dindSidecarService is optional setter injection so a context with no DindSidecarService bean
+    // (mock profile / lean unit slices) behaves exactly as if the flag were off. Scoped to
+    // EXECUTION only — INVESTIGATION/REVIEW dispatches never provision a sidecar even when the
+    // project has opted in. A flag-off dispatch (every deployment today; default false) never
+    // enters this block: byte-identical networkMode + containerEnv to pre-task-6.
+    DindSidecarService.DindHandle dindHandle = null;
+    boolean testcontainersOn =
+        dindSidecarService != null
+            && request.stage() == RunnerStage.EXECUTION
+            && request.testcontainersEnabled();
+    if (testcontainersOn) {
+      try {
+        dindHandle = dindSidecarService.provision(rexId);
+        rexIdToDindHandle.put(rexId, dindHandle);
+        containerEnv.putAll(dindHandle.runnerEnv());
+        log.info(
+            "docker dispatch dind sidecar provisioned runnerExecutionId={} network={} sidecar={}",
+            rexId,
+            dindHandle.networkName(),
+            dindHandle.sidecarContainerId());
+      } catch (DindSidecarService.DindProvisionException failure) {
+        // Fail-fast: an opted-in run needs Docker; never dispatch the agent without it. Signal via
+        // the typed RunnerDispatchException (carrying an explicit FailureCategory) — the SAME
+        // failure-signalling shape as the create/start RuntimeException path below, except this one
+        // lets RunnerBroker.executeQueuedDispatch's catch block record TESTCONTAINERS_INFRA_FAILED
+        // instead of defaulting to RUNNER_CRASH (see the instanceof check at that catch site). The
+        // runner container is never created — this throws before docker.createContainer is called.
+        // DindSidecarService.provision already tears down any partially-created network/sidecar on
+        // its own failure path, so no adapter-side teardown is needed here.
+        log.error(
+            "docker dispatch dind sidecar provisioning failed runnerExecutionId={} workflowRunId={} cause={}",
+            rexId,
+            request.workflowRunId(),
+            failure.toString());
+        throw new RunnerDispatchException(
+            FailureCategory.TESTCONTAINERS_INFRA_FAILED,
+            "testcontainers sidecar unavailable for " + rexId + ": " + failure.getMessage(),
+            failure);
       }
-      RepositoryWorkspaceService.RepositoryMount repoMount =
-          workspaceService.prepareWorkspace(
-              request.workflowRunId(),
-              request.stage(),
-              rexId,
-              request.linearTicketRef(),
-              request.linearTicketSummary(),
-              request.repositoryRef());
-      mounts.add(
-          new CreateContainerSpec.BindMount(
-              repoMount.repoHostPath(), repoMount.containerMountPath(), false));
-      log.info(
-          "docker dispatch repo workspace mounted runnerExecutionId={} repoRef={} branch={}",
-          rexId,
-          request.repositoryRef(),
-          repoMount.branch());
     }
 
-    // Story 3.8 — network mode is config-driven (deliveryline.runner.docker.network-mode), default
-    // "none". Mock/contract runs stay isolated; real codex/claude runs need egress to their
-    // provider
-    // API and set "bridge" (or an egress-allowlisted network) in application.yml.
-    String networkMode = runnerProperties.docker().networkMode();
-    CreateContainerSpec spec =
-        new CreateContainerSpec(
-            image,
-            List.copyOf(mounts),
-            networkMode,
-            labels,
-            containerEnv,
-            runnerProperties.docker().securityOpts());
+    // DinD Testcontainers Task 6 — the runner-container spec is built here, AFTER a sidecar may
+    // already have been provisioned above (handle in rexIdToDindHandle). Mount prep, the shared
+    // Maven-cache lookup, and the repository-workspace clone can all throw a RuntimeException
+    // BEFORE docker.createContainer is reached — and the create/start catch below (which tears the
+    // sidecar down) is never entered on that path. So wrap the whole pre-create region: any
+    // escaping RuntimeException tears down the provisioned sidecar (no-op when none was provisioned
+    // — flag off / not EXECUTION / no bean) and RETHROWS THE ORIGINAL exception unchanged, keeping
+    // the flag-off path (and every existing test's expected exception type) byte-identical.
+    CreateContainerSpec spec;
+    try {
+      List<CreateContainerSpec.BindMount> mounts = new ArrayList<>();
+      mounts.add(new CreateContainerSpec.BindMount(layout.input(), CONTAINER_INPUT_MOUNT, true));
+      mounts.add(new CreateContainerSpec.BindMount(layout.output(), CONTAINER_OUTPUT_MOUNT, false));
+      mounts.add(new CreateContainerSpec.BindMount(layout.logs(), CONTAINER_LOGS_MOUNT, false));
+
+      // Shared Maven local-repo cache (rw) at /workspace/.m2 — only when enabled AND the store
+      // provides a path. Absent → Maven uses a container-local ephemeral repo (cold download).
+      if (mavenCacheEnabled) {
+        workspaceStore
+            .prepareMavenCache()
+            .ifPresent(
+                cache ->
+                    mounts.add(
+                        new CreateContainerSpec.BindMount(
+                            cache, CONTAINER_MAVEN_CACHE_MOUNT, false)));
+      }
+
+      // Story 3.9 AC2/AC4 (Decision D0/D3) — when the dispatch carries a repositoryRef AND the
+      // repository-workspace service is wired, clone the linked repo and add a /workspace/repo (rw)
+      // mount. Every mock + no-repo dispatch (repositoryRef == null) is byte-for-byte unchanged.
+      // Read the nullable field once into a local so the null-guard and the dereference observe the
+      // same value (the field is injected via ObjectProvider and absent in mock/no-repo profiles).
+      if (request.repositoryRef() != null) {
+        RepositoryWorkspaceService workspaceService = this.repositoryWorkspaceService;
+        if (workspaceService == null) {
+          throw new IllegalStateException(
+              "repository workspace service is unavailable for repositoryRef-bearing dispatch");
+        }
+        RepositoryWorkspaceService.RepositoryMount repoMount =
+            workspaceService.prepareWorkspace(
+                request.workflowRunId(),
+                request.stage(),
+                rexId,
+                request.linearTicketRef(),
+                request.linearTicketSummary(),
+                request.repositoryRef());
+        mounts.add(
+            new CreateContainerSpec.BindMount(
+                repoMount.repoHostPath(), repoMount.containerMountPath(), false));
+        log.info(
+            "docker dispatch repo workspace mounted runnerExecutionId={} repoRef={} branch={}",
+            rexId,
+            request.repositoryRef(),
+            repoMount.branch());
+      }
+
+      // Story 3.8 — network mode is config-driven (deliveryline.runner.docker.network-mode),
+      // default "none". Mock/contract runs stay isolated; real codex/claude runs need egress to
+      // their provider API and set "bridge" (or an egress-allowlisted network) in application.yml.
+      //
+      // DinD Testcontainers Task 6 — when a sidecar was provisioned above, the runner instead joins
+      // the PER-RUN DinD bridge network (so it can reach the "dind" alias) in place of the
+      // configured network mode. Every non-provisioned dispatch (dindHandle == null: flag off, not
+      // EXECUTION, or no DindSidecarService wired) is byte-identical to pre-task-6.
+      String networkMode =
+          dindHandle != null ? dindHandle.networkName() : runnerProperties.docker().networkMode();
+      spec =
+          new CreateContainerSpec(
+              image,
+              List.copyOf(mounts),
+              networkMode,
+              labels,
+              containerEnv,
+              runnerProperties.docker().securityOpts());
+    } catch (RuntimeException preCreateFailure) {
+      tearDownDindHandleIfPresent(rexId);
+      throw preCreateFailure;
+    }
 
     String containerId = null;
     try {
@@ -395,6 +518,10 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
               cleanupError.toString());
         }
       }
+      // DinD Testcontainers Task 6 — the runner container's own create/start failed AFTER a
+      // sidecar was already provisioned above; tear it down rather than leaking it (the sweep in
+      // Task 7 is the completion/crash backstop, not the dispatch-failure path).
+      tearDownDindHandleIfPresent(rexId);
       log.error(
           "docker dispatch failed runnerExecutionId={} workflowRunId={} kind={} image={} cause={}",
           rexId,
@@ -779,6 +906,10 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
     Objects.requireNonNull(runnerExecutionId, "runnerExecutionId");
     String containerId = rexIdToContainerId.remove(runnerExecutionId);
     rexIdToLastLogObservation.remove(runnerExecutionId);
+    // DinD Testcontainers Task 6 — a cancelled run's sidecar (if any) must be torn down here too;
+    // this is one of the two in-process teardown paths (the other is the dispatch-error cleanup
+    // above) — normal-completion teardown is the Task 7 sweep's job, not cancel's.
+    tearDownDindHandleIfPresent(runnerExecutionId);
     if (containerId == null) {
       log.info("docker cancel no-op runnerExecutionId={} reason=unknown_id", runnerExecutionId);
       return;
@@ -804,6 +935,35 @@ public class DockerRunnerAdapter implements RecoverableRunnerAdapter {
           runnerExecutionId,
           containerId,
           error.toString());
+    }
+  }
+
+  /**
+   * DinD Testcontainers Task 6 — removes and tears down the provisioned {@link
+   * DindSidecarService.DindHandle} for {@code runnerExecutionId}, if any. A no-op when no handle
+   * was provisioned (flag off / not EXECUTION / no {@link DindSidecarService} wired) or when {@link
+   * #dindSidecarService} is unset. {@link DindSidecarService#teardown} is itself best-effort
+   * (internally catches and logs); the try/catch here is defensive so a future change to that
+   * contract still cannot escape and derail the caller's own cleanup/cancel flow.
+   */
+  private void tearDownDindHandleIfPresent(String runnerExecutionId) {
+    DindSidecarService.DindHandle handle = rexIdToDindHandle.remove(runnerExecutionId);
+    if (handle == null || dindSidecarService == null) {
+      return;
+    }
+    try {
+      dindSidecarService.teardown(
+          runnerExecutionId, handle.networkName(), handle.sidecarContainerId());
+      log.info(
+          "docker dind sidecar torn down runnerExecutionId={} network={} sidecar={}",
+          runnerExecutionId,
+          handle.networkName(),
+          handle.sidecarContainerId());
+    } catch (RuntimeException teardownError) {
+      log.warn(
+          "docker dind sidecar teardown best-effort failure runnerExecutionId={} cause={}",
+          runnerExecutionId,
+          teardownError.toString());
     }
   }
 

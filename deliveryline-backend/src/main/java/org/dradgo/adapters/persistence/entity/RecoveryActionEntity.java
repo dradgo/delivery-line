@@ -19,8 +19,9 @@ import org.dradgo.domain.registry.PersistedRegistryValues;
 /**
  * JPA mapping for the V1 {@code recovery_actions} table (story 1.18 Task 2). Mirrors V1 column
  * types and CHECK constraints — the persistence adapter is responsible for inserting only values
- * that satisfy {@code ck_recovery_actions_action_type}, {@code ck_recovery_actions_actor_type}, and
- * {@code ck_recovery_actions_result_status}.
+ * that satisfy {@code ck_recovery_actions_action_type} (widened by V44 with {@code
+ * classify_failure}, story 4.9), {@code ck_recovery_actions_actor_type}, and {@code
+ * ck_recovery_actions_result_status}.
  *
  * <p>FK columns ({@code triggering_event_id}, {@code resulting_event_id}) are nullable per V1 — the
  * adapter resolves them from public-id lookup and leaves them null when the caller passes {@code

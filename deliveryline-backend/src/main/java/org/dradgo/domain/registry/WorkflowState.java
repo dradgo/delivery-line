@@ -1,6 +1,9 @@
 package org.dradgo.domain.registry;
 
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.Map;
+import java.util.Set;
 
 public enum WorkflowState implements RegistryValue {
   INBOX("Inbox"),
@@ -25,6 +28,28 @@ public enum WorkflowState implements RegistryValue {
   // (WAITING_FOR_DEPENDENCIES -> INVESTIGATING). A run with zero/satisfied prerequisites never
   // enters this state. Wire value is PascalCase, matching the other states.
   WAITING_FOR_DEPENDENCIES("WaitingForDependencies"),
+  // Story 3h-2 (AC4 / FR76): non-terminal lint-gate state. A run with a CRITICAL lint finding parks
+  // HERE (entered from EXECUTING) BEFORE any LLM review or push runs. It leaves only on the
+  // operator
+  // gate actions — approve_lint (-> WaitingForReview, resuming the delivery tail) or
+  // request_lint_fix
+  // (-> Executing, re-dispatching the implementation runner with the findings as feedback) — or a
+  // recovery/safety edge (TakenOver / Reconciled). There is NO -> Failed edge: the lint fix loop is
+  // operator-driven and never auto-fails (Decision 3). Wire value is PascalCase, matching the other
+  // states.
+  WAITING_FOR_LINT_APPROVAL("WaitingForLintApproval"),
+  // Story 3h-4 (AC3 / FR78): non-terminal delivery-gate state. A run under a non-auto push mode
+  // parks HERE instead of pushing (entered from EXECUTING at the current push point, or from
+  // WAITING_FOR_LINT_APPROVAL when a lint approval routes into a non-auto delivery — Decision 3).
+  // It
+  // leaves only on the operator gate action approve_delivery (-> WaitingForReview, either
+  // performing
+  // the push [approve mode] or recording the out-of-band delivery [manual mode]) or a
+  // recovery/safety edge (TakenOver / Reconciled). There is NO -> Failed edge: a push failure
+  // during
+  // approve_delivery rolls the command back and leaves the run parked for retry (Decision 5). An
+  // auto-mode run NEVER enters this state. Wire value is PascalCase, matching the other states.
+  WAITING_FOR_DELIVERY("WaitingForDelivery"),
   COMPLETED("Completed"),
   FAILED("Failed"),
   PAUSED("Paused"),
@@ -32,6 +57,17 @@ public enum WorkflowState implements RegistryValue {
   RECONCILED("Reconciled");
 
   private static final Map<String, WorkflowState> LOOKUP = RegistryParsers.index(values());
+
+  /**
+   * Story 4.30 (Reconciliation 1) — the SINGLE source of truth for run terminality: the states a
+   * run can never leave ({@code Completed}/{@code TakenOver}/{@code Reconciled}). Previously this
+   * triple was hardcoded in three consumers — {@code RecoveryService.TERMINAL_STATES}, {@code
+   * WorkflowInspectionService.RECONCILE_TERMINAL_STATES} (4.6 P1), and (this story) the
+   * conflict-detection terminal-run guard + sweep — a rename/addition in any one silently diverged
+   * the others. All now route through {@link #isTerminal()}.
+   */
+  private static final Set<WorkflowState> TERMINAL_STATES =
+      Collections.unmodifiableSet(EnumSet.of(COMPLETED, TAKEN_OVER, RECONCILED));
 
   private final String value;
 
@@ -42,6 +78,16 @@ public enum WorkflowState implements RegistryValue {
   @Override
   public String value() {
     return value;
+  }
+
+  /**
+   * Story 4.30 (Reconciliation 1) — {@code true} for the terminal states a run can never leave
+   * ({@code Completed}/{@code TakenOver}/{@code Reconciled}). The single terminality predicate
+   * shared by the reconcile guard, the allowed-actions overlay, and the conflict-detection
+   * guard/sweep.
+   */
+  public boolean isTerminal() {
+    return TERMINAL_STATES.contains(this);
   }
 
   static WorkflowState fromValue(String rawValue) {

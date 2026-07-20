@@ -322,6 +322,30 @@ public final class ProblemDetailsCatalog {
         false);
     register(
         metadata,
+        DomainErrorCode.DOCTOR_JIRA_AUTH_FAILED,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "JIRA authentication failed",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.DOCTOR_JIRA_TOKEN_MISSING,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "JIRA token missing",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.DOCTOR_BITBUCKET_AUTH_FAILED,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "Bitbucket authentication failed",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.DOCTOR_BITBUCKET_TOKEN_MISSING,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "Bitbucket token missing",
+        false);
+    register(
+        metadata,
         DomainErrorCode.LINEAR_GITHUB_REPO_MISMATCH,
         HttpStatus.CONFLICT,
         "Linear ticket and GitHub repository do not reconcile",
@@ -460,6 +484,36 @@ public final class ProblemDetailsCatalog {
         HttpStatus.BAD_REQUEST,
         "Unsupported connector kind",
         false);
+    // Story 3i-2 (AC3) — the project's ticket source cannot be browsed (no adapter resolved, or the
+    // connector reports supportsTicketQuery=false). 404 + non-retryable: the browse resource does
+    // not exist for this project. Never a 5xx — an unsupported connector is a known, benign shape.
+    register(
+        metadata,
+        DomainErrorCode.TICKET_QUERY_NOT_SUPPORTED,
+        HttpStatus.NOT_FOUND,
+        "Ticket query not supported",
+        false);
+    // Story 3i-2 code-review — the browse's upstream-failure pair. TicketQueryService maps the
+    // adapter exception's IntegrationFailureCategory onto these, so a JIRA outage never renders as
+    // an opaque 500. SERVICE_UNAVAILABLE + RETRYABLE mirrors the runner-capacity mapping: the
+    // source
+    // was unreachable or answered transiently, and the same request may well succeed later.
+    register(
+        metadata,
+        DomainErrorCode.TICKET_QUERY_SOURCE_UNAVAILABLE,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "Ticket source unavailable",
+        true);
+    // BAD_GATEWAY + non-retryable, mirroring RUNNER_CONTRACT_VIOLATION: the source answered, but
+    // the
+    // answer was unusable (expired credential, permission denied, malformed payload). Retrying an
+    // expired token cannot help, so the client must not be told to.
+    register(
+        metadata,
+        DomainErrorCode.TICKET_QUERY_SOURCE_FAILED,
+        HttpStatus.BAD_GATEWAY,
+        "Ticket source query failed",
+        false);
     // Story 3c-4 (AC3) — credential master-key fail-fast guard. 503 + non-retryable, mirroring the
     // other infrastructure-missing startup faults (DOCTOR_GITHUB_TOKEN_MISSING /
     // DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED). The type URI auto-derives.
@@ -525,6 +579,209 @@ public final class ProblemDetailsCatalog {
         DomainErrorCode.SPLIT_DEPTH_LIMIT_EXCEEDED,
         HttpStatus.CONFLICT,
         "Split depth limit exceeded",
+        false);
+    // Story 4.3 (AC2) — a malformed audit-history filter (unknown event-type token, undecodable
+    // cursor, mutually-exclusive scope) is a bad request, not a transient fault; mirror
+    // INVALID_COMMAND_PAYLOAD's BAD_REQUEST + non-retryable mapping. The type URI auto-derives.
+    register(
+        metadata,
+        DomainErrorCode.INVALID_AUDIT_FILTER,
+        HttpStatus.BAD_REQUEST,
+        "Invalid audit filter",
+        false);
+    // Story 4.5 (AC3) — resuming a run that is not Paused (or a Paused run with no derivable prior
+    // executing state) is a precondition mismatch on the run's state, not a transient fault; mirror
+    // RETRY_NOT_APPLICABLE's CONFLICT (409) + non-retryable mapping. The type URI auto-derives.
+    register(
+        metadata,
+        DomainErrorCode.RESUME_NOT_APPLICABLE,
+        HttpStatus.CONFLICT,
+        "Resume not applicable",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.RECONCILE_NOT_APPLICABLE,
+        HttpStatus.CONFLICT,
+        "Reconcile not applicable",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.MISSING_RECONCILIATION_DECISION,
+        HttpStatus.BAD_REQUEST,
+        "Missing reconciliation decision",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.INVALID_RECONCILIATION_DECISION,
+        HttpStatus.BAD_REQUEST,
+        "Invalid reconciliation decision",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.CONFLICT_NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        "Integration conflict not found",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.CONFLICT_ALREADY_RESOLVED,
+        HttpStatus.CONFLICT,
+        "Integration conflict already resolved",
+        false);
+    // Story 4.7 (Reconciliation 8) — the two rerun-from-step guards. Both a malformed rerun request
+    // (a target step outside the SafeRerunStep enum / a missing reason), not a transient fault;
+    // mirror INVALID_RECONCILIATION_DECISION's BAD_REQUEST (400) + non-retryable mapping.
+    register(
+        metadata,
+        DomainErrorCode.INVALID_RERUN_TARGET_STEP,
+        HttpStatus.BAD_REQUEST,
+        "Invalid rerun target step",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.MISSING_REASON_TEXT,
+        HttpStatus.BAD_REQUEST,
+        "Missing reason text",
+        false);
+    // Story 4.8 (AC3) — pausing a run whose current state is outside the explicit
+    // PAUSABLE_SOURCE_STATES allow-list is a precondition mismatch on the run's state, not a
+    // transient fault; mirror RESUME_NOT_APPLICABLE's CONFLICT (409) + non-retryable mapping. The
+    // type URI auto-derives.
+    register(
+        metadata,
+        DomainErrorCode.PAUSE_NOT_APPLICABLE,
+        HttpStatus.CONFLICT,
+        "Pause not applicable",
+        false);
+    // Story 4.9 (AC3 / Reconciliation 11) — classifying a run that is not Failed is a
+    // precondition mismatch on the run's state, not a transient fault; mirror
+    // RESUME_NOT_APPLICABLE's CONFLICT (409) + non-retryable mapping. The three taxonomy-input
+    // guards are malformed classify requests, mirroring MISSING_/INVALID_RECONCILIATION_DECISION's
+    // BAD_REQUEST (400) + non-retryable mapping (DEPRECATED_TAXONOMY_VALUE carries
+    // details.replacementValue — the remediation hint 4.14 AC4 puts on the wire). Type URIs
+    // auto-derive.
+    register(
+        metadata,
+        DomainErrorCode.CLASSIFY_NOT_APPLICABLE,
+        HttpStatus.CONFLICT,
+        "Classify not applicable",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.MISSING_TAXONOMY_VALUE,
+        HttpStatus.BAD_REQUEST,
+        "Missing taxonomy value",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.INVALID_TAXONOMY_VALUE,
+        HttpStatus.BAD_REQUEST,
+        "Invalid taxonomy value",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.DEPRECATED_TAXONOMY_VALUE,
+        HttpStatus.BAD_REQUEST,
+        "Deprecated taxonomy value",
+        false);
+    // Story 4.18 (AC6 / Reconciliation 7) — dispatching a run that has an unresolved high-severity
+    // integration conflict is a precondition mismatch on the run's conflict state, not a transient
+    // fault; mirror PAUSE_NOT_APPLICABLE's CONFLICT (409) + non-retryable mapping. The type URI
+    // auto-derives.
+    register(
+        metadata,
+        DomainErrorCode.DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT,
+        HttpStatus.CONFLICT,
+        "Dispatch blocked by unresolved conflict",
+        false);
+    // Story 4.16 (AC6 / Reconciliation 5) — the four artifact-drift repair codes. DRIFT_NOT_FOUND
+    // mirrors CONFLICT_NOT_FOUND (404); DRIFT_ALREADY_RESOLVED mirrors CONFLICT_ALREADY_RESOLVED
+    // (409, a precondition mismatch on the drift's resolved state, not a transient fault); the two
+    // repair-request guards are malformed-request 400s mirroring INVALID_/MISSING_RECONCILIATION_
+    // DECISION. All non-retryable; type URIs auto-derive.
+    register(
+        metadata, DomainErrorCode.DRIFT_NOT_FOUND, HttpStatus.NOT_FOUND, "Drift not found", false);
+    register(
+        metadata,
+        DomainErrorCode.DRIFT_ALREADY_RESOLVED,
+        HttpStatus.CONFLICT,
+        "Drift already resolved",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY,
+        HttpStatus.BAD_REQUEST,
+        "Invalid repair action for drift category",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.MISSING_REPAIR_REQUIRED_FIELD,
+        HttpStatus.BAD_REQUEST,
+        "Missing required repair field",
+        false);
+    // Story 4.16 code review (OQ-2 resolved → option 2) — a legal-but-unimplemented repair action
+    // (the restore_from_backup E4 stub) surfaces NOT_IMPLEMENTED (501) rather than a
+    // category-legality
+    // 400. Non-retryable — retrying will not help until the backup-integration epic ships.
+    register(
+        metadata,
+        DomainErrorCode.REPAIR_ACTION_NOT_IMPLEMENTED,
+        HttpStatus.NOT_IMPLEMENTED,
+        "Repair action not implemented",
+        false);
+    // Story 4.19 (AC8 / Reconciliation 3/12) — the two compare artifacts do not share a lineage.
+    // A malformed cross-lineage request, not a transient fault: BAD_REQUEST + non-retryable,
+    // mirroring INVALID_COMMAND_PAYLOAD. The type URI auto-derives (artifact-lineage-mismatch).
+    register(
+        metadata,
+        DomainErrorCode.ARTIFACT_LINEAGE_MISMATCH,
+        HttpStatus.BAD_REQUEST,
+        "Artifact lineage mismatch",
+        false);
+    // Story 4.16a (AC2/AC9 / Reconciliation 5) — malformed lineage-recovery decisions. Both
+    // BAD_REQUEST + non-retryable (a malformed operator request, not a transient fault), mirroring
+    // MISSING_REPAIR_REQUIRED_FIELD. The type URIs auto-derive (invalid-lineage-recovery-action /
+    // missing-lineage-recovery-field).
+    register(
+        metadata,
+        DomainErrorCode.INVALID_LINEAGE_RECOVERY_ACTION,
+        HttpStatus.BAD_REQUEST,
+        "Invalid lineage recovery action",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.MISSING_LINEAGE_RECOVERY_FIELD,
+        HttpStatus.BAD_REQUEST,
+        "Missing required lineage recovery field",
+        false);
+    // Story 3m-2 (AC8) — the three configurable-workflow codes, registered ahead of their
+    // 3m-3/3m-4/3m-9 throw sites. WORKFLOW_DEFINITION_NOT_FOUND mirrors PROJECT_NOT_FOUND (404);
+    // STEP_EXECUTOR_NOT_CONFIGURED is a config-incomplete fast-fail → UNPROCESSABLE_ENTITY (422),
+    // non-retryable (fixing the binding, not retrying, resolves it); DEFINITION_STEP_INDEX_CONFLICT
+    // is a precondition mismatch on a custom-definition edit → CONFLICT (409). Type URIs
+    // auto-derive.
+    register(
+        metadata,
+        DomainErrorCode.WORKFLOW_DEFINITION_NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        "Workflow definition not found",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.STEP_EXECUTOR_NOT_CONFIGURED,
+        // 422: the modern HttpStatus constant is UNPROCESSABLE_CONTENT —
+        // HttpStatusCode.valueOf(422)
+        // resolves to it (UNPROCESSABLE_ENTITY is the deprecated alias), so the
+        // ProblemDetailsMapper
+        // status round-trip in the foundation gate only stays green with the canonical constant.
+        HttpStatus.UNPROCESSABLE_CONTENT,
+        "Step executor not configured",
+        false);
+    register(
+        metadata,
+        DomainErrorCode.DEFINITION_STEP_INDEX_CONFLICT,
+        HttpStatus.CONFLICT,
+        "Definition step index conflict",
         false);
 
     if (!metadata.keySet().equals(java.util.EnumSet.allOf(DomainErrorCode.class))) {

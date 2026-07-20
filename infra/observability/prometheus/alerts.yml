@@ -47,3 +47,20 @@ groups:
         annotations:
           summary: "Runner worker pool starved (all workers busy for 10m)"
           description: "deliveryline_runner_active_workers has equalled deliveryline_runner_pool_size for 10 minutes. The pool has no idle capacity; consider increasing deliveryline.runner.worker-pool.size."
+
+  # Story 4.17 (AC7) — integration-conflict detection alerts. Metric names are the Prometheus
+  # (underscore) rendering of the DOT-named Micrometer meters:
+  # deliveryline.integration.conflict.unresolved.count -> deliveryline_integration_conflict_unresolved_count.
+  - name: deliveryline-integration-conflicts
+    rules:
+      # More than 5 unresolved integration conflicts across all categories/integrations for a
+      # sustained window — internal workflow state has been diverging from external Linear/GitHub
+      # state without an operator reconciling (story 4.6/4.18 own the resolve path).
+      - alert: IntegrationConflictUnresolvedHigh
+        expr: sum(deliveryline_integration_conflict_unresolved_count) > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unresolved integration conflicts high (>5 for 10m)"
+          description: "sum(deliveryline_integration_conflict_unresolved_count) has exceeded 5 for 10 minutes. Internal workflow state is diverging from external Linear ticket / GitHub PR state; review the unresolved conflicts and reconcile."

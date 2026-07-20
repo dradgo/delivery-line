@@ -51,16 +51,27 @@ class TicketSourceConfigurationTest {
             new LinearConfiguration(noProfilesEnvironment(), new TicketSourceProperties("linear")));
   }
 
+  /**
+   * Story 3i-1 (R4 / deferred-work #132) — the ticket-source {@code kind} fail-fast is now
+   * connector-neutral: any registered {@link org.dradgo.domain.registry.ConnectorKind} boots
+   * (previously only {@code linear} did, which hard-blocked a {@code kind=jira} deployment).
+   */
   @Test
-  void unsupportedKindFailsFastAtBoot() {
+  void jiraKindBootsNowThatItIsARegisteredConnectorKind() {
+    assertDoesNotThrow(
+        () -> new LinearConfiguration(noProfilesEnvironment(), new TicketSourceProperties("jira")));
+  }
+
+  @Test
+  void unregisteredKindFailsFastAtBoot() {
     IllegalStateException error =
         assertThrows(
             IllegalStateException.class,
             () ->
                 new LinearConfiguration(
-                    noProfilesEnvironment(), new TicketSourceProperties("jira")));
+                    noProfilesEnvironment(), new TicketSourceProperties("github-issues")));
     assertTrue(
-        error.getMessage().contains("ticket-source.kind=jira"),
-        () -> "expected a fail-fast naming the unsupported kind, was: " + error.getMessage());
+        error.getMessage().contains("ticket-source.kind=github-issues"),
+        () -> "expected a fail-fast naming the unregistered kind, was: " + error.getMessage());
   }
 }

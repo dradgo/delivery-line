@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deliveryline.local/schemas/cli/operator-run-summary.v1",
+  "title": "OperatorRunSummaryV1",
+  "$comment": "Story 4.1 (AC5) — the stable wire shape for `deliveryline operator status --format json`. Additive fields are allowed within v1; any removal/rename bumps to v2. byState / byFailureCategory are open-keyed maps (state / failure-category wire strings -> counts).",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "total",
+    "oldestEntryAt",
+    "byState",
+    "byFailureCategory",
+    "runs"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "total": { "type": "integer", "minimum": 0 },
+    "oldestEntryAt": { "type": ["string", "null"], "format": "date-time" },
+    "byState": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "byFailureCategory": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "runId",
+          "currentState",
+          "failureCategory",
+          "lastTransitionAt",
+          "actorIdentity",
+          "linkedTicketRef",
+          "linkedPrRef",
+          "escalationMarker",
+          "oldestEventAt"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "runId": { "type": "string", "pattern": "^run_" },
+          "currentState": { "type": "string" },
+          "failureCategory": { "type": ["string", "null"] },
+          "lastTransitionAt": { "type": ["string", "null"], "format": "date-time" },
+          "actorIdentity": { "type": ["string", "null"] },
+          "linkedTicketRef": { "type": ["string", "null"] },
+          "linkedPrRef": { "type": ["string", "null"] },
+          "escalationMarker": { "type": "boolean" },
+          "oldestEventAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      }
+    }
+  }
+}

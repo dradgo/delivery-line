@@ -225,4 +225,51 @@ class RunnerExecutionStateMachineTest {
           () -> "terminal cancelled_for_takeover must not transition to " + target);
     }
   }
+
+  // Story 4.8 (AC4) — manual-pause cancellation edges: the same {pending, queued, running}
+  // dispatch-visible scan set as takeover.
+  @Test
+  void pendingQueuedAndRunningCanBeCancelledForPause() {
+    assertDoesNotThrow(
+        () ->
+            RunnerExecutionStateMachine.assertCanTransition(
+                REX, RunnerExecutionStatus.PENDING, RunnerExecutionStatus.CANCELLED_FOR_PAUSE));
+    assertDoesNotThrow(
+        () ->
+            RunnerExecutionStateMachine.assertCanTransition(
+                REX, RunnerExecutionStatus.QUEUED, RunnerExecutionStatus.CANCELLED_FOR_PAUSE));
+    assertDoesNotThrow(
+        () ->
+            RunnerExecutionStateMachine.assertCanTransition(
+                REX, RunnerExecutionStatus.RUNNING, RunnerExecutionStatus.CANCELLED_FOR_PAUSE));
+  }
+
+  // Story 4.8 (Reconciliation 5) — pause deliberately has NO awaiting_manual edge (a cancelled
+  // manual park has no re-park path on resume; takeover keeps its edge because it is terminal).
+  @Test
+  void awaitingManualCannotBeCancelledForPause() {
+    DomainException error =
+        assertThrows(
+            DomainException.class,
+            () ->
+                RunnerExecutionStateMachine.assertCanTransition(
+                    REX,
+                    RunnerExecutionStatus.AWAITING_MANUAL,
+                    RunnerExecutionStatus.CANCELLED_FOR_PAUSE));
+    assertEquals(DomainErrorCode.ILLEGAL_TRANSITION, error.errorCode());
+    assertEquals("transition_not_allowed", error.details().get("reason"));
+  }
+
+  @Test
+  void cancelledForPauseIsTerminalAndLocked() {
+    assertTrue(RunnerExecutionStateMachine.isTerminal(RunnerExecutionStatus.CANCELLED_FOR_PAUSE));
+    for (RunnerExecutionStatus target : RunnerExecutionStatus.values()) {
+      assertThrows(
+          DomainException.class,
+          () ->
+              RunnerExecutionStateMachine.assertCanTransition(
+                  REX, RunnerExecutionStatus.CANCELLED_FOR_PAUSE, target),
+          () -> "terminal cancelled_for_pause must not transition to " + target);
+    }
+  }
 }

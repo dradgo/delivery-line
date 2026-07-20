@@ -115,6 +115,7 @@
         "recovery.retried",
         "recovery.dispatchFailed",
         "recovery.reconciled",
+        "recovery.resumed",
         "artifact.lineageRecovered",
         "integration.linked",
         "export.created",
@@ -132,7 +133,17 @@
         "console.closed",
         "workflow.archived",
         "workflow.unarchived",
-        "workflow.splitDepthOverride"
+        "workflow.splitDepthOverride",
+        "audit.logDownloaded",
+        "integration.conflictDetected",
+        "delivery.recordedManually",
+        "recovery.rerunFromStep",
+        "linear.runReopenedNotification",
+        "recovery.paused",
+        "recovery.failureClassified",
+        "artifact.driftDetected",
+        "artifact.driftRepaired",
+        "artifact.lineageReconciled"
       ]
     },
     "artifactVariant": {
@@ -230,6 +241,17 @@
               "pattern": "^evt_[A-Za-z0-9_]{4,}$"
             },
             "compensationFailed": { "type": "boolean" },
+            "targetStep": { "type": "string", "enum": ["investigating", "executing"] },
+            "supersededArtifactIds": {
+              "type": "array",
+              "maxItems": 100,
+              "items": { "type": "string", "pattern": "^art_[A-Za-z0-9_]{4,}$" }
+            },
+            "invalidatedApprovalIds": {
+              "type": "array",
+              "maxItems": 100,
+              "items": { "type": "string", "pattern": "^apr_[A-Za-z0-9_]{4,}$" }
+            },
             "artifactVariant": { "$ref": "#/$defs/artifactVariant" },
             "feedback": { "type": "string" },
             "reviewerRole": { "type": "string", "minLength": 1 },

@@ -42,7 +42,27 @@ public enum PublicIdPrefixes implements RegistryValue {
   // Story 3f-4 (AC4/R3) — public_id prefix for the V29 split_proposal_feedback table (the
   // redacted re-propose operator feedback, materialized by reference into the context bundle).
   SPLIT_PROPOSAL_FEEDBACK(
-      "splitProposalFeedback", "splfb_", "ck_split_proposal_feedback_public_id_format");
+      "splitProposalFeedback", "splfb_", "ck_split_proposal_feedback_public_id_format"),
+  // Story 4.17 (AC3) — public_id prefix for the V36 integration_conflicts table (the detected
+  // internal-vs-external integration-drift conflict rows written by the conflict-detection sweep;
+  // one unresolved row per (link, category)).
+  INTEGRATION_CONFLICT("integrationConflict", "icf_", "ck_integration_conflicts_public_id_format"),
+  // Story 4.15 (AC2) — public_id prefix for the V45 artifact_drift_detected table (the detected
+  // DB/file artifact-drift rows written by the drift-detection sweep; one unresolved row per
+  // (category, artifact/operation)). The V45 migration MUST create a public_id CHECK with this
+  // exact
+  // constraint name or RegistryContractTest fails.
+  ARTIFACT_DRIFT_DETECTED("artifactDrift", "adr_", "ck_artifact_drift_detected_public_id_format"),
+  // Story 3m-2 (AC2/AC3/AC4) — public_id prefixes for the V48 configurable-workflow tables. Each
+  // constraintName() must exactly equal the migration's format-CHECK name so both
+  // extractPublicIdPrefixesFromSql() and FlywaySchemaContractTest's table-derived
+  // ck_<table>_public_id_format probe resolve the same DB constraint (hence the override uses the
+  // FULL table-derived name, NOT the story's shortened ck_wf_step_overrides_public_id_format).
+  WORKFLOW_DEFINITION("workflowDefinition", "wfd_", "ck_workflow_definitions_public_id_format"),
+  WORKFLOW_DEFINITION_STEP(
+      "workflowDefinitionStep", "wfs_", "ck_workflow_definition_steps_public_id_format"),
+  WORKFLOW_STEP_OVERRIDE(
+      "workflowStepOverride", "wso_", "ck_workflow_definition_step_overrides_public_id_format");
 
   /**
    * Mirrors the V1 SQL CHECK shape: {@code <prefix>[A-Za-z0-9_-]{4,64}}. The full public_id

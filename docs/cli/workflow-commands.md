@@ -163,9 +163,10 @@ so operators can correlate the audit trail with the CLI error.
 `retry` is the only recovery action in the Epic 1 CLI. Deeper recovery —
 `reconcile`, `take over`, `rerun-from-arbitrary-step`, failure-taxonomy classification, the full
 operator console, and the REST recovery endpoints — arrive in Epic 4. The `RecoveryService`
-class is scope-protected by an ArchUnit rule
-(`RECOVERY_SERVICE_IS_SCOPE_PROTECTED`) so an Epic-4 method cannot be added without an Epic-4
-story.
+class was originally scope-protected by an ArchUnit rule
+(`RECOVERY_SERVICE_IS_SCOPE_PROTECTED`); that lock was lifted in Epic 4 (story 4.28) and the
+allowed recovery surface is now governed by
+[ADR 0033](../adr/0033-recovery-service-scope-lift.md).
 
 ### `next safe action` matrix
 

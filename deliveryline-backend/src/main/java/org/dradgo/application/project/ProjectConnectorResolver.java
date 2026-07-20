@@ -7,6 +7,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
+import org.dradgo.application.integration.ticketsource.CredentialBoundTicketSourceAdapter;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.domain.DomainException;
 import org.dradgo.domain.integration.repohost.RepositoryRef;
@@ -91,7 +92,7 @@ public class ProjectConnectorResolver {
     if (adapter == null) {
       throw unsupported(project, kind, TICKET_SOURCE_ROLE);
     }
-    return adapter;
+    return bindTicketSourceCredential(project, adapter);
   }
 
   /**
@@ -104,7 +105,10 @@ public class ProjectConnectorResolver {
    */
   public Optional<TicketSourceAdapter> findTicketSource(Project project) {
     Objects.requireNonNull(project, "project");
-    return Optional.ofNullable(ticketSourceByKind.get(project.ticketSourceKind()));
+    TicketSourceAdapter adapter = ticketSourceByKind.get(project.ticketSourceKind());
+    return adapter == null
+        ? Optional.empty()
+        : Optional.of(bindTicketSourceCredential(project, adapter));
   }
 
   /**
@@ -177,6 +181,22 @@ public class ProjectConnectorResolver {
       return Optional.empty();
     }
     return source.resolveSecret(project, role);
+  }
+
+  private TicketSourceAdapter bindTicketSourceCredential(
+      Project project, TicketSourceAdapter adapter) {
+    if (!(adapter instanceof CredentialBoundTicketSourceAdapter bindable)) {
+      return adapter;
+    }
+    Optional<String> secret = resolveConnectorSecret(project, "ticket_source");
+    if (secret.isEmpty()) {
+      return adapter;
+    }
+    log.debug(
+        "resolveTicketSource bound project-scoped credential projectId={} connectorKind={}",
+        project.publicId(),
+        project.ticketSourceKind().value());
+    return bindable.withProjectCredential(project.publicId(), secret.get());
   }
 
   private static <A> Map<ConnectorKind, A> indexByKind(

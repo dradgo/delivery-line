@@ -123,7 +123,11 @@ The developer action that stops orchestrator dispatch, cancels the in-flight and
 executions (moving them to a `cancelled_for_takeover` status), and transitions the run to the
 `TakenOver` terminal state while preserving all prior context (artifacts, audit trail, PR link).
 **Non-reversible in Epic 3** — the developer continues the work in the linked GitHub PR; Epic 4
-adds takeover-revert and operator-side closure.
+adds takeover-revert and operator-side closure. Takeover is a **separate** developer action, not
+one of the six recovery actions surfaced on the operator recovery Decision Bar; for when to take
+over versus [pause](#pause), see the
+"Pause vs Takeover" section of
+[`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md).
 
 **See also:** [`execution-walkthrough.md`](execution-walkthrough.md) ("When and how to take
 over").
@@ -189,8 +193,10 @@ parity; it can never be disabled. Runs are associated with a project at submissi
 
 The selectable, vendor-neutral adapter a [project](#project) binds for one of its two integration
 roles — a **ticket source** or a **repository host** — chosen by `ConnectorKind`. The registered
-kinds are `linear`, `github`, and a `gitlab` **proof-of-seam** stub (a documented demonstration of
-per-project resolution, not a full vendor implementation). Each project resolves its connectors
+kinds are `linear`, `github`, `jira` (story 3i-1 — a second full ticket-source vendor at Linear
+parity: fetch, comment, sub-task creation, opaque source-status, and a `/browse/` link-out), and a
+`gitlab` **proof-of-seam** stub (a documented demonstration of per-project resolution, not a full
+vendor implementation). Each project resolves its connectors
 **per project at run time**, so two projects can use different vendors. A connector authenticates
 with the project's per-role [credential](#credential).
 
@@ -323,6 +329,264 @@ here.
 
 ---
 
+## Epic 3h vocabulary (pre-review quality gates)
+
+### build stage
+
+A pre-review **build-validation** gate (`RunnerStage.BUILD`, FR75, story 3h-1). When a governed
+project has a **build command** configured and the stage is enabled, the produced code is
+compiled/built **before it is pushed or reviewed**, so review and delivery only ever see buildable
+code. Per the [ADR 0030](adr/0030-governed-delivery-tail.md) amendment, BUILD executes
+**backend-side** — a `ProcessBuilder` (behind the `BuildCommandPort` SPI) runs the command in the
+already-materialized host workspace, **not** inside the runner container. It is still recorded as a
+`runner_executions` row (`stage = 'build'`) reusing the story-3.6 raw-output capture + the 3d-5
+per-step step/log view, but it runs **no LLM** and therefore records **zero token/provider usage**
+(its token columns stay `NULL`). **Default disabled** — a project with no build config skips BUILD
+entirely (byte-identical to pre-3h). A non-zero build exit drives a **bounded auto-fix loop**: the
+implementation runner is re-dispatched with the redaction-policed build-error log attached as a
+`build.failure` referenced feedback entry, capped by `build-fix-max-loops` (default 3); on the
+attempt that reaches the cap the run transitions to `FAILED` with the `runner_build_failed`
+`FailureCategory` and the shared per-run escalation marker is flipped once, leaving the run for
+Epic-4 recovery. The code is **never** pushed past an unresolved build failure.
+
+**See also:** [`adr/0030-governed-delivery-tail.md`](adr/0030-governed-delivery-tail.md),
+[`adr/0032-replay-safe-aftercommit-helper.md`](adr/0032-replay-safe-aftercommit-helper.md).
+
+### lint gate
+
+A pre-review **CPU lint** gate (`RunnerStage.LINT`, FR76, story 3h-2) that sits **between the
+[build stage](#build-stage) and review**. When a governed project has **lint commands** configured
+and the stage is enabled, the configured CPU linters run **backend-side** (each command via the same
+`BuildCommandPort` in the materialized workspace — a `runner_executions` row with `stage = 'lint'`,
+**no LLM**, **zero token/provider usage**) after a successful build and **before any LLM review or
+push**. Their aggregated output is **severity-classified**: a **critical** finding (linter `error`;
+baseline = any lint command exit ≠ 0) parks the run at [`WaitingForLintApproval`](#waitingforlintapproval);
+**non-critical** findings (`warning`/`info`) are attached as advisory and the delivery tail proceeds
+unchanged. The classified findings persist as a `lint_findings` jsonb payload on the LINT execution
+row and are served (advisory) at `GET /api/v1/workflows/{id}/lint-findings`. **Default disabled** — a
+project with no lint config skips LINT entirely (byte-identical to pre-3h-2). The point of the
+CPU-cheap gate is to never spend review tokens on code that fails static analysis.
+
+### WaitingForLintApproval
+
+A **non-terminal** workflow state (story 3h-2) a run parks in when the [lint gate](#lint-gate) finds
+a **critical** finding — **before** any LLM review or push. It surfaces two operator actions to the
+`workflow_owner` gate role: **`approve_lint`** (dismiss the gate → resume the delivery tail: push +
+`WaitingForReview` + reviewer enqueue) and **`request_lint_fix`** (feed the findings back to the
+implementation runner as a redaction-policed `lint.findings` reference, re-dispatch EXECUTION, and
+re-park). Unlike the build fix loop, the lint fix loop is **operator-driven and never auto-fails**
+the run: when `lint_fix_loop_count` reaches `lint-fix-max-loops` (default 3) the shared escalation
+marker is flipped once for **visibility only** — there is no `FAILED` transition, and no
+infinite-loop risk (each iteration requires a manual operator action).
+
+**See also:** [`adr/0030-governed-delivery-tail.md`](adr/0030-governed-delivery-tail.md),
+[`adr/0032-replay-safe-aftercommit-helper.md`](adr/0032-replay-safe-aftercommit-helper.md).
+
+### Delivery gate / push mode
+
+The **unified delivery gate** (FR78, story 3h-4) governs *whether and when* the backend pushes the
+produced code and opens a PR/MR. Two per-project flags feed it:
+
+- **`pushMode` ∈ `{auto, manual, approve}`** (default **`auto`**) — a CHECK-constrained column
+  (`ck_projects_push_mode`, mirroring `runner_kind`). It selects push-vs-park at the pr-output
+  delivery tail (which sits **before** review, resolving the epic's crux — see below):
+  - **`auto`** — the run **never parks**; `captureAndPush` fires **inline** exactly as pre-3h
+    delivery (byte-identical), then the run advances to `WaitingForReview`. The gate is a
+    pass-through.
+  - **`approve`** — the run parks at [`WaitingForDelivery`](#waitingfordelivery); `approve_delivery`
+    performs the push (+ PR per `autoCreatePullRequest`) via the resumable delivery seam.
+  - **`manual`** — the run parks at `WaitingForDelivery`; `approve_delivery` records the operator's
+    **out-of-band** delivery (a `delivery.recordedManually` event) and advances **without touching
+    git**.
+- **`autoCreatePullRequest`** (`boolean`, default **`true`**) — gates PR/MR creation *wherever the
+  push fires*. When `false` the push still fires (governed by `pushMode`) but no PR is created or
+  linked; the operator links the PR out-of-band before review-accept.
+
+**Gate before review.** The gate sits at the *current* push point (entered from `EXECUTING`), so the
+advisory reviewer still reads pushed code + a live PR. An `auto` project is byte-identical to pre-3h
+delivery. The gate also **composes with the [lint gate](#lint-gate)**: a lint approval on a
+non-`auto` project routes into `WaitingForDelivery` rather than pushing immediately.
+
+### WaitingForDelivery
+
+A **non-terminal** workflow state (story 3h-4) a run parks in under a non-`auto`
+[push mode](#delivery-gate--push-mode) — instead of pushing, at the pr-output delivery tail (before
+any LLM review). It surfaces a single operator action to the `workflow_owner` gate role:
+**`approve_delivery`** — in **`approve`** mode it performs the push (+ PR per `autoCreatePullRequest`)
+via `RunnerBroker.resumeDeliveryTailFromGate` (reused verbatim from the lint gate); in **`manual`**
+mode it records the out-of-band delivery (`delivery.recordedManually`) and enqueues the reviewer
+**without touching git**. Either mode then advances to `WaitingForReview`. There is **no `FAILED`
+edge** — a push failure during `approve_delivery` rolls the command back and leaves the run parked
+for retry (the `TakenOver`/`Reconciled` recovery edges keep it from wedging). An `auto`-mode run
+never enters this state.
+
+**See also:** [`adr/0030-governed-delivery-tail.md`](adr/0030-governed-delivery-tail.md).
+
+### CI investigation
+
+The **async, best-effort reading of a pushed branch's CI build result and the bounded fix loop that
+follows a red build** (story 3h-5 / FR79). After a successful backend push a run is stamped
+`ci_status='pending'`; a scheduled sweep (`CiStatusPollingService`) polls the repository host's
+[check runs](#check-run) for that commit. A **green** verdict is recorded and the run proceeds (it is
+already at/past review); a **red** verdict drives a [CI fix loop](#ci-fix-loop). The sweep is gated by
+a single global switch (`deliveryline.workflow.ci-investigation.enabled`) — there is **no** per-project
+CI flag — and only polls runs whose repository host advertises `supportsCiStatusReads`. CI status is
+**informational**: it never blocks `accept_implementation`. Reuses existing vocabulary — [run](#run),
+[check run](#check-run), escalation — and introduces **no** new workflow state, action, event, or
+failure category.
+
+### check run
+
+The **vendor-neutral projection of a single CI check** for a pushed commit (`CiStatus` / `CiCheck` /
+`CiConclusion`, story 3h-5). Read through the `RepositoryHostAdapter.readCheckRuns` port so no host
+vocabulary (GitHub check-run `status`/`conclusion`, Bitbucket Pipelines state) leaks past it. A red
+check's bounded failure body — its `output` title/summary/text plus `failure`-level annotations — is
+captured (redaction-policed) as a FAILED `runner_executions` row with `stage='ci'` and threaded back
+into the regenerated execution bundle by reference (kind `ci.failure`), exactly like a
+[build.failure](#build-gate). GitHub (Actions) is the first backer; Bitbucket Pipelines lands in Epic
+3i. Not to be confused with `supportsRequiredStatusChecks` (does the host *enforce* checks at merge) —
+CI investigation is the first production reader of that flag, surfaced as `ciChecksEnforced`.
+
+### CI fix loop
+
+The **bounded investigation/fix loop a red [CI investigation](#ci-investigation) drives** (story
+3h-5), the third referenced-feedback loop beside the [build](#build-gate) and [lint](#lint-gate) loops.
+On a red CI the run transitions `WaitingForReview → Executing` (the existing edge) and re-dispatches
+the EXECUTION runner with the CI failure log as feedback, bumping `ci_fix_loop_count`. Distinct
+idempotency key (`ci-fix:<run>:<count>`). On the `(cap+1)`-th consecutive red CI it flips the **shared**
+per-run escalation marker once and **leaves the run parked at `WaitingForReview`** for Epic-4 recovery
+— it **never** transitions to `Failed` (there is no such edge) and adds no new failure category. This
+is the lint-loop cap semantics (escalate, never fail), not the build-loop cap (which fails the run).
+
+**See also:** [`adr/0030-governed-delivery-tail.md`](adr/0030-governed-delivery-tail.md) (Amendment —
+story 3h-5).
+
+---
+
+## Epic 3i vocabulary (connector expansion)
+
+### ticket query
+
+A **read-only, filtered browse** of a [ticket source](#connector) for *candidate* tickets — the
+tickets an operator might pull into governance — filtered by assignee, components, and source state,
+and bounded by a `limit`. It is an **optional port operation** gated on the
+`supportsTicketQuery` capability flag (story 3i-2 / FR81); only the JIRA connector implements it
+today, backing it with JQL. A connector that does not advertise it answers the intake surface with a
+typed `TICKET_QUERY_NOT_SUPPORTED` (HTTP 404), never a 5xx.
+
+Distinct from **polling** (`pollNewTickets`): polling is a background sweep bounded by an `updatedAt`
+watermark that *ingests* tickets; a ticket query is a foreground, operator-driven read with no time
+boundary that *lists* them. Neither creates a run.
+
+### intake browse
+
+The operator-facing **surface** over a [ticket query](#ticket-query) — the `/intake` UI view, the
+`GET /api/v1/projects/{projectId}/ticket-query` endpoint, and the `deliveryline tickets query` CLI
+command. From it the operator selects one or more candidate tickets and starts a governed
+[run](#run) per selection through the **existing** submit path (each submit is independent and
+idempotency-keyed; one failing row does not abort the others). The browse itself never creates a run
+and never mutates the source.
+
+Two new terms only (NFR43): *ticket query* names the port capability, *intake browse* names the
+surface over it. The surface reuses existing vocabulary throughout — `project`, `connector`, `run`,
+`ticket` — and introduces **no** new workflow state, action, or event.
+
+**See also:** [`adr/0007-ticket-source-abstraction.md`](adr/0007-ticket-source-abstraction.md),
+[`integrations/ticket-source-extension-contract.md`](integrations/ticket-source-extension-contract.md).
+
+---
+
+## Epic 4 vocabulary (failure handling & recovery)
+
+These terms are registered here per glossary discipline; Epic 6 story 6.2 normalizes wording.
+They name the operator recovery surface — see
+[`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md) for the end-to-end
+walkthrough.
+
+### resume
+
+The [recovery action](#recovery-action) that returns a **paused** [run](#run) to its prior
+executing state and re-enqueues runner work — the reversible counterpart to [pause](#pause).
+Surfaced as **Resume run** on the recovery Decision Bar. A resume that would bypass an
+unresolved [conflict](#conflict) is blocked by the reconciliation dispatch gate.
+
+**See also:** [`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md).
+
+### reconcile
+
+The [recovery action](#recovery-action) that resolves a [conflict](#conflict) between the
+internal run state and the external Linear / GitHub state. The operator reviews both snapshots
+(Internal / External) and picks a **reconciliation decision** — `accept_external_state`,
+`accept_internal_state`, `mark_completed_externally`, or `mark_failed_externally` — with a
+required reason; the safe-first option is marked Recommended. Surfaced as **Reconcile
+conflict**.
+
+**See also:** [`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md),
+[conflict](#conflict).
+
+### rerun-from-step
+
+The [recovery action](#recovery-action) that re-executes a run from a chosen **safe step**
+(Investigating or Executing); artifacts produced at or after that step are superseded and the
+corresponding approval is invalidated. A destructive, reason-required action surfaced as
+**Rerun from step**.
+
+**See also:** [`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md).
+
+### pause
+
+The [recovery action](#recovery-action) that halts orchestrator dispatch and cancels in-flight +
+queued runner work for a run, **reversibly** — the run can be [resumed](#resume) later. Also
+fired **automatically** by the orchestrator ("auto-pause") when it detects an
+[integration conflict](#conflict), because the safe posture under an uncertain external state is
+to stop and let an operator decide. Distinct from [takeover](#takeover), which is one-way.
+Surfaced as **Pause run**.
+
+**See also:** [`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md),
+[takeover](#takeover).
+
+### classify
+
+The [recovery action](#recovery-action) that records an operator's **failure taxonomy**
+judgment on a failed run — one of six governed values (`specification_gap`, `context_gap`,
+`agent_execution_failure`, `review_rejection`, `integration_or_merge_failure`,
+`tooling_or_infrastructure_failure`) for cross-run pattern analysis. This operator-applied,
+post-hoc **taxonomy** axis is deliberately separate from the runner-scoped, machine-set
+`FailureCategory` (the [failure](#failure) category) — both can be set on one run. Surfaced as
+**Classify failure** with humanized labels + descriptions + examples.
+
+**See also:** [`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md),
+[failure](#failure).
+
+### conflict
+
+An **integration conflict** — a detected divergence between a run's internal state and the
+external system's state (an `external_state_advanced` or `external_state_reverted` situation,
+where the Linear ticket or GitHub PR moved underneath the run). A conflict [auto-pauses](#pause)
+the run and is resolved with [reconcile](#reconcile). See [drift](#drift) for the related
+integration-link condition the recovery ranker keys on (and how it differs from artifact-lineage
+drift).
+
+**See also:** [`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md),
+[reconcile](#reconcile).
+
+### drift
+
+**Integration drift** — a run's internal state diverging from its external Linear / GitHub
+integration link, which the system marks `stale` or `failed`. When a run has drifted, the
+recovery ranker (`RecommendationService`) downgrades every safe *mutating* action to caution
+except [reconcile](#reconcile) and [classify](#classify), steering the operator to resolve the
+divergence first. Closely related to an integration [conflict](#conflict): a conflict is the
+*detected external-state divergence event* (`external_state_advanced` / `external_state_reverted`)
+that auto-pauses the run, while drift is the *stale/failed link condition* the ranker keys on.
+Distinct from **artifact drift** — a run's persisted [artifact](#artifact) lineage diverging from
+its expected state (a partial write / failed reconciliation), which the artifact-reconciliation
+surface detects and repairs.
+
+**See also:** [`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md).
+
+---
+
 ## Linked from
 
 This glossary is referenced from:
@@ -332,6 +596,7 @@ This glossary is referenced from:
 - [`execution-walkthrough.md`](execution-walkthrough.md) — "Concepts you just used" footer (Epic 3 vocabulary).
 - [`project-configuration-walkthrough.md`](project-configuration-walkthrough.md) — "Concepts you just used" footer (Epic 3c vocabulary).
 - [`per-step-execution-control-walkthrough.md`](per-step-execution-control-walkthrough.md) — "Concepts you just used" footer (Epic 3d vocabulary).
+- [`failed-run-recovery-walkthrough.md`](failed-run-recovery-walkthrough.md) — "Concepts you just used" footer (Epic 4 vocabulary).
 - [`setup-local.md`](setup-local.md) — "See also" footer.
 
 Epic 6 stories (6.1 / 6.2) will wire cross-links from `failure-recovery-walkthrough.md`

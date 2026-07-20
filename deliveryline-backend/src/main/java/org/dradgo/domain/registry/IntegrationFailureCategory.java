@@ -46,7 +46,22 @@ public enum IntegrationFailureCategory implements RegistryValue {
   // rather than a generic auth failure, and NON-RETRYABLE — a plain retry with the same token
   // hits the identical wall. GitHub's message: "refusing to allow a Personal Access Token to
   // create or update workflow `.github/workflows/build.yml` without `workflow` scope".
-  GIT_WORKFLOW_SCOPE_MISSING("git_workflow_scope_missing");
+  GIT_WORKFLOW_SCOPE_MISSING("git_workflow_scope_missing"),
+
+  // Bitbucket-specific categories (story 3i-3 / FR82 — the Bitbucket repository-host adapter twin
+  // of the GITHUB_* set, classifying the Bitbucket Cloud REST adapter's API conversation). Wire
+  // values are snake_case and wire-breaking to rename. LOW fan-out (Dev Notes §7): the enum is
+  // auto-derived into DomainRegistry via valuesOf(...values()), is NOT in the
+  // api-schema-placeholder
+  // manifest, and has NO SQL CHECK — so adding these requires no openapi/schema.d.ts regen and no
+  // three-site DomainErrorCode fan-out.
+  BITBUCKET_REPO_NOT_FOUND("bitbucket_repo_not_found"),
+  BITBUCKET_PR_NOT_FOUND("bitbucket_pr_not_found"),
+  BITBUCKET_PERMISSION_DENIED("bitbucket_permission_denied"),
+  BITBUCKET_RATE_LIMITED("bitbucket_rate_limited"),
+  BITBUCKET_BRANCH_PROTECTED("bitbucket_branch_protected"),
+  BITBUCKET_AUTH_FAILED("bitbucket_auth_failed"),
+  BITBUCKET_NETWORK_FAILURE("bitbucket_network_failure");
 
   private static final Map<String, IntegrationFailureCategory> LOOKUP =
       RegistryParsers.index(values());

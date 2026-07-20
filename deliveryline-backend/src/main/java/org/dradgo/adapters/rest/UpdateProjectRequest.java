@@ -3,6 +3,7 @@ package org.dradgo.adapters.rest;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -47,4 +48,52 @@ public record UpdateProjectRequest(
                     + "Omit or send empty to clear all per-step mappings.",
             nullable = true,
             example = "{\"spec\":\"codex\",\"prOutput\":\"manual\"}")
-        Map<String, String> stepRunnerKinds) {}
+        Map<String, String> stepRunnerKinds,
+    @Schema(
+            description =
+                "Story 3h-1 — whether the pre-review build-validation stage runs for this project. "
+                    + "Default false ⇒ BUILD skipped (pre-3h parity). Requires buildCommand to be set.",
+            example = "false")
+        boolean buildStageEnabled,
+    @Schema(
+            description =
+                "Story 3h-1 — optional build command run backend-side in the workspace before review "
+                    + "(null/empty = no build, BUILD skipped even if enabled).",
+            nullable = true,
+            example = "mvn -q -DskipTests package")
+        String buildCommand,
+    @Schema(
+            description =
+                "Story 3h-2 — whether the pre-review CPU lint gate runs for this project. Default "
+                    + "false ⇒ LINT skipped (pre-3h-2 parity). Requires lintCommands to be set.",
+            example = "false")
+        boolean lintStageEnabled,
+    @Schema(
+            description =
+                "Story 3h-2 — optional CPU linter commands run backend-side in the workspace before "
+                    + "review, full-replace on update (null/empty clears all lint commands, LINT "
+                    + "skipped even if enabled).",
+            nullable = true,
+            example = "[\"mvn -q -DskipTests checkstyle:check\", \"npm run lint\"]")
+        List<String> lintCommands,
+    @Schema(
+            description =
+                "Story 3h-4 — per-project delivery push mode, editable here. 'auto' pushes inline "
+                    + "(pre-3h parity); 'manual'/'approve' park the run at WaitingForDelivery. "
+                    + "Default 'auto'.",
+            nullable = true,
+            allowableValues = {"auto", "manual", "approve"},
+            example = "auto")
+        String pushMode,
+    @Schema(
+            description =
+                "Story 3h-4 — whether a pull/merge request is created wherever the push fires, "
+                    + "full-replace on update. Default true (pre-3h parity).",
+            example = "true")
+        Boolean autoCreatePullRequest,
+    @Schema(
+            description =
+                "Task 4 — whether a dockerd Testcontainers sidecar is provisioned for this "
+                    + "project's runs, editable here. Default false (pre-task-4 parity).",
+            example = "false")
+        boolean testcontainersEnabled) {}

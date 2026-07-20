@@ -16,7 +16,7 @@
  * (AC10 / NFR25-27) means the Context Strip and Artifact Review Panel reading the
  * same run detail trigger ONE fetch, not two.
  */
-import { QueryCache, QueryClient, queryOptions } from '@tanstack/react-query';
+import { infiniteQueryOptions, QueryCache, QueryClient, queryOptions } from '@tanstack/react-query';
 
 import { apiClient, unwrap } from './client';
 import { isProblemDetailsError, type ProblemDetailsError } from './problemDetails';
@@ -27,16 +27,30 @@ import {
   type ArtifactView,
   type PrLinkage,
 } from '@/features/workflows/artifactView';
+import {
+  INTAKE_DEFAULT_LIMIT,
+  intakeKeys,
+  normalizeIntakeFilters,
+  type IntakeFilters,
+} from '../queryKeys/intakeKeys';
+import { operatorKeys, type OperatorQueueFilters } from '../queryKeys/operatorKeys';
 import { projectKeys } from '../queryKeys/projectKeys';
 import { workflowKeys, type WorkflowListFilters } from '../queryKeys/workflowKeys';
 
 export type WorkflowDetail = components['schemas']['WorkflowDetail'];
 export type WorkflowSummary = components['schemas']['WorkflowSummary'];
+/** Story 4.2 — the operator fleet summary (object carrier: aggregate + runs page + cursor). */
+export type OperatorRunSummary = components['schemas']['OperatorRunSummary'];
 export type WorkflowEventsResponse = components['schemas']['WorkflowEventsResponse'];
 /** The raw artifact-read DTO (story 3a-9 Gate 3) — adapted into `ArtifactView` below. */
 export type ArtifactDetail = components['schemas']['ArtifactDetail'];
 /** Story 3c-9 — a configured project (list item + create/edit/disable/enable response). */
 export type Project = components['schemas']['Project'];
+/** Story 3i-2 — one candidate ticket from the filtered intake browse. `summary` is nullable. */
+export type CandidateTicket = components['schemas']['CandidateTicket'];
+
+/** One page of a filtered intake browse: the rows, the source's match count, and a truncated flag. */
+export type CandidateTicketPage = components['schemas']['CandidateTicketPage'];
 
 /** Cache-freshness defaults (ms). Centralized so every hook reads the same policy. */
 export const STALE_TIME = {
@@ -48,6 +62,12 @@ export const STALE_TIME = {
   list: 5_000,
   /** Artifact content — long; the persisted redacted body is immutable for a given version. */
   artifact: 60_000,
+  /**
+   * Story 4.24 — governed registries (e.g. the failure taxonomy). Very long: the vocabulary + its
+   * curated prose change only under ADR-0035 governance, never during a session, so a 5-minute stale
+   * window avoids refetching a near-constant on every dialog open.
+   */
+  registry: 300_000,
 } as const;
 
 const MAX_RETRIES = 2;
@@ -108,6 +128,57 @@ export function listQueryOptions(filters: WorkflowListFilters = {}) {
   });
 }
 
+/**
+ * Story 4.2 (AC3/AC5) — GET one page of operator fleet runs, throwing typed problem details
+ * (e.g. INVALID_COMMAND_PAYLOAD for a malformed cursor/token) on failure. Multi-valued filters go
+ * as repeated query params (openapi-fetch expands the arrays; Spring binds them to `List<String>`);
+ * the time-window maps to the relative `since` token (`all` omits it); `cursor` pages forward.
+ */
+async function fetchOperatorRuns(
+  filters: OperatorQueueFilters,
+  cursor?: string,
+): Promise<OperatorRunSummary> {
+  const query: {
+    state?: string[];
+    failureCategory?: string[];
+    runnerKind?: string[];
+    since?: string;
+    cursor?: string;
+  } = {};
+  if (filters.states.length > 0) {
+    query.state = filters.states;
+  }
+  if (filters.failureCategories.length > 0) {
+    query.failureCategory = filters.failureCategories;
+  }
+  if (filters.runnerKinds.length > 0) {
+    query.runnerKind = filters.runnerKinds;
+  }
+  if (filters.timeWindow !== 'all') {
+    query.since = filters.timeWindow;
+  }
+  if (cursor != null && cursor !== '') {
+    query.cursor = cursor;
+  }
+  return unwrap(await apiClient.GET('/api/v1/operator/runs', { params: { query } }));
+}
+
+/**
+ * Story 4.2 (AC5) — the operator-queue infinite query. `getNextPageParam` reads the response's
+ * `nextCursor` (null on the last page → `undefined` → `hasNextPage` false); pages flatten in the
+ * hook. The aggregate/histograms come from `pages[0]` (stable across pages). Used by
+ * `useOperatorRunsList` AND the `/operator/queue` loader warm.
+ */
+export function operatorRunsInfiniteQueryOptions(filters: OperatorQueueFilters) {
+  return infiniteQueryOptions({
+    queryKey: operatorKeys.list(filters),
+    queryFn: ({ pageParam }) => fetchOperatorRuns(filters, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage: OperatorRunSummary) => lastPage.nextCursor ?? undefined,
+    staleTime: STALE_TIME.list,
+  });
+}
+
 /** Options for a single run's detail (used by hooks AND the detail-route loader). */
 export function detailQueryOptions(workflowRunId: string) {
   return queryOptions({
@@ -162,6 +233,10 @@ export function toArtifactView(dto: ArtifactDetail, artifactId: string): Artifac
     classification: dto.classification ?? '',
     body: dto.body ?? '',
     createdAt: dto.createdAt ?? '',
+    // Story 4.20 (OQ-2) — the Compare-Mode baseline (immediately-prior version id); a nullable wire
+    // field serializes as JSON null ([[workflowdetail-wire-sends-null-not-undefined]]) → normalize
+    // to null so the route resolves `artifactIdA` with a `?? ''` fallback.
+    parentArtifactId: dto.parentArtifactId ?? null,
   };
   if (artifactType === 'implementationPlan') {
     // Story 3b-6 — the live read model now carries the ordered plan `steps` as a typed nullable
@@ -275,6 +350,60 @@ export function getProjectOptions(projectId: string) {
     queryKey: projectKeys.detail(projectId),
     queryFn: () => fetchProject(projectId),
     staleTime: STALE_TIME.detail,
+  });
+}
+
+/**
+ * Story 3i-2 (AC3/AC5) — GET the filtered candidate tickets for one project's ticket source.
+ *
+ * An absent filter field is OMITTED from the query string rather than sent blank, mirroring the
+ * backend's build-by-omission rule. `components` goes as repeated query params (openapi-fetch
+ * expands the array; Spring binds them to `List<String>`).
+ *
+ * A connector that cannot be browsed throws a typed `ProblemDetailsError` with code
+ * `TICKET_QUERY_NOT_SUPPORTED` (HTTP 404, non-retryable) — the caller hides the surface on it rather
+ * than hardcoding a connector kind.
+ */
+async function fetchCandidateTickets(filters: IntakeFilters): Promise<CandidateTicketPage> {
+  const normalized = normalizeIntakeFilters(filters);
+  if (normalized.projectId === undefined) {
+    // Guarded by `enabled` in the query options; this keeps the fn total.
+    return { tickets: [], total: 0, truncated: false };
+  }
+  const query: {
+    assignee?: string;
+    components?: string[];
+    state?: string;
+    limit?: number;
+  } = { limit: INTAKE_DEFAULT_LIMIT };
+  if (normalized.assignee !== undefined) {
+    query.assignee = normalized.assignee;
+  }
+  if (normalized.components.length > 0) {
+    query.components = normalized.components;
+  }
+  if (normalized.state !== undefined) {
+    query.state = normalized.state;
+  }
+  return unwrap(
+    await apiClient.GET('/api/v1/projects/{projectId}/ticket-query', {
+      params: { path: { projectId: normalized.projectId }, query },
+    }),
+  );
+}
+
+/**
+ * Story 3i-2 (AC5) — the candidate-ticket browse query. Disabled until a project is selected (the
+ * endpoint is project-scoped), and never retried on a non-retryable domain error — a
+ * `TICKET_QUERY_NOT_SUPPORTED` 404 must surface immediately so the view can hide the surface
+ * (`retryUnlessNonRetryable` already enforces this).
+ */
+export function candidateTicketsQueryOptions(filters: IntakeFilters) {
+  return queryOptions({
+    queryKey: intakeKeys.list(filters),
+    queryFn: () => fetchCandidateTickets(filters),
+    enabled: normalizeIntakeFilters(filters).projectId !== undefined,
+    staleTime: STALE_TIME.list,
   });
 }
 

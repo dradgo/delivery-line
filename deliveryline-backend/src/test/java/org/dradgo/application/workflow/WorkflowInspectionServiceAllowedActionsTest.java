@@ -114,6 +114,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
             WorkflowState.INVESTIGATING,
             "product_reviewer",
             List.of(AllowedAction.VIEW_ONLY, AllowedAction.VIEW_RUNNER_LOGS)),
+        // Story 4.8 (AC10) — pause_workflow joins EVERY pausable-source workflow_owner arm.
         Arguments.of(
             WorkflowState.INVESTIGATING,
             "workflow_owner",
@@ -121,6 +122,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.OPEN_DIAGNOSTIC_CONSOLE,
+                AllowedAction.PAUSE_WORKFLOW,
                 AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.WAITING_FOR_SPEC_APPROVAL,
@@ -134,7 +136,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.REGENERATE_SPEC,
                 // Story 3f-4 (AC1) — split overlay fires at the spec gate; default mock
                 // (no open proposal) appends request_split.
-                AllowedAction.REQUEST_SPLIT)),
+                AllowedAction.REQUEST_SPLIT,
+                // Story 4.20 (AC9) — compare overlay surfaces enter_compare_mode for the
+                // product_reviewer at the spec gate (after the split overlay).
+                AllowedAction.ENTER_COMPARE_MODE)),
         Arguments.of(
             WorkflowState.WAITING_FOR_SPEC_APPROVAL,
             "workflow_owner",
@@ -145,9 +150,14 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 // workflow_owner-only archive_run wrapper action).
                 AllowedAction.ACCEPT_CLARIFICATION,
                 AllowedAction.REGENERATE_SPEC,
+                // Story 4.8 (AC10) — pause_workflow closes the base arm (before the overlays).
+                AllowedAction.PAUSE_WORKFLOW,
                 // Story 3f-4 (AC1) — split overlay (request_split) is appended before the
                 // workflow_owner-only archive_run wrapper action.
                 AllowedAction.REQUEST_SPLIT,
+                // Story 4.20 (AC9) — compare overlay for the workflow_owner at the spec gate
+                // (after the split overlay, before the archive_run wrapper).
+                AllowedAction.ENTER_COMPARE_MODE,
                 AllowedAction.ARCHIVE_RUN)),
         // Story 3d-5 (AC6) — view_runner_logs joins the runner-execution states, role-agnostic.
         Arguments.of(
@@ -170,6 +180,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.OPEN_DIAGNOSTIC_CONSOLE,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+                AllowedAction.PAUSE_WORKFLOW,
                 AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.WAITING_FOR_REVIEW,
@@ -178,10 +189,15 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS)),
+        // Story 4.7 (AC10) — the workflow_owner at WAITING_FOR_REVIEW may rerun-from-step
+        // (rerun_from_step leads the arm, before the view/log actions + the workflow_owner-only
+        // archive_run wrapper action).
         Arguments.of(
             WorkflowState.WAITING_FOR_REVIEW,
             "workflow_owner",
             List.of(
+                AllowedAction.RERUN_FROM_STEP,
+                AllowedAction.PAUSE_WORKFLOW,
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
@@ -201,7 +217,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
                 // Story 3f-4 (AC1) — split overlay fires at the review gate for developer;
                 // default mock (no open proposal) appends request_split.
-                AllowedAction.REQUEST_SPLIT)),
+                AllowedAction.REQUEST_SPLIT,
+                // Story 4.20 (AC9) — compare overlay surfaces enter_compare_mode for the developer
+                // at the review gate (after the split overlay).
+                AllowedAction.ENTER_COMPARE_MODE)),
         // Story 3.20 (review) — `developer` is now recognized in EVERY state; pin its role-agnostic
         // fallback outside WAITING_FOR_REVIEW so a future matrix change can't silently grant it an
         // unintended action elsewhere.
@@ -226,6 +245,7 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.OBTAIN_MANUAL_BUNDLE,
                 AllowedAction.SUBMIT_MANUAL_ARTIFACT,
                 AllowedAction.VIEW_ONLY,
+                AllowedAction.PAUSE_WORKFLOW,
                 AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
@@ -235,6 +255,45 @@ class WorkflowInspectionServiceAllowedActionsTest {
             WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
             "developer",
             List.of(AllowedAction.VIEW_ONLY)),
+        // Story 3h-4 (AC3) — a WaitingForDelivery run offers approve_delivery to the workflow_owner
+        // gate role (+ the log/usage views); every other role gets view-only + the views.
+        Arguments.of(
+            WorkflowState.WAITING_FOR_DELIVERY,
+            "workflow_owner",
+            List.of(
+                AllowedAction.APPROVE_DELIVERY,
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+                AllowedAction.PAUSE_WORKFLOW,
+                AllowedAction.ARCHIVE_RUN)),
+        // Story 4.8 (AC10) — the lint gate's matrix rows were previously unpinned here; pin both
+        // roles now that pause_workflow joins the workflow_owner arm.
+        Arguments.of(
+            WorkflowState.WAITING_FOR_LINT_APPROVAL,
+            "workflow_owner",
+            List.of(
+                AllowedAction.APPROVE_LINT,
+                AllowedAction.REQUEST_LINT_FIX,
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+                AllowedAction.PAUSE_WORKFLOW,
+                AllowedAction.ARCHIVE_RUN)),
+        Arguments.of(
+            WorkflowState.WAITING_FOR_LINT_APPROVAL,
+            "product_reviewer",
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS)),
+        Arguments.of(
+            WorkflowState.WAITING_FOR_DELIVERY,
+            "product_reviewer",
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.VIEW_RUNNER_LOGS,
+                AllowedAction.VIEW_PROVIDER_USAGE_STATUS)),
         Arguments.of(WorkflowState.COMPLETED, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
         Arguments.of(
             WorkflowState.COMPLETED,
@@ -248,14 +307,24 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_DIAGNOSTICS,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS)),
+        // Story 4.7 (AC10) — the workflow_owner at FAILED may rerun-from-step alongside retry
+        // (rerun_from_step follows retry, before the diagnostics/log views + archive_run wrapper).
+        // Story 4.9 (AC11) — classify_failure joins the FAILED workflow_owner arm (after
+        // pause_workflow, before the views).
         Arguments.of(
             WorkflowState.FAILED,
             "workflow_owner",
             List.of(
                 AllowedAction.RETRY,
+                AllowedAction.RERUN_FROM_STEP,
+                AllowedAction.PAUSE_WORKFLOW,
+                AllowedAction.CLASSIFY_FAILURE,
                 AllowedAction.VIEW_DIAGNOSTICS,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+                // Story 4.20 (AC9) — compare overlay for the workflow_owner at FAILED (operator
+                // failure-context compare, AC10.c), before the archive_run wrapper.
+                AllowedAction.ENTER_COMPARE_MODE,
                 AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.PAUSED,
@@ -269,10 +338,14 @@ class WorkflowInspectionServiceAllowedActionsTest {
             WorkflowState.PAUSED,
             "workflow_owner",
             List.of(
+                AllowedAction.RESUME_WORKFLOW,
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_DIAGNOSTICS,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+                // Story 4.20 (AC9) — compare overlay for the workflow_owner at PAUSED (operator
+                // failure-context compare, AC10.c), before the archive_run wrapper.
+                AllowedAction.ENTER_COMPARE_MODE,
                 AllowedAction.ARCHIVE_RUN)),
         Arguments.of(
             WorkflowState.TAKEN_OVER, "product_reviewer", List.of(AllowedAction.VIEW_ONLY)),
@@ -330,6 +403,37 @@ class WorkflowInspectionServiceAllowedActionsTest {
     assertThat(view.actions()).doesNotContain(AllowedAction.ARCHIVE_RUN);
   }
 
+  @Test
+  void unresolvedConflictAddsReconcileActionForWorkflowOwnerOnly() {
+    org.dradgo.application.integration.conflict.IntegrationConflictService conflicts =
+        mock(org.dradgo.application.integration.conflict.IntegrationConflictService.class);
+    service.setIntegrationConflictService(conflicts);
+    when(conflicts.listUnresolvedConflicts(
+            org.mockito.ArgumentMatchers.any(
+                org.dradgo.application.integration.conflict.ConflictFilter.class)))
+        .thenReturn(
+            List.of(
+                new org.dradgo.application.integration.conflict.ConflictSummary(
+                    "icf_allowed00001",
+                    "ilk_allowed00001",
+                    RUN,
+                    org.dradgo.domain.registry.IntegrationConflictCategory.EXTERNAL_STATE_ADVANCED
+                        .value(),
+                    org.dradgo.application.integration.conflict.ConflictIntegrationTypes.GITHUB_PR,
+                    "octo/hello#42",
+                    NOW.toInstant())));
+    stubRunWithState(WorkflowState.FAILED, 0);
+    stubNoLatestSpec();
+    stubLatestEvent(LATEST_EVT);
+
+    AllowedActionsView owner = service.getAllowedActions(RUN, "workflow_owner");
+    AllowedActionsView reviewer = service.getAllowedActions(RUN, "product_reviewer");
+
+    assertThat(owner.actions())
+        .containsSubsequence(AllowedAction.RECONCILE_CONFLICT, AllowedAction.ARCHIVE_RUN);
+    assertThat(reviewer.actions()).doesNotContain(AllowedAction.RECONCILE_CONFLICT);
+  }
+
   // ---------------------------------------------------------------------------
   // Story 3d-2 AC8 — the advisory Reviewer Verdict Panel adds NO governed action
   // ---------------------------------------------------------------------------
@@ -360,11 +464,18 @@ class WorkflowInspectionServiceAllowedActionsTest {
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
                 // Story 3f-4 (AC1) — split overlay (request_split) fires for the developer at
                 // the review gate; it is advisory and orthogonal to the reviewer verdict panel.
-                AllowedAction.REQUEST_SPLIT);
+                AllowedAction.REQUEST_SPLIT,
+                // Story 4.20 (AC9) — compare overlay for the developer at the review gate;
+                // orthogonal to the reviewer verdict panel (still no governed action added).
+                AllowedAction.ENTER_COMPARE_MODE);
       } else if (role.equals("workflow_owner")) {
-        // archive_run is workflow_owner-only (3d-8/D1).
+        // Story 4.7 (AC10) — rerun_from_step leads the workflow_owner arm; archive_run is
+        // workflow_owner-only (3d-8/D1). Story 4.8 (AC10) — pause_workflow follows it. Still
+        // orthogonal to the reviewer verdict panel.
         expected =
             List.of(
+                AllowedAction.RERUN_FROM_STEP,
+                AllowedAction.PAUSE_WORKFLOW,
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
@@ -459,7 +570,9 @@ class WorkflowInspectionServiceAllowedActionsTest {
             AllowedAction.REGENERATE_SPEC,
             // Story 3f-4 (AC1) — split overlay (request_split) fires at the spec gate regardless
             // of pending clarifications.
-            AllowedAction.REQUEST_SPLIT);
+            AllowedAction.REQUEST_SPLIT,
+            // Story 4.20 (AC9) — compare overlay fires at the spec gate for product_reviewer.
+            AllowedAction.ENTER_COMPARE_MODE);
     assertThat(view.versionStamp().currentSpecArtifactVersion()).isEqualTo(2);
     assertThat(view.versionStamp().currentContextBundleVersion()).isEqualTo(5);
   }
@@ -482,7 +595,9 @@ class WorkflowInspectionServiceAllowedActionsTest {
             AllowedAction.ACCEPT_CLARIFICATION,
             AllowedAction.REGENERATE_SPEC,
             // Story 3f-4 (AC1) — split overlay (request_split) fires at the spec gate.
-            AllowedAction.REQUEST_SPLIT);
+            AllowedAction.REQUEST_SPLIT,
+            // Story 4.20 (AC9) — compare overlay fires at the spec gate for product_reviewer.
+            AllowedAction.ENTER_COMPARE_MODE);
   }
 
   // ---------------------------------------------------------------------------
@@ -556,10 +671,40 @@ class WorkflowInspectionServiceAllowedActionsTest {
     assertThat(view.actions())
         .containsExactly(
             AllowedAction.RETRY,
+            // Story 4.7 (AC10) — rerun_from_step joins the FAILED workflow_owner arm alongside
+            // retry.
+            AllowedAction.RERUN_FROM_STEP,
+            // Story 4.8 (AC10) — pause_workflow follows (FAILED is a mandatory pausable source).
+            AllowedAction.PAUSE_WORKFLOW,
+            // Story 4.9 (AC11) — classify_failure follows (FAILED-only, workflow_owner-only).
+            AllowedAction.CLASSIFY_FAILURE,
             AllowedAction.VIEW_DIAGNOSTICS,
             AllowedAction.VIEW_RUNNER_LOGS,
             AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+            // Story 4.20 (AC9) — compare overlay for the workflow_owner at FAILED (AC10.c),
+            // before the archive_run wrapper.
+            AllowedAction.ENTER_COMPARE_MODE,
             AllowedAction.ARCHIVE_RUN);
+  }
+
+  @Test
+  void classifyFailureIsOfferedOnlyAtFailedAndOnlyToWorkflowOwner() {
+    // Story 4.9 (AC11) — the classify affordance is FAILED-only + workflow_owner-only, matching
+    // RecoveryService.classifyFailure's CLASSIFY_NOT_APPLICABLE gate and RecommendationService's
+    // FAILED-only early-return (the three-way agreement Reconciliation 14 pins).
+    stubRunWithState(WorkflowState.FAILED, 0);
+    stubNoLatestSpec();
+    stubLatestEvent(LATEST_EVT);
+    assertThat(service.getAllowedActions(RUN, "workflow_owner").actions())
+        .contains(AllowedAction.CLASSIFY_FAILURE);
+    assertThat(service.getAllowedActions(RUN, "product_reviewer").actions())
+        .doesNotContain(AllowedAction.CLASSIFY_FAILURE);
+    assertThat(service.getAllowedActions(RUN, "developer").actions())
+        .doesNotContain(AllowedAction.CLASSIFY_FAILURE);
+
+    stubRunWithState(WorkflowState.PAUSED, 0);
+    assertThat(service.getAllowedActions(RUN, "workflow_owner").actions())
+        .doesNotContain(AllowedAction.CLASSIFY_FAILURE);
   }
 
   // ---------------------------------------------------------------------------
@@ -681,7 +826,10 @@ class WorkflowInspectionServiceAllowedActionsTest {
             AllowedAction.REGENERATE_SPEC,
             // Story 3f-4 (AC1) — blank/null role defaults to product_reviewer, so the split
             // overlay (request_split) fires at the spec gate.
-            AllowedAction.REQUEST_SPLIT);
+            AllowedAction.REQUEST_SPLIT,
+            // Story 4.20 (AC9) — compare overlay fires at the spec gate for the defaulted
+            // product_reviewer.
+            AllowedAction.ENTER_COMPARE_MODE);
     assertThat(blank.actions()).containsExactlyElementsOf(expected);
     assertThat(nullRole.actions()).containsExactlyElementsOf(expected);
   }
@@ -806,12 +954,14 @@ class WorkflowInspectionServiceAllowedActionsTest {
     // Story 3e-5 (AC2) — owner open-clarification branch: view_runner_logs +
     // open_diagnostic_console
     // join alongside view_only + answer_clarification (archive_run appended by the wrapper).
+    // Story 4.8 (AC10) — pause_workflow joins the owner branch (Investigating is pausable).
     assertThat(view.actions())
         .containsExactly(
             AllowedAction.VIEW_ONLY,
             AllowedAction.ANSWER_CLARIFICATION,
             AllowedAction.VIEW_RUNNER_LOGS,
             AllowedAction.OPEN_DIAGNOSTIC_CONSOLE,
+            AllowedAction.PAUSE_WORKFLOW,
             AllowedAction.ARCHIVE_RUN);
   }
 

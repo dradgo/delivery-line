@@ -548,6 +548,86 @@
 											</limit>
 										</limits>
 									</rule>
+									<!-- Story 4.26 (AC11, OQ-1) - additive per-PACKAGE line floors for the three Epic-4
+									     net-new packages: compare (4.19), artifact.reconciliation (4.15/4.16/4.16a),
+									     integration.conflict (4.17/4.18). Per the S4 "measured-just-under-actual" discipline
+									     (code-review 2026-07-17, Alex): each package gets its OWN floor set just under its
+									     measured merged unit+IT line coverage (compare 0.941, artifact.reconciliation 0.874,
+									     integration.conflict 0.883 as of 2026-07-17) rather than a shared flat 0.80 - this
+									     narrows the silent-regression window to ~1pp per package while keeping the green
+									     build green. All floors remain >= AC11's named 0.80 minimum. DOTTED PACKAGE form
+									     (slash silently no-ops - verified via the 3.35 0.999 probe); one rule per package so
+									     each carries its own minimum. The application.recovery Epic-4 extensions (4.5-4.9)
+									     are already covered by the 0.80 recovery floor above (measured 0.913). BUNDLE +
+									     existing floors untouched. NOTE: re-confirm the three minima against a fresh
+									     `jacoco:report` on a clean build before merge - they are set from the 2026-07-17
+									     recorded measurements. -->
+									<rule>
+										<element>PACKAGE</element>
+										<includes>
+											<include>org.dradgo.application.artifact.reconciliation</include>
+										</includes>
+										<limits>
+											<limit>
+												<counter>LINE</counter>
+												<value>COVEREDRATIO</value>
+												<minimum>0.86</minimum>
+											</limit>
+										</limits>
+									</rule>
+									<rule>
+										<element>PACKAGE</element>
+										<includes>
+											<include>org.dradgo.application.integration.conflict</include>
+										</includes>
+										<limits>
+											<limit>
+												<counter>LINE</counter>
+												<value>COVEREDRATIO</value>
+												<minimum>0.87</minimum>
+											</limit>
+										</limits>
+									</rule>
+									<rule>
+										<element>PACKAGE</element>
+										<includes>
+											<include>org.dradgo.application.compare</include>
+										</includes>
+										<limits>
+											<limit>
+												<counter>LINE</counter>
+												<value>COVEREDRATIO</value>
+												<minimum>0.93</minimum>
+											</limit>
+										</limits>
+									</rule>
+									<!-- Story 4.26 (AC11, OQ-6) - "safety-ranking logic 90%": the two deterministic ranking
+									     classes get a tighter per-CLASS 0.90 LINE floor - RecommendationService (4.9,
+									     application.recovery) and ConflictReconciliationSuggester (4.18,
+									     application.integration.conflict). Measured merged unit+IT LINE 0.984 / 1.000
+									     (2026-07-17), well above 0.90; their dedicated RecommendationServiceTest /
+									     ConflictReconciliationSuggesterTest / RecommendedPauseIsInvocableTest drive them.
+									     DOTTED fully-qualified CLASS-name form. Floor set just under measured per the S4
+									     discipline (code-review 2026-07-17): 0.97 sits under both classes' measured LINE
+									     (0.984 / 1.000) while staying well above AC11/OQ-6's named 0.90 - a real regression
+									     in the safety-ranking logic reds, the current green build stays green. PROBE-VERIFIED
+									     (code-review 2026-07-17): at 0.999 this rule reds with "Rule violated for class
+									     ...RecommendationService: lines covered ratio is 0.984" - proving the dotted-FQN CLASS
+									     include matches the real class and enforces (not a silent slash-form no-op). -->
+									<rule>
+										<element>CLASS</element>
+										<includes>
+											<include>org.dradgo.application.recovery.RecommendationService</include>
+											<include>org.dradgo.application.integration.conflict.ConflictReconciliationSuggester</include>
+										</includes>
+										<limits>
+											<limit>
+												<counter>LINE</counter>
+												<value>COVEREDRATIO</value>
+												<minimum>0.97</minimum>
+											</limit>
+										</limits>
+									</rule>
 									<!-- Story 3c-11 (AC5, decision D1) — project ADAPTER coverage is intentionally NOT
 									     given an isolated per-PACKAGE floor. ProjectController lives in the shared
 									     org.dradgo.adapters.rest package and ProjectPersistenceAdapter /
@@ -665,7 +745,12 @@
 					     image pulls that the foundation gate intentionally avoids). The dedicated
 					     `docker-runner-it` profile below clears this exclusion. Story 3-8 ships
 					     the real CI tier for the real Codex/Claude images. -->
-					<excludedGroups>known-failure,docker-runner-it</excludedGroups>
+					<!-- Story 4.25 — recovery-integration is default-excluded so the
+					     backend-contract-tests `mvn verify` tier does NOT double-run the
+					     heavy end-to-end recovery scenario ITs; the dedicated
+					     `recovery-integration` profile below clears it + selects the tag
+					     (mirrors docker-runner-it). -->
+					<excludedGroups>known-failure,docker-runner-it,recovery-integration</excludedGroups>
 					<includes>
 						<include>**/*IT.java</include>
 						<include>**/IT*.java</include>
@@ -766,6 +851,42 @@
 						<artifactId>maven-failsafe-plugin</artifactId>
 						<configuration>
 							<excludedGroups>known-failure</excludedGroups>
+							<includes>
+								<include>**/*IT.java</include>
+								<include>**/IT*.java</include>
+								<include>**/*ITCase.java</include>
+							</includes>
+						</configuration>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+
+		<!-- Story 4.25 — opt-in tier for the end-to-end recovery SCENARIO ITs tagged
+		     `recovery-integration` (resume / reconcile / rerun-from-step / pause-resume
+		     idempotency / classify-failure scenarios + artifact-drift + integration-conflict
+		     fault-injection ITs). The default Failsafe config excludes that tag so the
+		     no-double-run backend-contract-tests tier skips these heavy Testcontainers
+		     scenarios; this profile clears the exclusion and selects ONLY the tagged tests via
+		     <groups>. Mirrors the docker-runner-it profile shape. jacoco.check.skip=true: this
+		     tier runs a partial (tagged) subset, so the full-suite line/branch floors can never
+		     be met and would fail the build on coverage rather than on a scenario regression —
+		     coverage gating lives on backend-contract-tests. The CI job runs
+		     `./mvnw -Precovery-integration -pl deliveryline-backend -am verify -Djacoco.check.skip=true`;
+		     narrow to one scenario with `-Dit.test=ResumeRecoveryScenarioIT`. -->
+		<profile>
+			<id>recovery-integration</id>
+			<properties>
+				<jacoco.check.skip>true</jacoco.check.skip>
+			</properties>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-failsafe-plugin</artifactId>
+						<configuration>
+							<excludedGroups>known-failure</excludedGroups>
+							<groups>recovery-integration</groups>
 							<includes>
 								<include>**/*IT.java</include>
 								<include>**/IT*.java</include>

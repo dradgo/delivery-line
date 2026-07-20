@@ -25,6 +25,7 @@ import type { StateName } from '@/lib/state-signifiers';
 import { cn } from '@/lib/utils';
 
 import { useRunnerLogStream, type RunnerLogPhase } from '../hooks/useRunnerLogStream';
+import { projectRunnerLogLine } from './stepLogLineView';
 import { StateSignifierChip } from './WorkflowStateBadge';
 
 export interface StepExecutionLogViewerProps {
@@ -162,7 +163,10 @@ export function StepExecutionLogViewer({ workflowRunId, actorRole }: StepExecuti
                   entry.stream === 'stderr' ? 'text-state-warning-foreground' : undefined,
                 )}
               >
-                {entry.line}
+                {/* AC3 — stdout is now a JSONL event stream (codex --json / claude stream-json);
+                    project each line to readable text. stderr (the runner's own log markers) is
+                    already prose, rendered verbatim. Non-JSON stdout falls back to verbatim too. */}
+                {entry.stream === 'stdout' ? projectRunnerLogLine(entry.line) : entry.line}
               </li>
             ))}
           </ol>

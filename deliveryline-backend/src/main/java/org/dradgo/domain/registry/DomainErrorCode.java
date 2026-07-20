@@ -56,6 +56,17 @@ public enum DomainErrorCode implements RegistryValue {
   DOCTOR_RUNNER_SECRET_MISSING("DOCTOR_RUNNER_SECRET_MISSING"),
   DOCTOR_GITHUB_AUTH_FAILED("DOCTOR_GITHUB_AUTH_FAILED"),
   DOCTOR_GITHUB_TOKEN_MISSING("DOCTOR_GITHUB_TOKEN_MISSING"),
+  // Story 3i-1 (AC6) — three-sites codes (enum + ProblemDetailsCatalog + problemTypeUris
+  // placeholder; ProblemDetailsCoverageFoundationContract auto-covers). Back the doctor jira-auth
+  // probe under the jira-real profile, mirroring the DOCTOR_GITHUB_* pair.
+  DOCTOR_JIRA_AUTH_FAILED("DOCTOR_JIRA_AUTH_FAILED"),
+  DOCTOR_JIRA_TOKEN_MISSING("DOCTOR_JIRA_TOKEN_MISSING"),
+  // Story 3i-3 (AC6) — three-sites codes (enum + ProblemDetailsCatalog + problemTypeUris
+  // placeholder; ProblemDetailsCoverageFoundationContract auto-covers). Back the doctor
+  // bitbucket-auth probe under the bitbucket-real profile, mirroring the DOCTOR_GITHUB_* /
+  // DOCTOR_JIRA_* pairs.
+  DOCTOR_BITBUCKET_AUTH_FAILED("DOCTOR_BITBUCKET_AUTH_FAILED"),
+  DOCTOR_BITBUCKET_TOKEN_MISSING("DOCTOR_BITBUCKET_TOKEN_MISSING"),
   // Story 3.9 (Decision D5) — three-sites codes (enum + ProblemDetailsCatalog + manifest).
   // LINEAR_GITHUB_REPO_MISMATCH guards prepareWorkspace (AC9); the two DOCTOR_GIT_* codes back the
   // git availability + bot-identity doctor probes (AC15).
@@ -151,6 +162,32 @@ public enum DomainErrorCode implements RegistryValue {
   PROJECT_NOT_FOUND("PROJECT_NOT_FOUND"),
   PROJECT_SLUG_CONFLICT("PROJECT_SLUG_CONFLICT"),
   UNSUPPORTED_CONNECTOR_KIND("UNSUPPORTED_CONNECTOR_KIND"),
+  // Story 3i-2 (AC3) — three-sites code (enum + ProblemDetailsCatalog + problemTypeUris
+  // placeholder; ProblemDetailsCoverageFoundationContract auto-covers). Raised by
+  // TicketQueryService
+  // when the project's ticket source has no registered adapter in this context OR reports
+  // supportsTicketQuery=false. Distinct from UNSUPPORTED_CONNECTOR_KIND, which means "no adapter is
+  // registered for that connector kind at all" — here the connector may well exist and simply
+  // cannot
+  // be browsed. NOT_FOUND + non-retryable, so the intake UI cleanly hides the surface by catching
+  // it.
+  TICKET_QUERY_NOT_SUPPORTED("TICKET_QUERY_NOT_SUPPORTED"),
+  // Story 3i-2 code-review — three-sites codes (enum + ProblemDetailsCatalog + problemTypeUris
+  // placeholder). The browse is the FIRST synchronous REST call into a ticket-source adapter, so it
+  // is the first place a TicketSourceAdapterException can reach an HTTP response. Left uncaught it
+  // renders as an opaque 500 INTERNAL_ERROR + retryable=false, which mislabels the two conditions
+  // operators actually hit: an expired token (diagnosable, not retryable) and a transient
+  // 429/5xx/timeout (retryable). TicketQueryService translates the exception's
+  // IntegrationFailureCategory into one of these two codes, honoring the contract that
+  // TicketSourceAdapterException's own javadoc states: "the application service is responsible for
+  // converting this to the appropriate DomainException".
+  //
+  // NETWORK_API_FAILURE — the source was unreachable or answered transiently. 503 + RETRYABLE.
+  TICKET_QUERY_SOURCE_UNAVAILABLE("TICKET_QUERY_SOURCE_UNAVAILABLE"),
+  // Every other category (LINK_FAILURE auth/permission, SYNC_FAILURE malformed response,
+  // STATE_CONFLICT) — the source answered, but not usefully. 502 + non-retryable: retrying an
+  // expired credential or an unparseable payload cannot help.
+  TICKET_QUERY_SOURCE_FAILED("TICKET_QUERY_SOURCE_FAILED"),
   // Story 3c-4 (AC3) — three-sites code (enum + ProblemDetailsCatalog + manifest). Thrown by
   // CredentialMasterKeyGuard at startup (as a typed DomainException, precedent
   // DOCTOR_REST_BIND_UNAVAILABLE) when the credential master key is missing AND at least one
@@ -203,7 +240,140 @@ public enum DomainErrorCode implements RegistryValue {
   // does NOT carry the allowDeepSplit override. A recursive split deeper than the configured cap is
   // a malformed request, not a transient fault; mirror RUN_DEPENDENCY_CYCLE's CONFLICT (409) +
   // non-retryable mapping. Carries runId, currentDepth, maxDepth, and reason=depth_limit_exceeded.
-  SPLIT_DEPTH_LIMIT_EXCEEDED("SPLIT_DEPTH_LIMIT_EXCEEDED");
+  SPLIT_DEPTH_LIMIT_EXCEEDED("SPLIT_DEPTH_LIMIT_EXCEEDED"),
+  // Story 4.3 (AC2 / Reconciliation 9) — three-sites code (enum + ProblemDetailsCatalog +
+  // manifest).
+  // Raised by AuditQueryService when an audit-history filter value is malformed: an unknown
+  // --event-type token (not in the WorkflowEventType registry), an undecodable --cursor (bad
+  // base64url / wrong shape / unparseable keyset), or a mutually-exclusive scope at the service
+  // seam.
+  // BAD_REQUEST (400) + non-retryable (a malformed query, not a transient fault — mirrors
+  // INVALID_COMMAND_PAYLOAD). The since>until case reuses the existing INVALID_TIME_RANGE, and the
+  // CLI --ticket/--run XOR reuses INVALID_COMMAND_PAYLOAD (the parseBatchTickets precedent).
+  INVALID_AUDIT_FILTER("INVALID_AUDIT_FILTER"),
+  // Story 4.5 (AC3 / Reconciliation 6) — three-sites code (enum + ProblemDetailsCatalog +
+  // manifest).
+  // Mirrors RETRY_NOT_APPLICABLE / MANUAL_EXECUTION_NOT_APPLICABLE / ARCHIVE_NOT_APPLICABLE: there
+  // is
+  // NO generic ACTION_NOT_ALLOWED guard — command services enforce their own state preconditions.
+  // Raised by RecoveryService.resume when the run is not in Paused (details.currentState), OR when
+  // the run IS Paused but no WORKFLOW_STATE_CHANGED → Paused event exists to derive the prior
+  // executing state / link the audit trail. CONFLICT (409) + non-retryable (a precondition mismatch
+  // on the run's state, not a transient fault).
+  RESUME_NOT_APPLICABLE("RESUME_NOT_APPLICABLE"),
+  RECONCILE_NOT_APPLICABLE("RECONCILE_NOT_APPLICABLE"),
+  MISSING_RECONCILIATION_DECISION("MISSING_RECONCILIATION_DECISION"),
+  INVALID_RECONCILIATION_DECISION("INVALID_RECONCILIATION_DECISION"),
+  CONFLICT_NOT_FOUND("CONFLICT_NOT_FOUND"),
+  CONFLICT_ALREADY_RESOLVED("CONFLICT_ALREADY_RESOLVED"),
+  // Story 4.7 (AC3/AC4 / Reconciliation 8) — three-sites codes (enum + ProblemDetailsCatalog +
+  // problemTypeUris manifest), both 400 BAD_REQUEST non-retryable, mirroring
+  // INVALID_RECONCILIATION_DECISION / MISSING_RECONCILIATION_DECISION. INVALID_RERUN_TARGET_STEP is
+  // raised by RecoveryService.rerunFromStep when the targetStep is null/blank or not in the
+  // SafeRerunStep enum (details.provided). MISSING_REASON_TEXT is raised when the rerun's required
+  // reasonText is null/blank — a STORY-level guard (the transition table does NOT mandate a reason
+  // for Investigating/Executing targets), mirroring how reconcile enforces a required reasonText.
+  INVALID_RERUN_TARGET_STEP("INVALID_RERUN_TARGET_STEP"),
+  MISSING_REASON_TEXT("MISSING_REASON_TEXT"),
+  // Story 4.8 (AC3 / Reconciliation 7) — three-sites code (enum + ProblemDetailsCatalog +
+  // problemTypeUris manifest). Mirrors RESUME_NOT_APPLICABLE / RECONCILE_NOT_APPLICABLE: there is
+  // NO generic ACTION_NOT_ALLOWED guard — command services enforce their own state preconditions.
+  // Raised by RecoveryService.pause when the run's current state is outside the explicit
+  // PAUSABLE_SOURCE_STATES allow-list (details.currentState) — terminal states, TakenOver, Paused
+  // itself, and the four autonomous-driver states (Inbox/Planned/Split/WaitingForDependencies)
+  // whose one-shot triggers a pause would silently consume. CONFLICT (409) + non-retryable (a
+  // precondition mismatch on the run's state, not a transient fault).
+  PAUSE_NOT_APPLICABLE("PAUSE_NOT_APPLICABLE"),
+  // Story 4.9 (AC3 / Reconciliation 11) — four three-sites codes (enum + ProblemDetailsCatalog +
+  // problemTypeUris manifest). CLASSIFY_NOT_APPLICABLE mirrors RESUME_NOT_APPLICABLE /
+  // PAUSE_NOT_APPLICABLE: there is NO generic ACTION_NOT_ALLOWED guard — command services enforce
+  // their own state preconditions. Raised by RecoveryService.classifyFailure when the run is not
+  // in Failed (details.runId + details.currentState); CONFLICT (409) + non-retryable. The three
+  // taxonomy-input codes are 400 BAD_REQUEST non-retryable, mirroring
+  // MISSING_/INVALID_RECONCILIATION_DECISION: MISSING_TAXONOMY_VALUE (null/blank),
+  // INVALID_TAXONOMY_VALUE (not in the FailureTaxonomyValue registry — details.provided), and
+  // DEPRECATED_TAXONOMY_VALUE (registry value marked deprecated; write path rejects while reads
+  // stay total per NFR33 — details.provided + details.replacementValue, the hint 4.14 AC4 puts on
+  // the wire).
+  CLASSIFY_NOT_APPLICABLE("CLASSIFY_NOT_APPLICABLE"),
+  MISSING_TAXONOMY_VALUE("MISSING_TAXONOMY_VALUE"),
+  INVALID_TAXONOMY_VALUE("INVALID_TAXONOMY_VALUE"),
+  DEPRECATED_TAXONOMY_VALUE("DEPRECATED_TAXONOMY_VALUE"),
+  // Story 4.18 (AC6 / Reconciliation 7) — three-sites code (enum + ProblemDetailsCatalog +
+  // problemTypeUris manifest). Raised by WorkflowOrchestrationService.dispatchExecutionInternal
+  // when a run has an unresolved high-severity integration conflict
+  // ({external_state_advanced, external_state_reverted}): the EXECUTION dispatch is refused so the
+  // conflict is reconciled first (NFR19). The dispatch methods never transition, so throwing before
+  // enqueue inherently leaves the run in its prior state (AC6 "transient — workflow stays put").
+  // CONFLICT (409) + non-retryable (a precondition mismatch on the run's conflict state, not a
+  // transient fault), mirroring PAUSE_NOT_APPLICABLE.
+  DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT("DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT"),
+  // Story 4.16 (AC6 / Reconciliation 5) — four three-sites codes (enum + ProblemDetailsCatalog +
+  // problemTypeUris manifest) for the operator-driven artifact-drift repair path. DRIFT_NOT_FOUND
+  // (404) is raised by ArtifactReconciliationService.repairArtifactDrift when the {@code adr_}
+  // driftId resolves to no row (mirror CONFLICT_NOT_FOUND). DRIFT_ALREADY_RESOLVED (409) is raised
+  // when the drift's {@code resolved_at} is already set (mirror CONFLICT_ALREADY_RESOLVED — a
+  // precondition mismatch, not a transient fault). INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY (400)
+  // is raised when the requested repairAction is not legal for the drift's DriftCategory (and for
+  // the E4 restore_from_backup stub until backup integration lands — OQ-2).
+  // MISSING_REPAIR_REQUIRED_FIELD
+  // (400) is raised when an action-specific required field is absent (e.g. markOperationComplete's
+  // completionEvidence). The last two are malformed-request 400s, mirroring
+  // MISSING_/INVALID_RECONCILIATION_DECISION. There is NO generic ACTION_NOT_ALLOWED code — the
+  // endpoint role gate reuses INVALID_REVIEWER_ROLE_FOR_ENDPOINT.
+  DRIFT_NOT_FOUND("DRIFT_NOT_FOUND"),
+  DRIFT_ALREADY_RESOLVED("DRIFT_ALREADY_RESOLVED"),
+  INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY("INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY"),
+  MISSING_REPAIR_REQUIRED_FIELD("MISSING_REPAIR_REQUIRED_FIELD"),
+  // Story 4.16 code review (OQ-2 resolved -> option 2) — three-sites code (enum +
+  // ProblemDetailsCatalog + problemTypeUris manifest). The restore_from_backup E4 stub is a
+  // valid-but-unimplemented action (it IS legal for the missing_payload category), so rejecting it
+  // with INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY ("invalid for category") is semantically wrong.
+  // This dedicated NOT_IMPLEMENTED (501) code is raised by
+  // ArtifactReconciliationService.repairArtifactDrift for a legal-but-stubbed action until the
+  // backup-integration epic lands. Non-retryable (retrying will not help until the feature ships).
+  REPAIR_ACTION_NOT_IMPLEMENTED("REPAIR_ACTION_NOT_IMPLEMENTED"),
+  // Story 4.19 (AC8 / Reconciliation 3/12) — three-sites code (enum + ProblemDetailsCatalog +
+  // problemTypeUris manifest). The ONLY new error code in the Compare Mode backend. Raised by
+  // RevisionDeltaService.computeDelta when the two artifact ids passed to the compare endpoint do
+  // NOT belong to the same lineage — either they disagree on (workflowRunId, artifactType) or
+  // neither is reachable from the other by walking the parent_artifact_id chain (a fresh draft
+  // after a failed leaf, lineage_recovery=true, hosts a disjoint lineage under the same run+type).
+  // BAD_REQUEST (400) + non-retryable (a malformed cross-lineage request, not a transient fault —
+  // mirrors INVALID_COMMAND_PAYLOAD). Carries details{artifactIdA, artifactIdB, reason}. The other
+  // two epic codes are REUSED: ARTIFACT_NOT_FOUND -> ARTIFACT_RECORD_NOT_FOUND (404),
+  // ARTIFACT_PAYLOAD_UNAVAILABLE at its live 503 (NOT the epic's 409).
+  ARTIFACT_LINEAGE_MISMATCH("ARTIFACT_LINEAGE_MISMATCH"),
+  // Story 4.16a (AC2/AC9 / Reconciliation 5) — two three-sites codes (enum + ProblemDetailsCatalog
+  // +
+  // problemTypeUris manifest) for the operator-driven artifact-lineage recovery path.
+  // INVALID_LINEAGE_RECOVERY_ACTION (400) is raised by
+  // ArtifactReconciliationService.reconcileLineage when the requested lineageAction is
+  // unknown/blank
+  // (mirror INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY, but lineage actions have no category-legality
+  // dimension — every typed action is always applicable to an artifact, so this fires only on an
+  // unparseable token). MISSING_LINEAGE_RECOVERY_FIELD (400) is raised when an action-specific
+  // required field is absent (reattach_to_existing_lineage's chosenParentArtifactId). Both are
+  // malformed-request 400s, mirroring MISSING_REPAIR_REQUIRED_FIELD. The "stable conflict error"
+  // for
+  // an unresolved lineage ambiguity (AC9) REUSES the existing transient ARTIFACT_OPERATION_INTENT_
+  // CONFLICT / ARTIFACT_LINEAGE_ALREADY_EXISTS (409) — no new code. There is NO generic
+  // ACTION_NOT_ALLOWED code — the endpoint role gate reuses INVALID_REVIEWER_ROLE_FOR_ENDPOINT.
+  INVALID_LINEAGE_RECOVERY_ACTION("INVALID_LINEAGE_RECOVERY_ACTION"),
+  MISSING_LINEAGE_RECOVERY_FIELD("MISSING_LINEAGE_RECOVERY_FIELD"),
+  // Story 3m-2 (AC8) — three configurable-workflow codes (enum + ProblemDetailsCatalog +
+  // problemTypeUris manifest), registered AHEAD of their throw sites (which land in 3m-3/3m-4);
+  // ProblemDetailsCoverageFoundationContract round-trips every registered code, so registration
+  // alone passes the gate. WORKFLOW_DEFINITION_NOT_FOUND (404) is raised when a run/project
+  // references a definition id that resolves to no row (mirror PROJECT_NOT_FOUND).
+  // STEP_EXECUTOR_NOT_CONFIGURED (422) is the fail-fast dispatch guard for a step whose executor
+  // binding (runner_kind / credential) is incomplete — a config-incomplete request, not a
+  // transient fault or an opaque 500 (3m-4's fast-fail per the 3m-1 review). DEFINITION_STEP_INDEX_
+  // CONFLICT (409) is raised when a custom-definition edit would create a duplicate/non-contiguous
+  // step_index (3m-9), a precondition mismatch mirroring ILLEGAL_TRANSITION's CONFLICT.
+  WORKFLOW_DEFINITION_NOT_FOUND("WORKFLOW_DEFINITION_NOT_FOUND"),
+  STEP_EXECUTOR_NOT_CONFIGURED("STEP_EXECUTOR_NOT_CONFIGURED"),
+  DEFINITION_STEP_INDEX_CONFLICT("DEFINITION_STEP_INDEX_CONFLICT");
 
   private static final Map<String, DomainErrorCode> LOOKUP = RegistryParsers.index(values());
 

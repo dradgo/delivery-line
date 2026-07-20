@@ -55,12 +55,15 @@ class TransitionTableCrossProductFoundationContract {
           // failures.
           // Story 3d-3 (AC2 / R4) — the spec-stage dispatching state parks in
           // WaitingForManualExecution when the resolved runner kind is `manual`.
+          // Story 4.8 (AC3 / AC7) — every PAUSABLE_SOURCE_STATES member gains a Paused edge,
+          // symmetric with the widened Paused return row below (the pause symmetry invariant).
           Map.entry(
               WorkflowState.INVESTIGATING,
               EnumSet.of(
                   WorkflowState.WAITING_FOR_SPEC_APPROVAL,
                   WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
                   WorkflowState.FAILED,
+                  WorkflowState.PAUSED,
                   WorkflowState.TAKEN_OVER,
                   WorkflowState.RECONCILED)),
           Map.entry(
@@ -69,6 +72,7 @@ class TransitionTableCrossProductFoundationContract {
                   WorkflowState.EXECUTING,
                   WorkflowState.INVESTIGATING,
                   WorkflowState.SPLIT,
+                  WorkflowState.PAUSED,
                   WorkflowState.TAKEN_OVER,
                   WorkflowState.RECONCILED)),
           // Story 3d-3 (AC2 / R4) — the execution-stage dispatching state parks in
@@ -78,6 +82,12 @@ class TransitionTableCrossProductFoundationContract {
               EnumSet.of(
                   WorkflowState.WAITING_FOR_REVIEW,
                   WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+                  // Story 3h-2 (AC4) — a CRITICAL lint finding parks the run at the pre-review
+                  // gate.
+                  WorkflowState.WAITING_FOR_LINT_APPROVAL,
+                  // Story 3h-4 (AC3 / AC4) — a non-auto push mode parks the run at the pre-review
+                  // delivery gate.
+                  WorkflowState.WAITING_FOR_DELIVERY,
                   WorkflowState.FAILED,
                   WorkflowState.PAUSED,
                   WorkflowState.TAKEN_OVER,
@@ -88,6 +98,7 @@ class TransitionTableCrossProductFoundationContract {
                   WorkflowState.COMPLETED,
                   WorkflowState.EXECUTING,
                   WorkflowState.SPLIT,
+                  WorkflowState.PAUSED,
                   WorkflowState.TAKEN_OVER,
                   WorkflowState.RECONCILED)),
           // Story 3d-3 (AC2 / R4) — a parked manual run leaves only on operator submission (3d-4
@@ -99,25 +110,65 @@ class TransitionTableCrossProductFoundationContract {
                   WorkflowState.WAITING_FOR_SPEC_APPROVAL,
                   WorkflowState.WAITING_FOR_REVIEW,
                   WorkflowState.FAILED,
+                  WorkflowState.PAUSED,
                   WorkflowState.TAKEN_OVER,
                   WorkflowState.RECONCILED)),
-          Map.entry(WorkflowState.SPLIT, EnumSet.of(WorkflowState.COMPLETED)),
+          Map.entry(
+              WorkflowState.SPLIT, EnumSet.of(WorkflowState.COMPLETED, WorkflowState.RECONCILED)),
           // Story 3f-3 (AC2 / AC6) — the dependency-gating state's sole out-edge: release onward to
           // spec generation once the last prerequisite completes.
           Map.entry(
-              WorkflowState.WAITING_FOR_DEPENDENCIES, EnumSet.of(WorkflowState.INVESTIGATING)),
+              WorkflowState.WAITING_FOR_DEPENDENCIES,
+              EnumSet.of(WorkflowState.INVESTIGATING, WorkflowState.RECONCILED)),
+          // Story 3h-2 (AC4 / AC5) — the pre-review lint gate: approve_lint -> WaitingForReview,
+          // request_lint_fix -> Executing, plus the recovery/safety edges. No -> Failed (Decision
+          // 3).
+          Map.entry(
+              WorkflowState.WAITING_FOR_LINT_APPROVAL,
+              EnumSet.of(
+                  WorkflowState.WAITING_FOR_REVIEW,
+                  WorkflowState.EXECUTING,
+                  // Story 3h-4 (AC3, Decision 3) — a lint approval on a non-auto project routes
+                  // into the delivery gate.
+                  WorkflowState.WAITING_FOR_DELIVERY,
+                  WorkflowState.PAUSED,
+                  WorkflowState.TAKEN_OVER,
+                  WorkflowState.RECONCILED)),
+          // Story 3h-4 (AC3 / AC4) — the unified delivery gate: approve_delivery ->
+          // WaitingForReview
+          // (push in approve mode, record in manual mode), plus the recovery/safety edges. No ->
+          // Failed (Decision 5).
+          Map.entry(
+              WorkflowState.WAITING_FOR_DELIVERY,
+              EnumSet.of(
+                  WorkflowState.WAITING_FOR_REVIEW,
+                  WorkflowState.PAUSED,
+                  WorkflowState.TAKEN_OVER,
+                  WorkflowState.RECONCILED)),
           Map.entry(WorkflowState.COMPLETED, EnumSet.noneOf(WorkflowState.class)),
           Map.entry(
               WorkflowState.FAILED,
               EnumSet.of(
                   WorkflowState.EXECUTING,
                   WorkflowState.INVESTIGATING,
+                  WorkflowState.PAUSED,
                   WorkflowState.TAKEN_OVER,
                   WorkflowState.RECONCILED)),
+          // Story 4.8 (AC3 / AC7) — the Paused return row mirrors every pausable source (the
+          // symmetry invariant: resume transitions back to the recorded priorState).
           Map.entry(
               WorkflowState.PAUSED,
               EnumSet.of(
-                  WorkflowState.EXECUTING, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED)),
+                  WorkflowState.EXECUTING,
+                  WorkflowState.INVESTIGATING,
+                  WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+                  WorkflowState.WAITING_FOR_REVIEW,
+                  WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+                  WorkflowState.WAITING_FOR_LINT_APPROVAL,
+                  WorkflowState.WAITING_FOR_DELIVERY,
+                  WorkflowState.FAILED,
+                  WorkflowState.TAKEN_OVER,
+                  WorkflowState.RECONCILED)),
           Map.entry(WorkflowState.TAKEN_OVER, EnumSet.noneOf(WorkflowState.class)),
           Map.entry(WorkflowState.RECONCILED, EnumSet.noneOf(WorkflowState.class)));
 
@@ -126,7 +177,18 @@ class TransitionTableCrossProductFoundationContract {
           FailureCategory.RUNNER_TIMEOUT,
           FailureCategory.RUNNER_CRASH,
           FailureCategory.RUNNER_CONTRACT_VIOLATION,
-          FailureCategory.RUNNER_NON_ZERO_EXIT);
+          FailureCategory.RUNNER_NON_ZERO_EXIT,
+          // Story 3h-1 (AC5) — mirrors the WorkflowTransitionTable allow-list addition.
+          FailureCategory.RUNNER_BUILD_FAILED,
+          // Post-execution secret leak — mirrors the WorkflowTransitionTable allow-list addition.
+          FailureCategory.RUNNER_SECRET_LEAK,
+          // Mirror of the WorkflowTransitionTable allow-list addition.
+          FailureCategory.TESTCONTAINERS_INFRA_FAILED,
+          // Story 4.7 [Review D1] — a recovery rerun-from-step re-enqueue failure compensates by
+          // driving the (INVESTIGATING/EXECUTING) run to FAILED; mirrors the
+          // WorkflowTransitionTable
+          // allow-list addition.
+          FailureCategory.RECOVERY_DISPATCH_FAILED);
 
   @Test
   void everyIllegalTransitionRaisesIllegalTransitionAndEveryLegalTransitionPasses() {

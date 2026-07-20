@@ -269,7 +269,8 @@ class ArtifactLoggingContractTest {
             eventPort,
             Clock.fixed(Instant.parse("2026-05-08T14:00:00Z"), ZoneOffset.UTC),
             Duration.ofMinutes(15),
-            callthroughTemplate());
+            callthroughTemplate(),
+            null);
 
     ArtifactOperationSnapshot stalePending =
         new ArtifactOperationSnapshot(

@@ -32,9 +32,12 @@ import { ErrorState } from '@/components/feedback';
 import { isProblemDetailsError } from '@/lib/api/problemDetails';
 import { cn } from '@/lib/utils';
 
+import { useFailureClassification } from '../hooks/useFailureClassification';
+import { useFailureTaxonomy } from '../hooks/useFailureTaxonomy';
 import { useWorkflowDetail } from '../hooks/useWorkflowDetail';
 import { useWorkflowEvents } from '../hooks/useWorkflowEvents';
 import { humanizeFailureCategory, humanizeNextSafeAction } from '../failureCategoryView';
+import { humanNameForTaxonomy } from './failureClassificationDialogView';
 import { formatRelativeTime, formatUtcTimestamp } from '../runContextFormat';
 import {
   RUN_STALE_THRESHOLD_MS,
@@ -214,7 +217,16 @@ function StripContent({ view, nowMs }: { view: RunContextView; nowMs: number }) 
  * fields use the same `<NotReported />` placeholder. `nextSafeAction` is humanized
  * VERBATIM from the wire (never the stale `await_operator_action` example label).
  */
-function RecoveryBaseline({ view, nowMs }: { view: RunContextView; nowMs: number }) {
+function RecoveryBaseline({
+  view,
+  nowMs,
+  classificationLabel,
+}: {
+  view: RunContextView;
+  nowMs: number;
+  /** Story 4.24 (AC9) — the run's applied failure-taxonomy human name, if it has been classified. */
+  classificationLabel?: string | undefined;
+}) {
   const category = humanizeFailureCategory(view.failureCategory);
   const nextAction = humanizeNextSafeAction(view.nextSafeAction);
   const relFailure = formatRelativeTime(view.failureTimestamp, nowMs);
@@ -263,6 +275,16 @@ function RecoveryBaseline({ view, nowMs }: { view: RunContextView; nowMs: number
         <Item label="Next safe action" testId="run-recovery-next-action" title={nextAction}>
           {nextAction ?? <NotReported />}
         </Item>
+        {/* Story 4.24 (AC9) — the applied failure classification, once the run has been classified.
+            Fed from the shared `useFailureClassification` cache (keyed under `detail(id)`), so the
+            classify mutation's invalidation refreshes it here for free — no dedicated fetch. */}
+        {classificationLabel !== undefined ? (
+          <StateSignifierChip
+            stateName="informational"
+            label={`Failure classification: ${classificationLabel}`}
+            testId="run-recovery-classification-chip"
+          />
+        ) : null}
       </Inline>
     </section>
   );
@@ -426,6 +448,21 @@ export function RunContextStrip({ workflowRunId }: RunContextStripProps) {
     view !== undefined &&
     view.currentState === 'TakenOver';
 
+  // Story 4.24 (AC9) — the run's applied failure classification, surfaced as a Run Context Strip
+  // chip. Fetched ONLY for a failed run (`enabled: showRecovery`); the taxonomy registry resolves
+  // the human-readable name. Both queries are globally/`detail(id)`-cached, so this adds no fetch
+  // beyond the shared cache and the classify mutation's invalidation refreshes the chip for free.
+  const classificationQuery = useFailureClassification(workflowRunId, { enabled: showRecovery });
+  const taxonomyQuery = useFailureTaxonomy({ enabled: showRecovery });
+  // Review D1 — humanize via the registry (the canonical label source shared with the dialog + the
+  // diagnostics surface). The former `?? currentDisplayLabel` fallback was dead: `humanNameForTaxonomy`
+  // only returns undefined when `currentTaxonomyValue` is empty, and the backend leaves
+  // `currentDisplayLabel` null in exactly that case (both derive from the same current-taxonomy).
+  const classificationLabel = humanNameForTaxonomy(
+    taxonomyQuery.data,
+    classificationQuery.data?.currentTaxonomyValue,
+  );
+
   return (
     <>
       <section
@@ -466,7 +503,9 @@ export function RunContextStrip({ workflowRunId }: RunContextStripProps) {
           <StripContent view={view} nowMs={nowMs} />
         ) : null}
       </section>
-      {view !== undefined && showRecovery ? <RecoveryBaseline view={view} nowMs={nowMs} /> : null}
+      {view !== undefined && showRecovery ? (
+        <RecoveryBaseline view={view} nowMs={nowMs} classificationLabel={classificationLabel} />
+      ) : null}
       {showTakeover ? <RunTakeoverAttribution workflowRunId={workflowRunId} nowMs={nowMs} /> : null}
     </>
   );

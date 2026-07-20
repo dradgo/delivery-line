@@ -1,0 +1,10 @@
+{
+  "renderedTextContains": [
+    "javascript:window.__reconRefXss=1",
+    "&lt;script&gt;window.__reconEntityXss=1&lt;/script&gt;"
+  ],
+  "renderedTextDoesNotContain": ["<script>window.__reconEntityXss=1</script>"],
+  "noScriptElements": true,
+  "noActiveElements": true,
+  "noAnchorElements": true
+}

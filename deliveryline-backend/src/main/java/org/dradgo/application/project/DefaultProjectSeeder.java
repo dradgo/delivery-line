@@ -123,13 +123,37 @@ public class DefaultProjectSeeder {
     // time via the shared RepositoryRef.normalizeRepositoryUrl, exactly like the global path did.
     String repositoryUrl = workflowProperties.repos().url();
     boolean openspecEnabled = runnerProperties.openSpecEnabled();
+    // Story 3h-1 (AC2) — seed the default project's build config from the global build-stage props.
+    // Coerce a blank command to null (Project rejects a set-but-blank command); default OFF.
+    boolean buildStageEnabled = runnerProperties.buildStageEnabled();
+    String globalBuildCommand = runnerProperties.buildCommand();
+    String buildCommand =
+        (globalBuildCommand == null || globalBuildCommand.isBlank())
+            ? null
+            : globalBuildCommand.trim();
+    // Story 3h-2 (AC2) — seed the default project's lint config from the global lint-stage props.
+    // Blank entries are already dropped by RunnerProperties.LintStage; default OFF, empty list.
+    boolean lintStageEnabled = runnerProperties.lintStageEnabled();
+    java.util.List<String> lintCommands = runnerProperties.lintCommands();
+    // Story 3h-4 (AC1) — seed the default project's delivery config from the global delivery props
+    // (deliveryline.runner.delivery). Defaults (AUTO, true) ⇒ pre-3h delivery (push inline + PR).
+    org.dradgo.domain.registry.PushMode pushMode = runnerProperties.pushMode();
+    boolean autoCreatePullRequest = runnerProperties.autoCreatePullRequest();
 
     log.info(
-        "seeding default project from global config repoRef={} ticketKind={} repoKind={} openspec={}",
+        "seeding default project from global config repoRef={} ticketKind={} repoKind={} openspec={} "
+            + "buildStageEnabled={} buildCommandPresent={} lintStageEnabled={} lintCommandCount={} "
+            + "pushMode={} autoCreatePullRequest={}",
         repositoryUrl,
         ticketSourceKind.value(),
         repoHostKind.value(),
-        openspecEnabled);
+        openspecEnabled,
+        buildStageEnabled,
+        buildCommand != null,
+        lintStageEnabled,
+        lintCommands.size(),
+        pushMode.value(),
+        autoCreatePullRequest);
 
     Project defaultProject =
         new Project(
@@ -149,7 +173,22 @@ public class DefaultProjectSeeder {
             // byte-identical to pre-3d (never parks, never emits manual.executionRequested).
             null,
             OffsetDateTime.now(ZoneOffset.UTC),
-            null);
+            null,
+            // Story 3h-1 (AC2) — seed build config from global props (full 20-arg ctor; no per-step
+            // map so pass an empty map).
+            java.util.Map.of(),
+            buildCommand,
+            buildStageEnabled,
+            // Story 3h-2 (AC2) — seed lint config from global props.
+            lintCommands,
+            lintStageEnabled,
+            // Story 3h-4 (AC1) — seed delivery config from global props.
+            pushMode,
+            autoCreatePullRequest,
+            // Task 4 (DinD Testcontainers sidecar) — the default project seeds no sidecar (no
+            // global config property exists for this flag; a project owner opts in per-project via
+            // the update surface).
+            false);
     try {
       Project seeded = projectStore.insert(defaultProject);
       log.info("seeded default project publicId={}", seeded.publicId());

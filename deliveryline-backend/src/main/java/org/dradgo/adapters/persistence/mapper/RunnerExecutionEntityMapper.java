@@ -42,6 +42,8 @@ public class RunnerExecutionEntityMapper {
         entity.getActorType(),
         entity.getInputTokens(),
         entity.getOutputTokens(),
-        entity.getTotalTokens());
+        entity.getTotalTokens(),
+        // Story 3h-2 (AC6) — the lint-findings jsonb payload (null for non-LINT rows).
+        entity.getLintFindings());
   }
 }

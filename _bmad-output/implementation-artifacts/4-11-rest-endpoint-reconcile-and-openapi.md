@@ -1,0 +1,256 @@
+# Story 4.11: REST Endpoint — `reconcile` + OpenAPI
+
+Status: done
+
+<!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
+
+## Story
+
+As a frontend developer (operator reconciliation dialog UI in story 4.23) and CLI user,
+I want a REST endpoint `POST /api/v1/workflows/{workflowRunId}/reconcile` wired to `RecoveryService.reconcile` (story 4.6), plus the sibling `deliveryline operator reconcile` CLI command,
+so that operator reconciliation decisions flow through the standard mutation conventions with explicit `ReconciliationDecision` enforcement (NFR19 — no silent overwrite).
+
+## Context & Central Reconciliation (READ FIRST)
+
+**This is the SECOND story of Epic 4's "REST Endpoints" slice (4.10–4.14) and a PURE ADAPTER-WIRING story. The entire application/domain half already exists and is `done`: `RecoveryService.reconcile(...)` (story 4.6), the `recovery.reconciled` event, the `recovery_actions` row, all five reconcile error codes (all already mapped), the `ReconciliationDecision` registry enum, and the `reconcile_conflict` allowed-action (already wired into `WorkflowInspectionService` for `workflow_owner` on a non-terminal run with an unresolved conflict). Your job is: ONE controller method, TWO DTO records, ONE CLI command, an OpenAPI snapshot regen + frontend client regen, and the tests. You will write ZERO lines in `application/` or `domain/`.**
+
+**⚠️ THE SINGLE BIGGEST DIFFERENCE FROM 4.10: the constructor fan-out is already done. Story 4.10 (`resume`, currently `in-progress` and present UNCOMMITTED in your working tree) already added `RecoveryService`, `IdempotencyKeyValidator`, `LocalActorIdentityResolver`, and the generated-idempotency-key supplier to BOTH `OperatorCommands` constructors, already added `RecoveryService` to the `WorkflowController` constructor, and already added `@MockitoBean private RecoveryService recoveryService;` to all 17 `@WebMvcTest(controllers = WorkflowController.class)` slices. 4.11 REUSES every one of those. You add NO constructor arg, you touch NONE of the 17 slices, you re-fan-out NOTHING. If you find `WorkflowController` does NOT already inject `RecoveryService`, then 4.10 has not landed on your branch — STOP and rebase onto 4.10 first (Task 0).**
+
+### HEADLINE RECONCILIATIONS
+
+1. **Everything the epic tells you to "add" already exists. Verify, do not build.** Story 4.6 shipped `reconcile` end-to-end minus the REST/CLI adapters, was code-reviewed twice, and verified green (see [[story-4-6-reconcile-code-review-repass]]). Concretely, all of these are **DONE — do not re-add**: `RecoveryService.reconcile(String workflowRunId, String conflictId, String resolutionDecision, String idempotencyKey, ActorContext actor, String reasonText) → ReconcileRecoveryResult` (`RecoveryService.java:1545-1691`); `DomainErrorCode.RECONCILE_NOT_APPLICABLE` / `MISSING_RECONCILIATION_DECISION` / `INVALID_RECONCILIATION_DECISION` / `CONFLICT_NOT_FOUND` / `CONFLICT_ALREADY_RESOLVED` (`DomainErrorCode.java:264-268`), ALL mapped in `ProblemDetailsCatalog` (`:603-630` → 409/400/400/404/409 respectively); `WorkflowEventType.RECOVERY_RECONCILED`; `ReconciliationDecision` registry enum (`domain/registry/ReconciliationDecision.java` — 4 values); `AllowedAction.RECONCILE_CONFLICT("reconcile_conflict")` (`AllowedAction.java:113`) already surfaced by `WorkflowInspectionService` for `ROLE_WORKFLOW_OWNER` on a non-terminal run holding an unresolved conflict; `WorkflowCommandService.reconcileWorkflow` + `ReconcileWorkflowCommand` + the sealed-permits/fingerprint fan-out; `integration_conflicts` table + `resolveConflict` (story 4.17). **Therefore: NO Flyway migration, NO new `DomainErrorCode` (no [[new-domainerrorcode-three-sites]] fan-out), NO new `WorkflowEventType` (no [[new-workfloweventtype-fixture-sites]] fan-out), NO new `AllowedAction`, NO new `WorkflowCommand` permit (no [[new-workflowcommand-permit-updates-symmetry-contract]] fan-out), NO new registry value, NO ArchUnit edit.** [Source: RecoveryService.java:1545-1691; DomainErrorCode.java:264-268; ProblemDetailsCatalog.java:603-630; AllowedAction.java:113; ReconciliationDecision.java]
+
+2. **⚠️ THE STRUCTURAL HEADLINE — wire the controller to `RecoveryService.reconcile`, NEVER to `WorkflowCommandService.reconcileWorkflow`.** There are two "reconcile" entry points and only one is correct. `WorkflowCommandService.reconcileWorkflow(ReconcileWorkflowCommand)` performs the **state transition ONLY** — `RecoveryService.reconcile` calls it internally from inside `performReconcilePrep` (`:2761`), single-sourcing the last-conflict terminalization decision, the per-run advisory lock (`0x5243` "RC" — closes the D1 race, [[story-4-6-reconcile-code-review-repass]]), the `recovery_actions` row, the `recovery.reconciled` event, the `integration_conflicts` `resolveConflict` side-effect, and the `accept_external_state`/`accept_internal_state` external-sync side-effects. Wiring `/reconcile` to the command service would silently skip ALL of that — no conflict ever gets marked resolved, no audit row, no external push, no terminal-state guard. All invisible to a naive happy-path test. **Bind: `WorkflowController` calls `recoveryService.reconcile(workflowRunId, request.conflictId(), request.resolutionDecision(), idempotencyKey, actor, request.reasonText())`.** This mirrors how the just-added `/resume` endpoint (4.10) calls `RecoveryService.resume`, and how `/takeover` calls `DeveloperTakeoverService`. [Source: RecoveryService.java:1545-1691,2722-2818; WorkflowController.java (the 4.10 `resume` method, `:2073-2160`)]
+
+3. **The template is the in-repo `POST /{workflowRunId}/resume` (story 4.10), sitting at `WorkflowController.java:2073-2160`.** It is the exact structural sibling — the same header-derived actor + required `Idempotency-Key`, the same `requireWorkflowOwnerRole(...)` boundary gate, the same rich-service binding, the same two `@ApiResponses` shape. Copy its guard prologue verbatim:
+   ```java
+   rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+   requireNonBlankIdempotencyKey(idempotencyKey);
+   rejectMultiValuedActorIdentityHeader(httpRequest);
+   localActorIdentityResolver.requireSafe(actorIdentityHeader);
+   String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+   String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+   ```
+   `reconcile` differs from `resume` in exactly five ways: (a) the request body carries THREE domain fields (`conflictId`, `resolutionDecision`, `reasonText`) not one; (b) the service call is **6 positional args**, not 4; (c) `reasonText` is **required** (§Reconciliation 6), not optional; (d) `currentState` in the response is **non-null / REQUIRED** (§Reconciliation 7), not nullable; (e) the error set swaps `RESUME_NOT_APPLICABLE` for `RECONCILE_NOT_APPLICABLE` + adds the four decision/conflict codes. The path `/{workflowRunId}/reconcile` is **free** (verified against all existing `WorkflowController` mappings). Place the method immediately after `resume` (`:2160`) to keep the recovery cluster contiguous. [Source: WorkflowController.java:2073-2160]
+
+4. **`RecoveryService.reconcile` takes SIX positional args (no `*Command` record) — the CLI/REST equivalence test captures all six.** Signature: `reconcile(String workflowRunId, String conflictId, String resolutionDecision, String idempotencyKey, ActorContext actor, String reasonText)`. Note the arg ORDER — `conflictId` and `resolutionDecision` come *before* `idempotencyKey`, unlike resume's `(runId, idempotencyKey, actor, reasonText)`. `ActorContext` is `record ActorContext(String actorIdentity, ActorType actorType, String correlationId)` in **`org.dradgo.application.artifact`** (not `application.recovery`). **Bind: the equivalence test captures the six positional args of `recoveryService.reconcile(...)` from both the REST (MockMvc) and CLI (`new OperatorCommands(...)`) surfaces via `ArgumentCaptor` and asserts all six equal, with `ActorContext` compared by record equality.** Build the actor as `new ActorContext(actorIdentity, ActorType.HUMAN, correlationId)`. [Source: RecoveryService.java:1545-1551; ActorContext.java; the 4.10 CLI/REST equivalence test]
+
+5. **`ReconcileRecoveryResult` has NO `workflowRunId` field, but DOES carry `resolvedConflictId`.** Shape: `ReconcileRecoveryResult(String recoveryActionPublicId, String reconciledEventPublicId, String resolvedConflictId, WorkflowState resultingState, String correlationId, boolean replayed)`. Like `ResumeRecoveryResult` it omits `workflowRunId` — **pass the `@PathVariable` explicitly into `ReconcileResponse.from(String workflowRunId, ReconcileRecoveryResult result)`.** Unlike resume it adds `resolvedConflictId` (the `icf_…` id that was closed). [Source: ReconcileRecoveryResult.java:5-11]
+
+6. **⚠️ `resolutionDecision` MUST be a plain `String` and MUST NOT be `@NotBlank` — this is the one subtle trap of this story.** `RecoveryService.reconcile` validates the decision at `:1584` via `parseDecision(resolutionDecision)`, which throws the typed `MISSING_RECONCILIATION_DECISION` (400) on null/blank and `INVALID_RECONCILIATION_DECISION` (400) on an unknown value. If you type the DTO field as the `ReconciliationDecision` enum, Jackson fails deserialization → generic `INVALID_COMMAND_PAYLOAD`, and you LOSE both typed codes (breaking epic AC4). If you annotate it `@NotBlank`, bean-validation fires FIRST → `INVALID_COMMAND_PAYLOAD` → `MISSING_RECONCILIATION_DECISION` never fires (breaking epic AC4). **Bind: `@Size(max = 64) String resolutionDecision` with NO `@NotBlank`, surfaced to OpenAPI via `@Schema(allowableValues = {"accept_external_state","accept_internal_state","mark_completed_externally","mark_failed_externally"})` for the 4.23 dropdown.** The service is the single source of decision validation. `reasonText` is different — see Reconciliation 6b. [Source: RecoveryService.java:1584,2845-2860; ReconciliationDecision.java:6-9]
+
+6b. **`reasonText` IS required for reconcile (unlike resume's optional reason).** `resolveReconcileReasonText` (`:2987-2995`) throws `INVALID_COMMAND_PAYLOAD` (400 — NOT `MISSING_REASON_TEXT`) on null/blank, at `:1585` (immediately after `parseDecision`, so decision-missing is reported before reason-missing). **Bind: `@NotBlank @Size(max = 512) String reasonText`.** A boundary `@NotBlank` violation and the service's blank-reason guard both map to `INVALID_COMMAND_PAYLOAD`, so the codes are identical either way — the `@NotBlank` simply fails faster and documents "required" in OpenAPI. [Source: RecoveryService.java:1585,2987-2995]
+
+7. **`ReconcileResponse.currentState` is NON-NULL → `requiredMode = REQUIRED`. This is a deliberate DIVERGENCE from `ResumeResponse.currentState` (which is nullable).** Both reconcile code paths resolve `resultingState` to a concrete `WorkflowState`: the fresh path sets `resultingState = hasOtherUnresolvedConflicts ? priorState : WorkflowState.RECONCILED` where `priorState = run.currentState()` (never null) (`:2748-2749`); the replay path defaults `event.resultingState() == null ? WorkflowState.RECONCILED : event.resultingState()` (`:2938`). There is no `.orElse(null)` deferral here (resume had one — story 4.5's deferred finding — reconcile does not). **Bind: `@Schema(requiredMode = REQUIRED) String currentState`, and in `from(...)` call `result.resultingState().value()` directly (no null-guard). Do NOT blindly copy `ResumeResponse.from`'s null-guard — a `NOT_REQUIRED` here would UNDER-specify a field that is always present.** [Source: RecoveryService.java:2748-2749,2938; ReconcileRecoveryResult.java:9; contrast ResumeResponse.java:34,48]
+
+8. **`ACTION_NOT_ALLOWED` (epic AC4) DOES NOT EXIST and must not be created.** Identical to 4.10: this codebase expresses wrong-state as **state-specific** codes; `RECONCILE_NOT_APPLICABLE` (409) is reconcile's terminal-state code (`ProblemDetailsCatalog.java:603-606`). `ProblemDetailsCatalog` fails at class-init on an unmapped code, so inventing `ACTION_NOT_ALLOWED` is a hard error. **The real error set for this endpoint** (all pre-existing, all already mapped): `MISSING_IDEMPOTENCY_KEY` 400 · `INVALID_IDEMPOTENCY_KEY` 400 · `INVALID_COMMAND_PAYLOAD` 400 (unknown body field, blank reason, multi-valued header) · `INVALID_REVIEWER_ROLE_FOR_ENDPOINT` 400 (role gate) · `MISSING_RECONCILIATION_DECISION` 400 · `INVALID_RECONCILIATION_DECISION` 400 · `RUN_NOT_FOUND` 404 · `CONFLICT_NOT_FOUND` 404 · `RECONCILE_NOT_APPLICABLE` 409 · `CONFLICT_ALREADY_RESOLVED` 409 · `IDEMPOTENCY_KEY_CONFLICT` 409. [Source: DomainErrorCode.java:264-268; ProblemDetailsCatalog.java:603-630]
+
+9. **Server-side error PRECEDENCE (assert on it in tests, do not fight it).** `RecoveryService.reconcile` validates in this fixed order: (1) `IdempotencyKeyValidator.requireValid` → `MISSING_/INVALID_IDEMPOTENCY_KEY`; (2) idempotency replay pre-check → `IDEMPOTENCY_KEY_CONFLICT` on a mismatched prior action (`:1571-1582`); (3) `parseDecision` → `MISSING_/INVALID_RECONCILIATION_DECISION` (`:1584`); (4) `resolveReconcileReasonText` → `INVALID_COMMAND_PAYLOAD` on blank reason (`:1585`); (5) `findByPublicId` → `RUN_NOT_FOUND` (`:1587-1590`); (6) terminal-state check → `RECONCILE_NOT_APPLICABLE` (`:1591-1599`); (7) `validateConflictForReconcile` → `CONFLICT_NOT_FOUND` (unknown id OR id belongs to a different run OR archived) / `CONFLICT_ALREADY_RESOLVED` (`:2820-2836`). Boundary bean-validation (`@NotBlank role`, `@NotBlank conflictId`, `@NotBlank reasonText`, `@Size`, `@JsonIgnoreProperties`) runs BEFORE the service — hence Reconciliation 6's rule that `resolutionDecision` stays un-`@NotBlank` so the decision codes are reachable. [Source: RecoveryService.java:1559-1600,2820-2836]
+
+10. **OpenAPI regen is MANDATORY and cascades into the frontend.** A net-new path changes `src/main/resources/openapi/openapi.json`; `OpenApiSnapshotContractTest` boots the app, canonicalizes `/v3/api-docs`, and asserts byte-equality — it reds until you regenerate with `-Dopenapi.snapshot.write=true`, review, and commit. Then the frontend client must be regenerated (`cd deliveryline-frontend && npm run generate-api` → `src/lib/api/schema.d.ts`) or `check:api` reds in CI ([[openapi-regen-frontend-client-drift-cascade]]). Expect exactly ONE new path (`/reconcile`) + TWO new schemas (`ReconcileWorkflowRequest`, `ReconcileResponse`); the `resolutionDecision` `allowableValues` appear inline on the request schema (no separate named `ReconciliationDecision` component, because the field is a `String` — Reconciliation 6). [Source: OpenApiSnapshotContractTest.java:56-58,135-152; deliveryline-frontend/package.json:19]
+
+11. **The endpoint is REACHABLE in production (unlike 4.10's dark ship) — conflicts are produced by story 4.17 (`done`).** `IntegrationConflictService` (story 4.17, DONE) inserts `integration_conflicts` rows via the detection sweep, and `WorkflowInspectionService` surfaces `reconcile_conflict` in allowed-actions once an unresolved conflict exists on a non-terminal run for `ROLE_WORKFLOW_OWNER` ([[story-4-6-reconcile-code-review-repass]] P1). So `/reconcile` can be exercised end-to-end today. Tests seed a conflict by inserting an `integration_conflicts` row (or via the 4.6/4.17 test fixtures) — NOT by any code you add here. [Source: [[story-4-17-integration-conflict-detection]]; [[story-4-6-reconcile-code-review-repass]]]
+
+12. **Decision (Alex, from 4.6): archived conflicts are intentionally NON-reconcilable → `CONFLICT_NOT_FOUND`.** `validateConflictForReconcile` → `findConflictForResolution` keeps `and archived_at is null`, so an archived (soft-deleted) conflict surfaces as `CONFLICT_NOT_FOUND` (404), the same as an unknown id. `resolved_at` is unfiltered so a genuinely-resolved conflict still yields `CONFLICT_ALREADY_RESOLVED` (409). Do not add archived-state handling in the adapter — it's the service's contract. [Source: [[story-4-6-reconcile-code-review-repass]]; RecoveryService.java:2820-2836]
+
+## Scope Boundary — what 4.11 BUILDS vs REUSES vs DEFERS
+
+| Concern | 4.11 | Note |
+|---|---|---|
+| `POST /api/v1/workflows/{workflowRunId}/reconcile` on `WorkflowController` → `RecoveryService.reconcile` | **BUILD** | AC1 — Reconciliation 2 + 3 |
+| `ReconcileWorkflowRequest` record `{ role, conflictId, resolutionDecision, reasonText }` (`@JsonIgnoreProperties(ignoreUnknown=false)`) | **BUILD** | AC2 — Reconciliation 6 + 6b + OQ-1 |
+| `ReconcileResponse` record + `from(workflowRunId, ReconcileRecoveryResult)` (`currentState` REQUIRED) | **BUILD** | AC8 — Reconciliation 5 + 7 |
+| `requireWorkflowOwnerRole("reconcile", request.role())` boundary check (validate + discard) | **BUILD** | OQ-1 — mirror the 4.10 `resume` gate |
+| `@Operation` + `@ApiResponses` springdoc annotations (400/404/409 + `ProblemDetailsResponse`) | **BUILD** | AC5 — mirror `/resume` |
+| OpenAPI snapshot regen (`-Dopenapi.snapshot.write=true`) + FE `npm run generate-api` | **BUILD** | AC5 — Reconciliation 10 |
+| CLI `deliveryline operator reconcile {runId} --conflict --decision --reason [--idempotency-key] [--actor-identity] [--correlation-id] [--format] [--verbose]` | **BUILD** | AC6 — Reconciliation 4 |
+| `OperatorCliCommandRegistrationIT` pin for `deliveryline operator reconcile` | **BUILD** | AC6 |
+| `ReconcileEndpointContractTest` + CLI/REST equivalence test + logging pins | **BUILD** | AC9 — Reconciliation 4 + 9 |
+| `RecoveryService.reconcile`, `ReconcileRecoveryResult`, `recovery.reconciled`, `recovery_actions` row, conflict resolution, external side-effects | **REUSE (done, 4.6)** | Reconciliation 1 |
+| `ReconciliationDecision` registry enum + `parseDecision` typed errors | **REUSE (done, 4.6)** | Reconciliation 6 |
+| All 5 reconcile `DomainErrorCode`s + their `ProblemDetailsCatalog` mappings | **REUSE (done, 4.6)** | Reconciliation 1 + 8 |
+| `AllowedAction.RECONCILE_CONFLICT` + `WorkflowInspectionService` gating + placeholder json + pin test | **REUSE (done, 4.6)** | Reconciliation 1 |
+| `WorkflowController` ctor `RecoveryService` dep; 17 `@WebMvcTest` `@MockitoBean RecoveryService` sites | **REUSE (done, 4.10 — in working tree)** | Reconciliation intro — DO NOT re-add |
+| `OperatorCommands` ctor fan-out (`RecoveryService`, `IdempotencyKeyValidator`, `LocalActorIdentityResolver`, generated-key supplier) | **REUSE (done, 4.10 — in working tree)** | Reconciliation intro — DO NOT re-fan-out |
+| `X-Correlation-Id` response header; `rcv_` public-id minting | **REUSE (done)** | assert only |
+| `integration_conflicts` table, detection sweep, `resolveConflict` | **REUSE (done, 4.17)** | Reconciliation 11 |
+| Any Flyway migration; any new `DomainErrorCode`/`WorkflowEventType`/`AllowedAction`/`WorkflowCommand`/registry value | **DO NOT BUILD** | Reconciliation 1 |
+| Calling `WorkflowCommandService.reconcileWorkflow` from the controller | **DO NOT BUILD** | Reconciliation 2 |
+| `ACTION_NOT_ALLOWED` error code | **DO NOT BUILD** | Reconciliation 8 |
+| Typing `resolutionDecision` as the `ReconciliationDecision` enum / `@NotBlank` on it | **DO NOT BUILD** | Reconciliation 6 |
+| Widening `ReconcileRecoveryResult` to carry `resolved_at` / `integration_links.external_metadata` | **DEFER** | AC8 gap — OQ-2 |
+| FE reconciliation dialog / Decision-Bar reconcile button | **DEFER** | Story 4.23 / 4.22 |
+
+## Acceptance Criteria
+
+> From `epic-04-recovery.md` §"Story 4.11" (lines 246–262), with **binding clarifications** in **bold parentheticals**.
+
+1. **Given** `WorkflowController`, **Then** new endpoint exists: `POST /api/v1/workflows/{workflowRunId}/reconcile` — kebab-case action. **(Path verified free. Place it immediately after the 4.10 `resume` method (`:2160`). `WorkflowController` already injects `RecoveryService` from 4.10 — NO ctor change, NO slice fan-out.)**
+
+2. **Given** request body, **Then** typed DTO `ReconcileWorkflowRequest { conflictId, resolutionDecision, reasonText }` in camelCase JSON; all three fields required. **(RECONCILED — bind `ReconcileWorkflowRequest(@NotBlank @Size(max=128) String role, @NotBlank @Size(max=64) String conflictId, @Size(max=64) String resolutionDecision, @NotBlank @Size(max=512) String reasonText)` with `@JsonIgnoreProperties(ignoreUnknown = false)`, mirroring `ResumeWorkflowRequest`. `role` is added per OQ-1 (mirrors the 4.10 gate), validated to `workflow_owner` then DISCARDED. `resolutionDecision` carries NO `@NotBlank` and stays a `String` so the service surfaces `MISSING_/INVALID_RECONCILIATION_DECISION` — Reconciliation 6. `reasonText` IS `@NotBlank` — Reconciliation 6b. Annotate `resolutionDecision` `@Schema(allowableValues = {...4 values...})`.)**
+
+3. **Given** mandatory `Idempotency-Key` + `X-Actor-Identity` headers, **Then** standard conventions apply. **(Declare `@RequestHeader(name = "Idempotency-Key") String idempotencyKey` (no `required=false`) + `@RequestHeader(name = "X-Actor-Identity", required = false)` + `HttpServletRequest httpRequest`, then run the six-line guard prologue from Reconciliation 3. Missing/blank key → `MISSING_IDEMPOTENCY_KEY` (400); format validation happens downstream in `RecoveryService.reconcile`. Omitted `X-Actor-Identity` → `local-operator` fallback.)**
+
+4. **Given** Problem Details errors, **Then** typed errors cover: `MISSING_RECONCILIATION_DECISION` (400), `INVALID_RECONCILIATION_DECISION` (400), `CONFLICT_NOT_FOUND` (404), `CONFLICT_ALREADY_RESOLVED` (409), `IDEMPOTENCY_KEY_CONFLICT` (409), `RUN_NOT_FOUND` (404), `ACTION_NOT_ALLOWED` (409). **(RECONCILED — Reconciliation 8. `ACTION_NOT_ALLOWED` DOES NOT EXIST; drop it. The real terminal-state code is `RECONCILE_NOT_APPLICABLE` (409). Ship the full set in Reconciliation 8; all are already registered — assert, do not add. Assert on `code`/`status`/`details` keys only, never human text.)**
+
+5. **Given** OpenAPI + drift check, **Then** endpoint + new error codes + `ReconciliationDecision` enum schema appear in regenerated OpenAPI snapshot. **(Reconciliation 10. Annotate with `@Operation(operationId = "reconcile", …)` + `@ApiResponses` for 400/404/409 referencing `ProblemDetailsResponse`, mirroring the 4.10 `resume` annotations. The `ReconciliationDecision` values surface as `allowableValues` on the `resolutionDecision` field of `ReconcileWorkflowRequest` — a String field with an enum constraint, NOT a separate named component (Reconciliation 6). Regenerate `openapi.json` via `-Dopenapi.snapshot.write=true`, then `npm run generate-api` and commit `schema.d.ts` — else `check:api` reds.)**
+
+6. **Given** CLI/REST equivalence, **Then** Spring Shell command `deliveryline operator reconcile --run {runId} --conflict {conflictId} --decision {accept_external_state|accept_internal_state|mark_completed_externally|mark_failed_externally} --reason "..." [--idempotency-key K]` added; contract test asserts identical outcomes. **(RECONCILED — Spring Shell 4.x `@Command(name = "reconcile")` on `OperatorCommands` registers `deliveryline operator reconcile`. `runId` is POSITIONAL `@Argument(index = 0)` mirroring the sibling `operator resume`/`operator diagnose`, not `--run` (OQ-3). Required options: `--conflict`, `--decision`, `--reason`. Optional: `--idempotency-key`, `--actor-identity`, `--correlation-id`, `--format text|json`, `--verbose`. Equivalence test compares the SIX positional args captured from `recoveryService.reconcile(...)` on both surfaces — Reconciliation 4.)**
+
+7. **Given** ArchUnit (story 1.11), **Then** controller method is thin — no business logic. **(The governing rule is `REST_CONTROLLERS_STAY_THIN_AND_AVOID_SPI_OR_PERSISTENCE_OR_RUNNER`. Calling `application.recovery.RecoveryService` is permitted (`/resume` + `/takeover` precedent). `requireWorkflowOwnerRole` is request-shape validation, not a domain decision. ArchUnit runs in **Failsafe**, not Surefire — [[archunit-runs-in-failsafe-not-surefire]].)**
+
+8. **Given** the response, **Then** success returns 200 OK with typed result DTO carrying: new state (post-reconcile), recorded `recovery_actions.id`, `integration_links.{id, external_metadata}` reflecting the reconciled state, the resolved `integration_conflicts.{id, resolved_at, resolved_by_action_id}`. **(RECONCILED — Reconciliation 5 + 7 + OQ-2. Bind `ReconcileResponse(workflowRunId REQUIRED, currentState REQUIRED, recoveryActionId REQUIRED, reconciledEventId NOT_REQUIRED, resolvedConflictId REQUIRED, correlationId NOT_REQUIRED, replayed REQUIRED)` with `static from(String workflowRunId, ReconcileRecoveryResult result)`. `resolvedConflictId` = `integration_conflicts.id`; `recoveryActionId` = `integration_conflicts.resolved_by_action_id` (same value — `resolveConflict` passes the recovery-action id). `resolved_at` and `integration_links.external_metadata` are NOT on `ReconcileRecoveryResult` and are DEFERRED (OQ-2) — do NOT widen the application result. `currentState` is non-null — Reconciliation 7. `X-Correlation-Id` is set globally by `CorrelationIdFilter`: assert it, write no code.)**
+
+9. **Given** the test suite, **Then** covers: happy-path reconcile with each `ReconciliationDecision` value, missing decision rejected, invalid decision rejected, conflict-not-found, conflict-already-resolved, idempotent replay, internal-state-changed-correctly assertion per decision type. **(New `ReconcileEndpointContractTest` (`@WebMvcTest(controllers = WorkflowController.class)`, reusing the ALREADY-PRESENT `@MockitoBean RecoveryService` from 4.10 — do NOT re-declare it if the slice already has it) covering: 200 happy path per decision value (`currentState=RECONCILED` on last-conflict close, `recoveryActionId` matches `^rcv_`, `resolvedConflictId` echoed, `replayed=false`); replay (`replayed=true`, `currentState` non-null); `MISSING_RECONCILIATION_DECISION` → 400 (blank/absent `resolutionDecision`); `INVALID_RECONCILIATION_DECISION` → 400 (unknown value); blank `reasonText` → 400 `INVALID_COMMAND_PAYLOAD`; `CONFLICT_NOT_FOUND` → 404; `CONFLICT_ALREADY_RESOLVED` → 409; `RECONCILE_NOT_APPLICABLE` → 409 (terminal run); `RUN_NOT_FOUND` → 404; `IDEMPOTENCY_KEY_CONFLICT` → 409; missing/blank `Idempotency-Key` → 400; multi-valued header → 400; `role != workflow_owner` → 400; unknown body field → 400; omitted `X-Actor-Identity` → captured `ActorContext.actorIdentity()=="local-operator"`. The "internal-state-changed-correctly per decision type" clause is covered at the CONTROLLER layer by asserting the correct `resolutionDecision` string reaches the mocked service; the real state-change semantics are already covered by 4.6's `ReconcileTest` + real-PG `IntegrationConflictReconcileIT` — do NOT duplicate them here. Plus a CLI/REST equivalence test, an `OperatorCliCommandRegistrationIT` pin, `OpenApiSnapshotContractTest` green after regen, and an OPTIONAL real-PG `ReconcileEndpointIT` seeding an `integration_conflicts` row + asserting the `recovery_actions` row + `recovery.reconciled` event + `resolved_at`/`resolved_by_action_id`.)**
+
+## Tasks / Subtasks
+
+- [x] **Task 0 — Verify 4.10's fan-out is present before writing anything (Reconciliation intro + 1)**
+  - [x] Confirm `WorkflowController` already injects `RecoveryService` (`:108,136`) and `OperatorCommands` already has the 4-mutation-dep ctor + the `resume` command. If NOT, 4.10 has not landed on this branch — STOP and rebase onto 4.10 (or apply its fan-out first); 4.11 assumes it. **VERIFIED: `RecoveryService` injected at WorkflowController.java:108/136; OperatorCommands has both fanned-out ctors + `resume`. 4.10 is committed (db72600).**
+  - [x] Confirm `RecoveryService.reconcile` exists (`:1545`), all 5 reconcile codes are mapped (`ProblemDetailsCatalog.java:603-630`), `AllowedAction.RECONCILE_CONFLICT` exists (`:113`), `ReconciliationDecision` has 4 values. Create no migration (`recovery_actions` `action_type='reconcile'` is a V1 CHECK slot). **VERIFIED all; no migration created.**
+
+- [x] **Task 1 — REST DTOs (AC2, AC8)**
+  - [x] `adapters/rest/ReconcileWorkflowRequest.java` — `record ReconcileWorkflowRequest(@NotBlank @Size(max=128) String role, @NotBlank @Size(max=64) String conflictId, @Size(max=64) String resolutionDecision, @NotBlank @Size(max=512) String reasonText)`; `@JsonIgnoreProperties(ignoreUnknown = false)`; `@Schema` on each; `resolutionDecision` gets `@Schema(allowableValues = {...4 values...})` and NO `@NotBlank` (Reconciliation 6). Model on `ResumeWorkflowRequest.java`.
+  - [x] `adapters/rest/ReconcileResponse.java` — 7-component record per AC8 with `@Schema(requiredMode=…)` on each; `currentState` is `REQUIRED` (Reconciliation 7); `static ReconcileResponse from(String workflowRunId, ReconcileRecoveryResult result)` calling `result.resultingState().value()` directly (NO null-guard). Javadoc'd the divergence from `ResumeResponse` and the OQ-2 deferred fields.
+
+- [x] **Task 2 — Controller endpoint (AC1, AC3, AC4, AC5, AC7)**
+  - [x] Added `public ReconcileResponse reconcile(...)` after `resume`: `@PostMapping(value="/{workflowRunId}/reconcile", …)`, `@Operation(operationId="reconcile", …)`, `@ApiResponses` (400/404/409 → `ProblemDetailsResponse`). NO ctor change (only the `ReconcileRecoveryResult` import added).
+  - [x] Guard prologue → `requireWorkflowOwnerRole("reconcile", request.role())` → `new ActorContext(actorIdentity, ActorType.HUMAN, correlationId)` → `recoveryService.reconcile(workflowRunId, request.conflictId(), request.resolutionDecision(), idempotencyKey, actor, request.reasonText())` → `ReconcileResponse.from(workflowRunId, result)`.
+  - [x] **Did NOT call `workflowCommandService.reconcileWorkflow`** (Reconciliation 2 honored).
+
+- [x] **Task 3 — CLI `deliveryline operator reconcile` (AC6)**
+  - [x] Added `@Command(name = "reconcile", exitStatusExceptionMapper = …BEAN_NAME)` to `OperatorCommands` (NO ctor change). Positional `@Argument(index=0) String runId`; required `--conflict`, `--decision`, `--reason`; optional `--idempotency-key`, `--actor-identity`, `--correlation-id`, `--format`, `--verbose`. Reuses `pushCorrelation`/`CorrelationScope`, `resolveActorIdentity`, `resolveIdempotencyKey`, `ActorType.HUMAN`, `finally { MdcKeys.endScope(...) }`.
+  - [x] Calls `recoveryService.reconcile(runId, conflictId, decision, resolvedIdempotencyKey, actor, reason)` (6 positional args). Renders `rcv_… reconcile submitted (state: <state>) [conflict: icf_…]` + `[replayed]`; `--verbose` text-only footer appends correlation-id + generated-idempotency-key. Added `renderOperatorReconcileJson` (operator-reconcile.v1) to `WorkflowCommandOutputs`.
+  - [x] Added `COMMAND_NAME_RECONCILE = "operator reconcile"` constant + `emitReconcile` completion `INFO` log.
+  - [x] Pinned `deliveryline operator reconcile` in `OperatorCliCommandRegistrationIT`.
+
+- [x] **Task 4 — OpenAPI + frontend client (AC5, Reconciliation 10)**
+  - [x] Regenerated via `verify -Dit.test=OpenApiSnapshotContractTest -Dopenapi.snapshot.write=true` (contract tests run under Failsafe, not `test`). Diff = +166 lines, 0 deletions: exactly one new path (`/reconcile`) + two new schemas (`ReconcileWorkflowRequest`, `ReconcileResponse`) + inline `resolutionDecision` `allowableValues`. Snapshot re-verified green without the write flag.
+  - [x] `cd deliveryline-frontend && npm run generate-api` → `schema.d.ts` regenerated; `npm run check:api` green.
+
+- [x] **Task 5 — Tests (AC9)**
+  - [x] New `adapters/rest/ReconcileEndpointContractTest` — 19 cases (happy path per decision value, replay, missing/invalid decision, blank reason, conflict-not-found/already-resolved, reconcile-not-applicable, run-not-found, idempotency-key-conflict, missing/blank/multi-valued key, wrong role, unknown field, local-operator fallback, correlation propagation, double-replay). Reuses the `@MockitoBean RecoveryService` (4.10). Asserts Problem Details `code`/`status`/`details` only.
+  - [x] `ReconcileCliRestEquivalenceContractTest` — captures the SIX positional `recoveryService.reconcile(...)` args from REST + CLI, asserts equal incl. `ActorContext` record equality + `local-operator` fallback on both surfaces.
+  - [x] `OpenApiSnapshotContractTest` + `ProblemDetailsContractTest` + `WorkflowAdapterEquivalenceTest` green (full backend `verify` BUILD SUCCESS).
+  - [x] Optional real-PG `ReconcileEndpointIT` — DEFERRED (AC9 marks it optional; the controller→service wiring is fully covered by the contract + equivalence tests, and 4.6's `ReconcileTest`/`IntegrationConflictReconcileIT` already cover the real state-change semantics — OQ-4 provisional binding).
+  - [x] Added the identity-holder `@BeforeAll`/`@AfterAll` redaction-holder guard to `ReconcileEndpointContractTest` ([[webmvctest-redaction-holder-poisons-capturedoutput]]).
+
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] REST entry `INFO "REST reconcile received … conflictId={} decision={} reasonLength={}"` (decision VALUE logged, reasonText length only) + success `INFO "REST reconcile success … resolvedConflictId={} replayed={}"`. Role-rejection `WARN` emitted inside `requireWorkflowOwnerRole`. No `ERROR`.
+  - [x] CLI `emitReconcile` completion `INFO` with `correlationId`, `commandName='operator reconcile'`, `workflowRunId`, `durationMs`, `outcome=success|failure:<code>`.
+  - [x] Parameterized logging only; `workflowRunId`/`actorIdentity`/`conflictId` sanitized via `MdcKeys.sanitizeForLog`. `reasonText` prose never logged; `resolutionDecision` value IS logged (bounded governed enum).
+  - [x] Pinned the REST entry/success lines + role-rejection `WARN` in `ReconcileEndpointContractTest` via `ListAppender`.
+
+## Dev Notes
+
+### Relevant architecture patterns and constraints
+
+- **The 4.10 `resume` method (`WorkflowController.java:2073-2160`) is the exact structural template**, now in-repo (uncommitted, working tree). Copy: annotations → guard prologue → `requireWorkflowOwnerRole` → `ActorContext` build → service call → rich response `from(runId, result)` → two log lines. `reconcile` differs only in the five ways enumerated in Reconciliation 3.
+- **Two-endpoint trap (service layer).** `WorkflowCommandService.reconcileWorkflow` (thin, transition-only, called INTERNALLY by the rich service) vs `RecoveryService.reconcile` (rich). 4.11 ships one endpoint wired to the rich path — Reconciliation 2.
+- **`ActorContext` lives in `org.dradgo.application.artifact`**, not `application.recovery`. Its canonical ctor rejects a blank `actorIdentity`/null `actorType` — safe because `localActorIdentityResolver.resolve(...)` falls back to `local-operator` and `ActorType.HUMAN` is hard-coded.
+- **RBAC is audit-only.** `requireWorkflowOwnerRole` is a request-shape check; the controller never returns 401/403. The resolved actor identity is stamped on the audit trail.
+- **The `reconcile_conflict` allowed-action is state-gated** to non-terminal runs with an unresolved conflict for `ROLE_WORKFLOW_OWNER` ([[story-4-6-reconcile-code-review-repass]] P1) — the controller adds no state check of its own; `RECONCILE_NOT_APPLICABLE` (terminal) + `CONFLICT_NOT_FOUND`/`CONFLICT_ALREADY_RESOLVED` are enforced inside the service.
+- **Idempotency: two surfaces, you touch neither.** `recovery_actions.idempotency_key` unique key (outer) + `executeIdempotent` inside `WorkflowCommandService.reconcileWorkflow` (inner). `RecoveryService.reconcile`'s replay pre-check guards `actionType == reconcile` (`:1575-1578`) — cross-action key reuse is `IDEMPOTENCY_KEY_CONFLICT`, not a false replay. The controller passes the raw header through.
+- **No `WorkflowCommand` permit, no fingerprint arm, no `EXPECTED_PERMITS` edit.** `ReconcileWorkflowCommand` was already added to the sealed hierarchy by 4.6. This story adds only REST DTOs, which are not `WorkflowCommand`s.
+
+### Logging Requirements (project-wide standard)
+
+- **Framework:** SLF4J + Logback. No `System.out` / `printStackTrace()`.
+- **Where to log:** REST entry (`INFO`), REST success (`INFO`), role rejection (`WARN`, inside the shared helper), CLI completion (`INFO`, success + failure with the typed `DomainErrorCode`). The recovery-service log surface (`recovery reconcile start/success/rejected`) is already pinned by 4.6's logging contract — do not duplicate it in the adapter.
+- **Required context keys:** `correlationId`, `workflowRunId`, `actorIdentity`, `conflictId`, plus `recoveryActionId` + `resolvedConflictId` on success. MDC `correlationId` is stamped by `CorrelationIdFilter` (REST) and `pushCorrelation` (CLI).
+- **Forbidden:** `reasonText` prose (log its length only), idempotency-key values, secrets, tokens, PII. The `resolutionDecision` value IS loggable (bounded governed enum).
+- **Test contract:** `ListAppender` pins on the `WorkflowController` logger for entry/success/rejection.
+
+### Project Structure Notes
+
+- **New (main):** `adapters/rest/ReconcileWorkflowRequest.java`, `adapters/rest/ReconcileResponse.java`.
+- **Modified (main):** `adapters/rest/WorkflowController.java` (`reconcile` method ONLY — no ctor change), `adapters/cli/OperatorCommands.java` (`reconcile` command ONLY — no ctor change), `src/main/resources/openapi/openapi.json` (regenerated).
+- **Modified (frontend):** `src/lib/api/schema.d.ts` (regenerated).
+- **New (test):** `adapters/rest/ReconcileEndpointContractTest.java`, CLI/REST equivalence test, optional `ReconcileEndpointIT`.
+- **Modified (test):** `OperatorCliCommandRegistrationIT` (one pin). **NOT** the 17 `@WebMvcTest` slices — they already mock `RecoveryService` from 4.10.
+- **Variance from epic:** `ReconcileWorkflowRequest` carries a `role` field the epic's AC2 omits (OQ-1, mirrors 4.10); the CLI takes a positional `runId` rather than the epic's `--run` flag (OQ-3); the epic's AC8 `integration_links.external_metadata` + `resolved_at` are not surfaced (OQ-2 — not on the result record).
+
+### References
+
+- [Source: _bmad-output/planning-artifacts/epic-04-recovery.md#Story 4.11 (lines 246–262)] — AC1–AC9.
+- [Source: _bmad-output/implementation-artifacts/4-10-rest-endpoint-resume-and-openapi.md] — the sibling story; the exact template for controller method, DTOs, CLI command, equivalence test, and the shared ctor fan-out this story reuses.
+- [Source: _bmad-output/implementation-artifacts/4-6-recovery-service-reconcile-reconcile-workflow-state-on-integration-conflict.md] — the `done` producer story; last-conflict terminalization, per-run advisory lock, archived-conflict decision.
+- [Source: deliveryline-backend/.../adapters/rest/WorkflowController.java:95-142 (ctor — RecoveryService already injected), 2073-2160 (the `resume` template), plus `requireWorkflowOwnerRole`, the multi-valued-header guards, `requireNonBlankIdempotencyKey`].
+- [Source: deliveryline-backend/.../adapters/rest/ResumeWorkflowRequest.java; ResumeResponse.java] — request/response DTO templates (note ResumeResponse.currentState is NULLABLE — Reconciliation 7 diverges).
+- [Source: deliveryline-backend/.../application/recovery/RecoveryService.java:1545-1691 (`reconcile`), 1571-1582 (replay pre-check), 1584-1599 (decision/reason/run/terminal guards), 2722-2818 (`performReconcilePrep`, resultingState derivation), 2820-2860 (`validateConflictForReconcile` + `parseDecision`), 2987-2995 (`resolveReconcileReasonText`)].
+- [Source: deliveryline-backend/.../application/recovery/ReconcileRecoveryResult.java:5-11] — result shape (no `workflowRunId`, has `resolvedConflictId`).
+- [Source: deliveryline-backend/.../domain/registry/ReconciliationDecision.java:6-9] — the four allowable values.
+- [Source: deliveryline-backend/.../application/artifact/ActorContext.java] — `(actorIdentity, actorType, correlationId)`.
+- [Source: deliveryline-backend/.../adapters/rest/ProblemDetailsCatalog.java:603-630] — all five reconcile-code mappings (409/400/400/404/409).
+- [Source: deliveryline-backend/.../domain/registry/DomainErrorCode.java:264-268] — the five reconcile codes.
+- [Source: deliveryline-backend/.../domain/registry/AllowedAction.java:113] — `reconcile_conflict` already registered.
+- [Source: deliveryline-backend/.../adapters/cli/OperatorCommands.java:60-109 (ctors — already fanned out by 4.10), 258-354 (the `resume` command template)].
+- [Source: deliveryline-backend/.../src/test/java/org/dradgo/adapters/cli/OperatorCliCommandRegistrationIT.java:61-69] — the command-name pin (add `operator reconcile`).
+- [Source: deliveryline-backend/.../src/test/java/org/dradgo/adapters/rest/OpenApiSnapshotContractTest.java:56-58,135-152; deliveryline-frontend/package.json:19] — snapshot path, write flag, FE regen script.
+- [Source: sprint-status.yaml] — 4-11 backlog (this story); 4-6/4-17 done (producers); 4-10 in-progress (the fan-out this story reuses — must land first).
+
+### Open Questions (for Alex — do not block dev; provisional bindings applied)
+
+- **OQ-1 — does `ReconcileWorkflowRequest` carry a `role` field?** Epic AC2 lists only `{ conflictId, resolutionDecision, reasonText }`. Provisional bind: **include `@NotBlank String role` validated to `workflow_owner` then discarded**, mirroring the 4.10 `resume` gate and `reconcile_conflict` being surfaced ONLY to `ROLE_WORKFLOW_OWNER`. Keeps the two REST-slice siblings symmetric. Downside: `role` becomes a REQUIRED wire field the 4.23 dialog must send. Confirm, or drop `role` and rely solely on the allowed-actions gate — but then diverge from 4.10.
+- **OQ-2 — AC8 asks for `integration_links.{id, external_metadata}` + `integration_conflicts.resolved_at`; the result record has neither.** `ReconcileRecoveryResult` carries `resolvedConflictId` + `recoveryActionId` (== `resolved_by_action_id`) but NOT `resolved_at` nor the integration-links external metadata. Provisional bind: **surface only what the result carries, DEFER the rest**, keeping 4.11 a pure adapter story. Alternative: widen `ReconcileRecoveryResult` (an `application/` change re-opening 4.6's scope) to echo `resolved_at` + `external_metadata`. Recommend deferring to a 4.23-adjacent read-model rather than widening the write-path result.
+- **OQ-3 — CLI `runId`: positional or `--run` flag?** Epic AC6 says `--run {runId}`. Every shipped run-scoped CLI command takes it positionally (`operator resume`, `operator diagnose`, `workflow takeover`). Provisional bind: **positional `@Argument(index = 0)`** — the epic's `--run` is prose shorthand. (Same resolution as 4.10's OQ-2.)
+- **OQ-4 — should the "internal-state-changed-correctly per decision type" assertion (AC9) live here?** The controller only forwards the `resolutionDecision` string to the service; the real per-decision state change (`accept_external_state` → GitHub PR sync, `accept_internal_state` → Linear/GitHub re-push, `mark_*` → terminal) is already covered by 4.6's `ReconcileTest` + real-PG `IntegrationConflictReconcileIT`. Provisional bind: **at the controller layer, assert only that the right decision string reaches the mocked service; do not re-test the domain semantics.** Confirm, or add a real-PG `ReconcileEndpointIT` per decision value (heavier, but end-to-end).
+
+## Dev Agent Record
+
+### Agent Model Used
+
+claude-opus-4-8[1m] (Claude Opus 4.8, 1M context) — bmad-create-story workflow; bmad-dev-story implementation.
+
+### Debug Log References
+
+- `verify -Dit.test=OpenApiSnapshotContractTest -Dtest=OpenApiSnapshotContractTest -DfailIfNoTests=false -Djacoco.skip=true -Dopenapi.snapshot.write=true` → regenerated `openapi.json` (fails by design after write), then re-ran without the write flag → PASS.
+- Contract tests (`*ContractTest`) run under **Failsafe** (`verify`/`integration-test`), not the Surefire `test` goal — `-Dtest=OpenApiSnapshotContractTest test` ran 0 tests. Used `-Dit.test=…` on the `verify` phase (Docker up for Testcontainers).
+- Full backend `mvnw -o -pl deliveryline-backend verify` (Docker up) → BUILD SUCCESS: Surefire green + Failsafe 1095/0 (incl. `OperatorCliCommandRegistrationIT`, `OpenApiSnapshotContractTest`, `ProblemDetailsContractTest`, `FlywaySchemaContractTest`, ArchUnit `ArchitectureBoundaryTest 60/0`) + spotless:check + jacoco coverage gate.
+
+### Change Log
+
+- Added `POST /api/v1/workflows/{workflowRunId}/reconcile` REST endpoint wired to the RICH `RecoveryService.reconcile` (6 positional args), plus `ReconcileWorkflowRequest`/`ReconcileResponse` DTOs.
+- Added `deliveryline operator reconcile` CLI command + `operator-reconcile.v1` JSON render.
+- Regenerated OpenAPI snapshot (one new path + two new schemas) and the frontend TypeScript client.
+- Added `ReconcileEndpointContractTest`, `ReconcileCliRestEquivalenceContractTest`, and an `OperatorCliCommandRegistrationIT` pin.
+
+### Completion Notes List
+
+- **Pure adapter-wiring story delivered — zero lines in `application/`/`domain/`/`db/migration`.** All error codes, the `ReconciliationDecision` registry, `RecoveryService.reconcile`, the `recovery.reconciled` event, and the `RECONCILE_CONFLICT` allowed-action were pre-existing (4.6/4.17); this story only added the REST/CLI adapters + OpenAPI/FE regen + tests.
+- **Reconciliation 2 honored:** the controller + CLI wire the RICH `RecoveryService.reconcile`, NEVER `WorkflowCommandService.reconcileWorkflow`.
+- **Reconciliation 6 trap avoided:** `resolutionDecision` is a plain `String` with NO `@NotBlank` (only `@Schema(allowableValues=…)`), so the typed `MISSING_/INVALID_RECONCILIATION_DECISION` (400) codes are reachable — verified by `missingReconciliationDecisionReturns400` / `invalidReconciliationDecisionReturns400`. `reasonText` IS `@NotBlank` (Reconciliation 6b).
+- **Reconciliation 7 honored:** `ReconcileResponse.currentState` is `REQUIRED` and `from(...)` dereferences `resultingState().value()` with NO null-guard (divergence from `ResumeResponse`).
+- **AC4 `ACTION_NOT_ALLOWED` correctly absent** — the terminal-state code is `RECONCILE_NOT_APPLICABLE` (409).
+- **4.10 fan-out reused wholesale:** no ctor change, none of the 17 `@WebMvcTest` slices touched.
+- **OQ bindings applied:** OQ-1 `role` field included (mirrors 4.10); OQ-2 `resolved_at`/`external_metadata` DEFERRED (not on the result record); OQ-3 positional `runId`; OQ-4 per-decision assertion kept at the controller layer (decision string reaches the mocked service). Optional real-PG `ReconcileEndpointIT` deferred.
+
+### File List
+
+**New (main):**
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ReconcileWorkflowRequest.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ReconcileResponse.java`
+
+**Modified (main):**
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/WorkflowController.java` (`reconcile` method + `ReconcileRecoveryResult` import; no ctor change)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/cli/OperatorCommands.java` (`reconcile` command + `renderReconcileText`/`emitReconcile`/`COMMAND_NAME_RECONCILE`; no ctor change)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/cli/WorkflowCommandOutputs.java` (`renderOperatorReconcileJson` + schema-version constant)
+- `deliveryline-backend/src/main/resources/openapi/openapi.json` (regenerated)
+
+**Modified (frontend):**
+- `deliveryline-frontend/src/lib/api/schema.d.ts` (regenerated)
+
+**New (test):**
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/ReconcileEndpointContractTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/ReconcileCliRestEquivalenceContractTest.java`
+
+**Modified (test):**
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/OperatorCliCommandRegistrationIT.java` (one pin)
+
+### Review Findings
+
+> Code review 2026-07-13 (bmad-code-review, 3 adversarial layers: Blind Hunter, Edge Case Hunter, Acceptance Auditor). Acceptance Auditor: diff FULLY satisfies the spec — all 12 Reconciliations + AC1–AC9 + OQ bindings verified honored (rich-service wiring R2, no-@NotBlank `resolutionDecision` R6, @NotBlank `reasonText` R6b, no-null-guard `currentState` R7, 6-arg order R4, no `ACTION_NOT_ALLOWED` R8, OpenAPI 1-path/2-schema/inline-enum R10, zero application/domain lines). The two findings below are gaps the spec's own rationale did not anticipate.
+
+- [x] [Review][Decision→Patch, FIXED] `@NotBlank reasonText` defeated the service's deliberate idempotent-replay-with-omitted-reason tolerance — `RecoveryService.reconcile` runs the replay pre-check BEFORE input validation (`RecoveryService.java:1568-1582`) with an explicit comment that a genuine retry "must replay even if the client now omits reasonText or sends a blank/invalid decision." That is exactly why `resolutionDecision` was left non-`@NotBlank` (Reconciliation 6). But `reasonText` kept `@NotBlank`, and `@Valid @RequestBody` fires bean-validation BEFORE the controller body, so a minimal retry (same `Idempotency-Key`, omitted/blank `reasonText`) was rejected with 400 `INVALID_COMMAND_PAYLOAD` and never reached the idempotent-200 replay path. **Resolution (Alex, 2026-07-13): dropped `@NotBlank` from `reasonText` (REST DTO) + made CLI `--reason` `required=false`, matching `resolutionDecision` and the service's replay tolerance.** The service's `resolveReconcileReasonText` still 400s a blank reason on the FRESH path (`RecoveryService.java:2991`), so the required-field contract holds; `requiredMode=REQUIRED` keeps OpenAPI documenting it (byte-unchanged snapshot — `@NotBlank` contributed nothing distinct: all fields render `minLength=0`). Test `blankReasonTextRejectedAsInvalidCommandPayloadByService` rewritten to stub the service's typed error (`$.details.field == reasonText`). Verified green (Failsafe 20/20).
+- [x] [Review][Patch, FIXED] Unsanitized `resolutionDecision` logged pre-validation → CRLF/log-forging injection [deliveryline-backend/src/main/java/org/dradgo/adapters/rest/WorkflowController.java] — the "REST reconcile received" log ran BEFORE `recoveryService.reconcile` and passed `request.resolutionDecision()` raw while its three siblings went through `MdcKeys.sanitizeForLog(...)`. The "bounded governed enum — safe" comment was false there: the field is an arbitrary `@Size(max=64)` String (enum constraint is OpenAPI-doc-only; `parseDecision` runs later). **Fixed: wrapped `request.resolutionDecision()` in `MdcKeys.sanitizeForLog(...)` and corrected the comment; also sanitized the CLI `decision` log (`OperatorCommands.java`) for the replay case where `parseDecision` is skipped.** `sanitizeForLog` is a no-op on clean enum values, so log-pin assertions stay green (verified Failsafe 20/20).
+- [x] [Review][Defer] CLI/REST error-code asymmetry for boundary-rejected malformed inputs [deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ReconcileWorkflowRequest.java] — deferred, pre-existing systemic pattern. REST DTO boundary validation (`@NotBlank`/`@Size` on `conflictId`, `@Size` on `resolutionDecision`) rejects blank/oversized inputs as `INVALID_COMMAND_PAYLOAD` (400) at the boundary, while the CLI options have no such guards and pass the same inputs to the service (→ `CONFLICT_NOT_FOUND` 404 / `INVALID_RECONCILIATION_DECISION` 400). Same malformed input, different code/status across surfaces. Systemic across all operator commands (resume, rerun, …), not introduced by 4.11; the spec's "CLI/REST equivalence" (Reconciliation 4) binds only happy-path arg parity, not error-code parity for malformed input.

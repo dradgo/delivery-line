@@ -64,6 +64,8 @@ function renderBar(
     onAccept: () => void;
     onRejectImplementation: (draft: { reasonText: string; taggedFeedback: string }) => void;
     onTakeover: (reasonText: string) => void;
+    // Story 4.22 — the recovery safety ranks (drives the single-primary selection).
+    recoverySafetyByToken: Partial<Record<string, 'safe' | 'caution' | 'risky'>>;
   }> = {},
 ) {
   return render(
@@ -78,6 +80,7 @@ function renderBar(
       onAccept={overrides.onAccept ?? vi.fn()}
       onRejectImplementation={overrides.onRejectImplementation ?? vi.fn()}
       onTakeover={overrides.onTakeover ?? vi.fn()}
+      recoverySafetyByToken={overrides.recoverySafetyByToken}
     />,
   );
 }
@@ -187,13 +190,14 @@ describe('ApprovalDecisionBar — mode dispatch (AC1)', () => {
 });
 
 describe('ApprovalDecisionBar — recovery_operator mode (story 3.30, AC3/AC5)', () => {
-  it('ready — renders exactly one primary "Retry failed step" and no deeper recovery actions', () => {
-    renderBar(recoveryReadyView);
+  it('ready — renders exactly one primary "Retry failed step" (safety-ranked safe → primary)', () => {
+    // Story 4.22 — retry's primacy now comes from the safety ranking; a Failed run ranks retry safe.
+    renderBar(recoveryReadyView, IDLE, {}, { recoverySafetyByToken: { retry: 'safe' } });
     expect(barState()).toBe('ready');
-    expect(screen.getByTestId('recovery-retry')).toBeInTheDocument();
+    expect(screen.getByTestId('recovery-action-retry')).toBeInTheDocument();
     expect(document.querySelectorAll('[data-decision-primary] button')).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Retry failed step' })).toBeInTheDocument();
-    // Scope discipline (AC5): reconcile / resume / rerun controls are absent in E3.
+    // recoveryReadyView carries only `retry`, so the deeper actions are absent for this run.
     expect(
       screen.queryByRole('button', { name: /reconcile|resume|rerun/i }),
     ).not.toBeInTheDocument();
@@ -232,10 +236,10 @@ describe('ApprovalDecisionBar — recovery_operator mode (story 3.30, AC3/AC5)',
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
-  it('submitting — the retry primary shows the busy state', () => {
+  it('submitting — the recovery primary shows the busy state', () => {
     renderBar(recoveryReadyView, { status: 'pending' });
     expect(barState()).toBe('submitting');
-    expect(screen.getByTestId('recovery-retry')).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByTestId('recovery-submitting')).toHaveAttribute('aria-busy', 'true');
   });
 
   it('success — renders the retry-recorded feedback (never a toast)', () => {

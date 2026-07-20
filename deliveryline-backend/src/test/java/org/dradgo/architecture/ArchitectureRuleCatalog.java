@@ -16,6 +16,7 @@ import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
 import jakarta.persistence.Entity;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -25,6 +26,11 @@ import java.util.Set;
 import java.util.regex.Pattern;
 import org.dradgo.adapters.persistence.entity.WorkflowRunEntity;
 import org.dradgo.application.artifact.ActorContext;
+import org.dradgo.application.artifact.reconciliation.spi.ArtifactDriftWritePort;
+import org.dradgo.application.artifact.reconciliation.spi.DriftRecordRequest;
+import org.dradgo.application.artifact.spi.ArtifactRecordPort;
+import org.dradgo.application.integration.conflict.spi.IntegrationConflictWritePort;
+import org.dradgo.application.integration.conflict.spi.NewIntegrationConflict;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.application.integration.ticketsource.TicketSourceSubticketService;
@@ -65,6 +71,9 @@ final class ArchitectureRuleCatalog {
   private static final String DIAGNOSTICS_ADAPTER_PACKAGE = "org.dradgo.adapters.diagnostics..";
   // Story 3.9 — system-git CLI adapter slice (CliGitAdapter implements the GitCommandPort SPI).
   private static final String GIT_ADAPTER_PACKAGE = "org.dradgo.adapters.git..";
+  // Story 3h-1 — build-command adapter slice (ProcessBuildCommandAdapter implements
+  // BuildCommandPort).
+  private static final String BUILD_ADAPTER_PACKAGE = "org.dradgo.adapters.build..";
   private static final String REPOSITORY_WORKSPACE_PACKAGE =
       "org.dradgo.application.runner.workspace..";
   private static final String INFRASTRUCTURE_PACKAGE = "org.dradgo.infrastructure..";
@@ -108,7 +117,7 @@ final class ArchitectureRuleCatalog {
   static final ArchRule ADAPTER_PACKAGE_LAYOUT =
       namedRule(
           "adapter classes must stay inside the reserved adapter package layout",
-          "Remediation: move adapter code under adapters.cli, adapters.rest, adapters.persistence, adapters.files, adapters.runner, adapters.integration, adapters.diagnostics, or adapters.git.",
+          "Remediation: move adapter code under adapters.cli, adapters.rest, adapters.persistence, adapters.files, adapters.runner, adapters.integration, adapters.diagnostics, adapters.git, or adapters.build.",
           classes()
               .that()
               .resideInAPackage(ADAPTERS_PACKAGE)
@@ -121,7 +130,8 @@ final class ArchitectureRuleCatalog {
                   RUNNER_ADAPTER_PACKAGE,
                   INTEGRATION_ADAPTER_PACKAGE,
                   DIAGNOSTICS_ADAPTER_PACKAGE,
-                  GIT_ADAPTER_PACKAGE));
+                  GIT_ADAPTER_PACKAGE,
+                  BUILD_ADAPTER_PACKAGE));
 
   static final ArchRule DOMAIN_PACKAGE_MUST_EXIST =
       namedRule(
@@ -493,6 +503,125 @@ final class ArchitectureRuleCatalog {
                   ActorContext.class));
 
   /**
+   * Story 4.17 (AC9) — only the {@code application.integration.conflict} package may WRITE the
+   * {@code integration_conflicts} table. The write crosses {@link
+   * IntegrationConflictWritePort#insertIfAbsent}, so the detection service ({@code
+   * application.integration.conflict.IntegrationConflictDetectionService}) is the only class that
+   * may call it; the {@code @Scheduled} trigger in {@code infrastructure.config} only delegates to
+   * the service and the persistence adapter merely IMPLEMENTS the port (callMethod matches the
+   * interface owner, so the adapter's own body does not trip this — the
+   * archunit-callmethod-matches-interface-owner lesson).
+   */
+  static final ArchRule ONLY_CONFLICT_PACKAGE_MAY_WRITE_INTEGRATION_CONFLICTS =
+      namedRule(
+          "only application.integration.conflict may write integration_conflicts via the write port",
+          "Remediation: route every integration_conflicts insert through IntegrationConflictDetectionService in application.integration.conflict; the infrastructure @Scheduled trigger only delegates, and no other package may call IntegrationConflictWritePort.insertIfAbsent (story 4.17 AC9).",
+          noClasses()
+              .that()
+              .resideOutsideOfPackage("org.dradgo.application.integration.conflict..")
+              .should()
+              .callMethod(
+                  IntegrationConflictWritePort.class,
+                  "insertIfAbsent",
+                  NewIntegrationConflict.class)
+              .orShould()
+              .callMethod(
+                  IntegrationConflictWritePort.class,
+                  "markResolved",
+                  String.class,
+                  String.class,
+                  java.time.Instant.class)
+              // Story 4.6 code review (P3) — the per-run reconcile advisory lock is on the same
+              // conflict-package-only write port; only application.integration.conflict may call
+              // it.
+              .orShould()
+              .callMethod(IntegrationConflictWritePort.class, "lockRunForReconcile", String.class));
+
+  /**
+   * Story 4.15 (AC9) — only the {@code application.artifact.reconciliation} package may WRITE the
+   * {@code artifact_drift_detected} table. The write crosses {@link
+   * ArtifactDriftWritePort#recordIfAbsent}, so the detection service ({@code
+   * application.artifact.reconciliation.ArtifactDriftDetectionService}) is the only class that may
+   * call it; the {@code @Scheduled} trigger in {@code infrastructure.config} only delegates to the
+   * service and the persistence adapter merely IMPLEMENTS the port (callMethod matches the
+   * interface owner, so the adapter's own body does not trip this). The {@code
+   * ArtifactReconciliationService.listUnresolvedDrift} READ method may stay in {@code
+   * application.artifact} — reads are unrestricted.
+   */
+  static final ArchRule ONLY_RECONCILIATION_PACKAGE_MAY_WRITE_ARTIFACT_DRIFT =
+      namedRule(
+          "only application.artifact.reconciliation may write artifact_drift_detected via the write port",
+          "Remediation: route every artifact_drift_detected insert through ArtifactDriftDetectionService in application.artifact.reconciliation; the infrastructure @Scheduled trigger only delegates, and no other package may call ArtifactDriftWritePort.recordIfAbsent (story 4.15 AC9).",
+          noClasses()
+              .that()
+              .resideOutsideOfPackage("org.dradgo.application.artifact.reconciliation..")
+              .should()
+              .callMethod(
+                  ArtifactDriftWritePort.class, "recordIfAbsent", DriftRecordRequest.class));
+
+  /**
+   * Story 4.16 (AC9) — only {@code ArtifactReconciliationService} may RESOLVE a drift row (or
+   * update its last-known-state) via the write port. The 4.15 rule above is method-name-specific to
+   * {@code recordIfAbsent}, so it does NOT bind the new {@code resolveDrift}/{@code
+   * updateLastKnownState} methods; this rule adds the missing guard. The repair methods
+   * legitimately live in {@code application.artifact.ArtifactReconciliationService} (which already
+   * owns the drift READ surface), so the guard is scoped to that single class rather than the
+   * {@code .reconciliation} subpackage. {@code callMethod} matches the interface owner, so the
+   * persistence adapter's own IMPLEMENTS body does not trip this.
+   */
+  static final ArchRule ONLY_RECONCILIATION_SERVICE_MAY_RESOLVE_ARTIFACT_DRIFT =
+      namedRule(
+          "only ArtifactReconciliationService may resolve or update artifact drift via the write port",
+          "Remediation: route every artifact_drift_detected resolve / last-known-state update through ArtifactReconciliationService in application.artifact; no controller or adapter may call ArtifactDriftWritePort.resolveDrift or updateLastKnownState directly (story 4.16 AC9).",
+          noClasses()
+              .that()
+              .doNotHaveFullyQualifiedName(
+                  "org.dradgo.application.artifact.ArtifactReconciliationService")
+              .should()
+              .callMethod(
+                  ArtifactDriftWritePort.class,
+                  "resolveDrift",
+                  String.class,
+                  String.class,
+                  Instant.class)
+              .orShould()
+              .callMethod(
+                  ArtifactDriftWritePort.class,
+                  "updateLastKnownState",
+                  String.class,
+                  String.class));
+
+  /**
+   * Story 4.16a (Reconciliation 12) — only {@code ArtifactReconciliationService} may perform a
+   * lineage-recovery WRITE (reattach / terminate / fork) via the record port. The three
+   * lineage-write methods live on the already-injected {@code ArtifactRecordPort} (shared by many
+   * services), so this class-scoped rule prevents any controller / adapter / other service from
+   * driving a lineage recovery around the auditable coordinator (mirrors {@link
+   * #ONLY_RECONCILIATION_SERVICE_MAY_RESOLVE_ARTIFACT_DRIFT}). {@code callMethod} matches the
+   * interface owner, so the persistence adapter's own IMPLEMENTS body does not trip this.
+   */
+  static final ArchRule ONLY_RECONCILIATION_SERVICE_MAY_RECONCILE_ARTIFACT_LINEAGE =
+      namedRule(
+          "only ArtifactReconciliationService may reconcile artifact lineage via the record port",
+          "Remediation: route every lineage recovery (reattach / terminate / fork) through ArtifactReconciliationService in application.artifact; no controller or adapter may call ArtifactRecordPort.reattachToLineage / markLineageTerminated / createLineageRecoveryFork directly (story 4.16a).",
+          noClasses()
+              .that()
+              .doNotHaveFullyQualifiedName(
+                  "org.dradgo.application.artifact.ArtifactReconciliationService")
+              .should()
+              .callMethod(ArtifactRecordPort.class, "reattachToLineage", String.class, String.class)
+              .orShould()
+              .callMethod(
+                  ArtifactRecordPort.class, "markLineageTerminated", String.class, String.class)
+              .orShould()
+              .callMethod(
+                  ArtifactRecordPort.class,
+                  "createLineageRecoveryFork",
+                  String.class,
+                  ActorContext.class,
+                  String.class));
+
+  /**
    * Story 3.11 (AC9) — the plan-stage twin of {@link
    * #ONLY_ORCHESTRATION_AUTO_ADVANCES_ON_SPEC_RUNNER_SUCCESS}. The plan-stage success auto-advance
    * ({@code Executing -> WaitingForReview}) is owned solely by {@link
@@ -564,6 +693,12 @@ final class ArchitectureRuleCatalog {
               .and()
               .doNotHaveFullyQualifiedName(
                   "org.dradgo.adapters.integration.ticketsource.linear.LinearRealAdapter")
+              .and()
+              // Story 3i-1 — JiraRealAdapter self-posts the parent-link comment from
+              // createSubticket,
+              // exactly as LinearRealAdapter is exempted.
+              .doNotHaveFullyQualifiedName(
+                  "org.dradgo.adapters.integration.ticketsource.jira.JiraRealAdapter")
               .should()
               .callMethod(
                   TicketSourceAdapter.class,
@@ -695,6 +830,37 @@ final class ArchitectureRuleCatalog {
               .allowEmptyShould(false));
 
   /**
+   * Story 4.19 (AC9) — the Compare Mode {@code RevisionDeltaService} lives under {@code
+   * application.compare} and its only collaborators are the (extended) {@code ArtifactService} +
+   * {@code RedactionPolicyService}: it depends only on {@code java..}, SLF4J, the Spring stereotype
+   * / transaction annotations, {@code org.dradgo.application..} (its own package's diff algorithms
+   * + view records + payload helper, plus the two application services it reaches persistence and
+   * redaction through), and {@code org.dradgo.domain..}. A JPA entity, an SPI port, or an adapter
+   * import would break the AC9 collaborator pin. Mirror of {@link
+   * #CLARIFICATION_SERVICE_LIVES_IN_APPLICATION_CLARIFICATION}. The three differ classes are pure
+   * (java-only) and unit-tested independently.
+   */
+  static final ArchRule REVISION_DELTA_SERVICE_LIVES_IN_APPLICATION_COMPARE =
+      namedRule(
+          "RevisionDeltaService must live under application.compare with only ArtifactService + RedactionPolicyService as collaborators",
+          "Remediation: keep RevisionDeltaService in org.dradgo.application.compare (story 4.19 AC9). Reach artifact reads through the extended ArtifactService and redaction through RedactionPolicyService — never inject ArtifactRecordPort / ArtifactPayloadStore or any adapter/persistence type.",
+          classes()
+              .that()
+              .haveFullyQualifiedName("org.dradgo.application.compare.RevisionDeltaService")
+              .should()
+              .resideInAPackage("org.dradgo.application.compare..")
+              .andShould()
+              .onlyDependOnClassesThat()
+              .resideInAnyPackage(
+                  "java..",
+                  "org.slf4j..",
+                  "org.springframework.stereotype..",
+                  "org.springframework.transaction.annotation..",
+                  "org.dradgo.application..",
+                  "org.dradgo.domain..")
+              .allowEmptyShould(false));
+
+  /**
    * Story 3.17a (AC6 / D4) sibling rule: the RunnerExecutionQueue substrate lives under {@code
    * application.runner.queue} and reaches persistence only through the {@code
    * application.runner.spi} ports — never {@code adapters.*}/{@code infrastructure.*} (Trap T11).
@@ -777,25 +943,17 @@ final class ArchitectureRuleCatalog {
                   "java..", "org.dradgo.application.artifact..", "org.dradgo.domain..")
               .allowEmptyShould(false));
 
-  static final ArchRule RECOVERY_SERVICE_IS_SCOPE_PROTECTED =
-      namedRule(
-          "RecoveryService must expose only the Epic-1 baseline public method signatures",
-          "Remediation: Epic 4 will add resume/rerun/reconcile/pause/classifyFailure/takeover. "
-              + "Changing RecoveryService's public surface without an Epic-4 story is a scope "
-              + "violation — update the story and this guard together.",
-          classes()
-              .that()
-              .haveFullyQualifiedName("org.dradgo.application.recovery.RecoveryService")
-              .should(
-                  exposeOnlyPublicMethodSignatures(
-                      methodSignature(
-                          "retry", String.class, String.class, ActorContext.class, String.class),
-                      methodSignature("describeFailure", String.class))));
+  // Story 4.28: the RecoveryService scope-protected lock (RECOVERY_SERVICE_IS_SCOPE_PROTECTED —
+  // formerly pinning RecoveryService to retry/resume/describeFailure) was LIFTED here. Epic 4's
+  // deeper recovery surface (resume/reconcile/rerunFromStep/pause/classifyFailure) is now governed
+  // by docs/adr/0033-recovery-service-scope-lift.md rather than an ArchUnit tripwire. Do NOT
+  // re-add the rule — RecoveryServiceScopeLiftMetaTest guards its absence.
 
   // Story 3.22 (Trap T1): DeveloperTakeoverService is the SIBLING of RecoveryService (not a third
   // method on it). Pin its public surface to exactly takeoverWorkflow so a future story cannot
-  // silently widen it without an explicit scope decision (mirrors
-  // RECOVERY_SERVICE_IS_SCOPE_PROTECTED).
+  // silently widen it without an explicit scope decision. (This is the surviving twin of the
+  // now-lifted RecoveryService scope lock — see docs/adr/0033-recovery-service-scope-lift.md;
+  // story 4.28 AC8 keeps this one protected.)
   static final ArchRule DEVELOPER_TAKEOVER_SERVICE_IS_SCOPE_PROTECTED =
       namedRule(
           "DeveloperTakeoverService must expose only the takeoverWorkflow public method signature",
@@ -816,7 +974,7 @@ final class ArchitectureRuleCatalog {
       namedRule(
           "vendor-specific ticket-source types must not leak through the application.integration.ticketsource port",
           "Remediation: keep Linear GraphQL DTOs, vendor SDK types, and HTTP-client surface inside adapters.integration.ticketsource.{kind}; the application port "
-              + "may only depend on neutral domain-shaped records (Ticket, TicketRef, CommentResult, TicketSourceCapabilities, GovernedRunComment, SubticketDraft, CreateSubticketResult). Story 1.14 AC1 / story 3.32 AC7 / story 3f-1 invariant.",
+              + "may only depend on neutral domain-shaped records (Ticket, TicketRef, CommentResult, TicketSourceCapabilities, GovernedRunComment, SubticketDraft, CreateSubticketResult, TicketQuery, TicketSummary). Story 1.14 AC1 / story 3.32 AC7 / story 3f-1 invariant / story 3i-2 AC1.",
           noClasses()
               .that()
               .resideInAPackage("org.dradgo.application.integration.ticketsource..")
@@ -1084,6 +1242,102 @@ final class ArchitectureRuleCatalog {
               .dependOnClassesThat()
               .haveNameMatching(
                   "org\\.dradgo\\.application\\.workflow\\.WorkflowInspectionService\\$(RunnerQueueStatus|WorkerStatus)"));
+
+  /**
+   * Story 4.1 (AC9) — the operator fleet views ({@code
+   * WorkflowInspectionService.OperatorRunSummary} + {@code .OperatorRunRow}, nested in {@code
+   * application.workflow}) may be referenced ONLY from {@code WorkflowInspectionService} (the
+   * producer), the CLI {@code OperatorCommands} consumer, and the {@code WorkflowCommandOutputs}
+   * renderer. Mirror of {@link
+   * #RUNNER_QUEUE_STATUS_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_TRANSPORTS}. Keeps the {@code
+   * operator status} read on the single {@code getOperatorRunSummary} seam and the SPI-layer
+   * snapshots ({@code OperatorRunAggregate}/{@code OperatorRunRowSnapshot}) — which stay in {@code
+   * application.workflow.spi} — out of the CLI (story 4.1 Reconciliation 2). Story 4.2 adds the
+   * REST translator ({@code OperatorController} + {@code OperatorRunSummaryResponse}/{@code
+   * OperatorRunRowResponse}), so the allow-list is widened to admit those {@code adapters.rest}
+   * classes (mirroring the 3.19 runner-queue-status shape). The SPI-layer snapshots ({@code
+   * OperatorRunAggregate}/{@code OperatorRunRowSnapshot}) stay out of both the CLI and REST.
+   */
+  static final ArchRule OPERATOR_RUN_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_CLI =
+      namedRule(
+          "OperatorRunSummary / OperatorRunRow may only be referenced from WorkflowInspectionService (application), the CLI operator-status surface (OperatorCommands + WorkflowCommandOutputs), and the REST operator surface (OperatorController + OperatorRunSummaryResponse + OperatorRunRowResponse)",
+          "Remediation: route all operator fleet-view reading through WorkflowInspectionService.getOperatorRunSummary (story 4.1 AC9). The CLI/REST must not reach the SPI snapshots (OperatorRunAggregate/OperatorRunRowSnapshot) — those stay in application.workflow.spi.",
+          noClasses()
+              .that()
+              .resideInAnyPackage(APPLICATION_PACKAGE, ADAPTERS_PACKAGE)
+              .and()
+              .haveNameNotMatching(
+                  "org\\.dradgo\\.application\\.workflow\\.WorkflowInspectionService(\\$.*)?")
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.adapters\\.cli\\.OperatorCommands(\\$.*)?")
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.adapters\\.cli\\.WorkflowCommandOutputs(\\$.*)?")
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.adapters\\.rest\\.OperatorController(\\$.*)?")
+              .and()
+              .haveNameNotMatching(
+                  "org\\.dradgo\\.adapters\\.rest\\.OperatorRunSummaryResponse(\\$.*)?")
+              .and()
+              .haveNameNotMatching(
+                  "org\\.dradgo\\.adapters\\.rest\\.OperatorRunRowResponse(\\$.*)?")
+              .should()
+              .dependOnClassesThat()
+              .haveNameMatching(
+                  "org\\.dradgo\\.application\\.workflow\\.WorkflowInspectionService\\$(OperatorRunSummary|OperatorRunRow)"));
+
+  /**
+   * Story 4.3 (AC11) — the audit query result records ({@code AuditQueryService.AuditQueryResult} +
+   * {@code .AuditEventRow}, nested in {@code application.audit}) may be referenced ONLY from the
+   * producer service, the CLI {@code AuditCommands} + {@code WorkflowCommandOutputs} renderer, and
+   * the REST {@code AuditController} + {@code AuditQueryResponse}. Mirror of {@link
+   * #OPERATOR_RUN_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_CLI}. Keeps the audit read on the single
+   * {@code AuditQueryService} seam and the SPI-layer snapshots ({@code
+   * AuditEventPageSnapshot}/{@code AuditEventRowSnapshot}) — which stay in {@code
+   * application.audit.spi} — out of the CLI/REST (story 4.3 Reconciliation 13). {@code
+   * AuditQueryFilter} is the un-restricted input record (the adapters build it), so it is
+   * intentionally NOT part of this rule.
+   */
+  static final ArchRule AUDIT_QUERY_RESULT_VIEWS_REFERENCED_ONLY_BY_SERVICE_CLI_REST =
+      namedRule(
+          "AuditQueryResult / AuditEventRow may only be referenced from AuditQueryService (application), the CLI audit surface (AuditCommands + WorkflowCommandOutputs), and the REST audit surface (AuditController + AuditQueryResponse)",
+          "Remediation: route all audit-history reading through AuditQueryService.queryByRun/queryByTicket (story 4.3 AC11). The CLI/REST must not reach the SPI snapshots (AuditEventPageSnapshot/AuditEventRowSnapshot) — those stay in application.audit.spi.",
+          noClasses()
+              .that()
+              .resideInAnyPackage(APPLICATION_PACKAGE, ADAPTERS_PACKAGE)
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.application\\.audit\\.AuditQueryService(\\$.*)?")
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.adapters\\.cli\\.AuditCommands(\\$.*)?")
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.adapters\\.cli\\.WorkflowCommandOutputs(\\$.*)?")
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.adapters\\.rest\\.AuditController(\\$.*)?")
+              .and()
+              .haveNameNotMatching("org\\.dradgo\\.adapters\\.rest\\.AuditQueryResponse(\\$.*)?")
+              .should()
+              .dependOnClassesThat()
+              .haveNameMatching(
+                  "org\\.dradgo\\.application\\.audit\\.AuditQueryService\\$(AuditQueryResult|AuditEventRow)"));
+
+  /**
+   * Story 4.3 (AC11 / Reconciliation 13) — the audit read-seam SPI snapshots ({@code
+   * AuditEventPageSnapshot}/{@code AuditEventRowSnapshot}/{@code AuditEventQuery}, in {@code
+   * application.audit.spi}) are persistence-facing; the CLI/REST transports must consume the
+   * redacted {@code AuditQueryResult}/{@code AuditEventRow} from {@code AuditQueryService} instead.
+   * Mirrors the intent of {@link
+   * #REST_CONTROLLERS_STAY_THIN_AND_AVOID_SPI_OR_PERSISTENCE_OR_RUNNER} but scoped to the audit SPI
+   * and extended to CLI adapters.
+   */
+  static final ArchRule AUDIT_SPI_SNAPSHOTS_NOT_IMPORTED_BY_ADAPTERS =
+      namedRule(
+          "adapters.cli / adapters.rest must not depend on application.audit.spi snapshots",
+          "Remediation: consume the redacted AuditQueryResult/AuditEventRow from AuditQueryService; the SPI snapshots stay behind the read seam (story 4.3 Reconciliation 13).",
+          noClasses()
+              .that()
+              .resideInAnyPackage(CLI_ADAPTER_PACKAGE, REST_ADAPTER_PACKAGE)
+              .should()
+              .dependOnClassesThat()
+              .resideInAPackage("org.dradgo.application.audit.spi.."));
 
   private ArchitectureRuleCatalog() {}
 

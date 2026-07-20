@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deliveryline.local/schemas/cli/operator-reconcile-lineage.v1",
+  "title": "OperatorReconcileLineageV1",
+  "$comment": "Story 4.16a (AC9) — the stable wire shape for `deliveryline operator reconcile-lineage {artifactId} --format json`. Additive fields are allowed within v1; any removal/rename bumps to v2. lineageReferenceArtifactId is the chosen new parent (reattach_to_existing_lineage) or the newly created fork head (create_explicit_fork), null for terminate_ambiguous_lineage. reconciledEventId/correlationId are null-tolerant; replayed is true on an idempotent replay.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "targetArtifactId",
+    "lineageAction",
+    "recoveryActionId",
+    "reconciledEventId",
+    "lineageReferenceArtifactId",
+    "correlationId",
+    "replayed"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "targetArtifactId": { "type": "string", "pattern": "^art_" },
+    "lineageAction": {
+      "type": "string",
+      "enum": [
+        "reattach_to_existing_lineage",
+        "terminate_ambiguous_lineage",
+        "create_explicit_fork"
+      ]
+    },
+    "recoveryActionId": { "type": "string", "pattern": "^rcv_" },
+    "reconciledEventId": { "type": ["string", "null"], "pattern": "^evt_" },
+    "lineageReferenceArtifactId": { "type": ["string", "null"], "pattern": "^art_" },
+    "correlationId": { "type": ["string", "null"] },
+    "replayed": { "type": "boolean" }
+  }
+}

@@ -12,6 +12,7 @@ import com.github.dockerjava.api.model.Bind;
 import com.github.dockerjava.api.model.Container;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
+import com.github.dockerjava.api.model.Network;
 import com.github.dockerjava.api.model.StreamType;
 import com.github.dockerjava.api.model.Volume;
 import java.io.ByteArrayOutputStream;
@@ -80,6 +81,12 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
     if (!spec.securityOpts().isEmpty()) {
       hostConfig.withSecurityOpts(List.copyOf(spec.securityOpts()));
     }
+    if (spec.privileged()) {
+      hostConfig.withPrivileged(true);
+    }
+    if (spec.memoryBytes() != null) {
+      hostConfig.withMemory(spec.memoryBytes());
+    }
     try (CreateContainerCmd cmd = client.createContainerCmd(spec.image())) {
       cmd.withHostConfig(hostConfig).withLabels(spec.labels());
       // Story 3.5 AC3 + Trap T8: apply env via docker-java withEnv (NOT the docker CLI), so secret
@@ -92,6 +99,18 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
           envPairs.add(entry.getKey() + "=" + entry.getValue());
         }
         cmd.withEnv(envPairs);
+      }
+      if (!spec.networkAliases().isEmpty()) {
+        cmd.withAliases(spec.networkAliases());
+      }
+      if (spec.healthcheck() != null) {
+        com.github.dockerjava.api.model.HealthCheck hc =
+            new com.github.dockerjava.api.model.HealthCheck()
+                .withTest(spec.healthcheck().test())
+                .withInterval(spec.healthcheck().interval().toNanos())
+                .withTimeout(spec.healthcheck().timeout().toNanos())
+                .withRetries(spec.healthcheck().retries());
+        cmd.withHealthcheck(hc);
       }
       CreateContainerResponse response = cmd.exec();
       // Trap T5: log the env-var COUNT only — never env names, never values.
@@ -146,7 +165,11 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
 
     OffsetDateTime startedAt = state != null ? parseIso8601(state.getStartedAt()) : null;
 
-    return new ContainerState(status, exitCode, networkMode, binds, labels, startedAt);
+    String healthStatus =
+        state != null && state.getHealth() != null ? state.getHealth().getStatus() : null;
+
+    return new ContainerState(
+        status, exitCode, networkMode, binds, labels, startedAt, healthStatus);
   }
 
   @Override
@@ -352,6 +375,31 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
     };
   }
 
+  @Override
+  public String createNetwork(String name, Map<String, String> labels) {
+    Objects.requireNonNull(name, "name");
+    var response =
+        client
+            .createNetworkCmd()
+            .withName(name)
+            .withDriver("bridge")
+            .withLabels(labels == null ? Map.of() : labels)
+            .exec();
+    log.info("docker network create name={} id={}", name, response.getId());
+    return response.getId();
+  }
+
+  @Override
+  public void removeNetwork(String name) {
+    Objects.requireNonNull(name, "name");
+    try {
+      client.removeNetworkCmd(name).exec();
+      log.info("docker network rm name={}", name);
+    } catch (com.github.dockerjava.api.exception.NotFoundException missing) {
+      log.info("docker network rm name={} reason=not_found (treated as no-op)", name);
+    }
+  }
+
   /**
    * Splits a frame byte-stream into newline-terminated lines, buffering trailing partial BYTES
    * across frames so (a) a line straddling two frames is emitted once, intact, and (b) a multi-byte
@@ -455,6 +503,31 @@ public class DefaultDockerEngineGateway implements DockerEngineGateway, DockerHo
         labelKey,
         labelValuePrefix,
         out.size());
+    return out;
+  }
+
+  @Override
+  public List<DockerHostPort.NetworkInfo> listNetworksByLabel(String labelKey) {
+    Objects.requireNonNull(labelKey, "labelKey");
+    // Label presence match applied client-side after the engine returns the network set (mirrors
+    // listContainersByLabel's client-side value-prefix filtering; keeps this off any version-
+    // specific ListNetworksCmd filter API). The label value carries the owning runnerExecutionId,
+    // which the dind sweep correlates to a run row.
+    List<Network> networks = client.listNetworksCmd().exec();
+    if (networks == null || networks.isEmpty()) {
+      log.info("docker network ls --filter label={} matches=0", labelKey);
+      return List.of();
+    }
+    List<DockerHostPort.NetworkInfo> out = new ArrayList<>(networks.size());
+    for (Network network : networks) {
+      Map<String, String> labels = network.getLabels();
+      String rex = labels == null ? null : labels.get(labelKey);
+      if (rex == null) {
+        continue;
+      }
+      out.add(new DockerHostPort.NetworkInfo(network.getId(), network.getName(), rex));
+    }
+    log.info("docker network ls --filter label={} matches={}", labelKey, out.size());
     return out;
   }
 

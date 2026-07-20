@@ -78,6 +78,17 @@ export type DecisionAction =
   // Story 3f-5 — commit the open split proposal (fan-out into child runs + decompose parent).
   // Advertised alongside `repropose_split` + `continue_as_single` when a proposal IS open.
   | 'approve_split'
+  // Story 4.22 — the deeper recovery_operator action set (full activation beyond the 3.30 retry
+  // baseline). Wire values from `AllowedAction.java` in their LONG form (`resume_workflow` /
+  // `reconcile_conflict` / `rerun_from_step` / `pause_workflow` / `classify_failure`); they MUST
+  // also live in `KNOWN_ACTIONS` below or `normalizeActions` coerces them to `'unknown'` and drops
+  // them, leaving the recovery bar retry-only. The diagnostics safety vocabulary is SHORT-FORM +
+  // different (retry/pause/reconcile/classify_failure) — see `resolveRecoverySafety`.
+  | 'resume_workflow'
+  | 'reconcile_conflict'
+  | 'rerun_from_step'
+  | 'pause_workflow'
+  | 'classify_failure'
   | 'unknown';
 
 /** The rework taxonomy (story 2.10) — the schema's UPPERCASE wire enum (T-TAGGED-UPPERCASE). */
@@ -130,9 +141,17 @@ export interface DecisionSummary {
   /**
    * Which decision landed. `approved`/`rejected` are the spec-approval outcomes;
    * story 3.28 adds the developer-review outcomes `accepted` / `takenover` (reject
-   * reuses `rejected`).
+   * reuses `rejected`); story 4.22 adds the recovery_operator outcomes `resumed` /
+   * `reranFromStep` / `paused` (retry keeps its own bespoke success chip).
    */
-  readonly decision: 'approved' | 'rejected' | 'accepted' | 'takenover';
+  readonly decision:
+    | 'approved'
+    | 'rejected'
+    | 'accepted'
+    | 'takenover'
+    | 'resumed'
+    | 'reranFromStep'
+    | 'paused';
   /** The resulting workflow state from `WorkflowStateChangeResponse.currentState`. */
   readonly resultingState: string;
   /** ISO timestamp the decision was recorded (pinned in tests). */
@@ -236,6 +255,12 @@ const KNOWN_ACTIONS: ReadonlySet<string> = new Set<DecisionAction>([
   'continue_as_single',
   // Story 3f-5 — commit the open split proposal.
   'approve_split',
+  // Story 4.22 — the deeper recovery_operator actions (long-form wire tokens).
+  'resume_workflow',
+  'reconcile_conflict',
+  'rerun_from_step',
+  'pause_workflow',
+  'classify_failure',
   'unknown',
 ]);
 
@@ -408,10 +433,15 @@ const CONSEQUENCE_HINTS: Readonly<
     // Story 3f-5 — commits the split: creates the child runs and decomposes this run.
     approve_split: 'Commits the split — creates the child runs and decomposes this run.',
   },
-  // Story 3.30 (AC3) — the short inline hint; the FULL consequence text lives in the
-  // retry confirmation dialog (`CONFIRMATION_CATALOG.retryOrRecoverConsequential`).
+  // Story 3.30 + 4.22 (AC2) — the short inline hints; the FULL consequence text lives in each
+  // action's confirmation/rationale dialog (`CONFIRMATION_CATALOG.retryOrRecoverConsequential` /
+  // `resumeRun` / `rerunFromStep` / `pauseRun`). Reconcile + classify hints live in THEIR dialogs
+  // (owned by stories 4.23 / 4.24), so they are intentionally absent here.
   recovery_operator: {
     retry: 'Retry re-executes the last failed step with a fresh runner.',
+    resume_workflow: 'Resume returns the run to its prior executing state.',
+    rerun_from_step: 'Rerun re-executes from a safe step, superseding later artifacts.',
+    pause_workflow: 'Pause halts dispatch and cancels in-flight runner work; resumable later.',
   },
 };
 
@@ -463,7 +493,10 @@ export function resolveApprovalBarState(
     if (mutation.status === 'success') {
       return 'success';
     }
-    return canRetry(view) ? 'ready' : 'disabled';
+    // Story 4.22 — `ready` when ANY recovery action is live (retry/resume/reconcile/rerun/pause/
+    // classify), not just retry (the 3.30 baseline gated on `canRetry` alone). `disabled` (View
+    // only) when the backend offers no recovery action for the current state.
+    return hasRecoveryAction(view) ? 'ready' : 'disabled';
   }
   // Story 3.28 — the implementation_review mode is a REAL decision path (no longer a
   // stub). Mirrors spec_approval's `primary === null || !canFire → blocked → success →
@@ -521,6 +554,160 @@ export function resolveApprovalBarState(
 export function canRetry(view: ApprovalDecisionView): boolean {
   return view.currentState === 'Failed' && view.actions.includes('retry');
 }
+
+/**
+ * Story 4.22 — whether the `recovery_operator` bar has ANY renderable recovery action live in the
+ * backend allowed-actions (retry / resume / reconcile / rerun / pause / classify). Drives the
+ * `ready` vs `disabled` (View only) branch of {@link resolveApprovalBarState}. Unknown/absent tokens
+ * never count (they were already dropped by `normalizeActions`).
+ */
+export function hasRecoveryAction(view: ApprovalDecisionView): boolean {
+  return view.actions.some((action) => RECOVERY_OPERATOR_ACTION_SET.has(action));
+}
+
+/**
+ * Story 4.22 (AC2) — the resolved safety rank of a recovery action, driving the single-primary
+ * selection + the non-color-only visual affix (`safe` primary; `caution` warning affix;
+ * `risky`/danger stronger warning). A strict subset of the diagnostics `safetyLevel` free strings.
+ */
+export type RecoverySafetyLevel = 'safe' | 'caution' | 'risky';
+
+/** The live `FailureDiagnosticsResponse` the safety ranking is sourced from (story 4.4). */
+type FailureDiagnostics = components['schemas']['FailureDiagnosticsResponse'];
+
+/**
+ * Story 4.22 (#1 trap) — the wire allowed-action token → diagnostics SHORT-FORM `actionType`. The
+ * `RecommendationService` vocabulary differs from the allowed-actions wire tokens and is only
+ * emitted for `Failed` runs. `rerun_from_step` + `resume_workflow` are ABSENT from diagnostics
+ * (rerun is never recommended; resume applies only to `Paused`, which produces no diagnostics), so
+ * they carry NO entry here and fall through to {@link RECOVERY_STATIC_SAFETY}.
+ */
+const RECOVERY_TOKEN_TO_DIAGNOSTICS_ACTION: Partial<Record<DecisionAction, string>> = {
+  retry: 'retry',
+  pause_workflow: 'pause',
+  reconcile_conflict: 'reconcile',
+  classify_failure: 'classify_failure',
+};
+
+/**
+ * Story 4.22 — the static safety fallback for tokens the `RecommendationService` never emits (and
+ * for when diagnostics are unavailable/loading). `rerun_from_step → risky` (it supersedes artifacts
+ * + invalidates approvals — matches AC5's danger styling); `resume_workflow → safe` (the expected
+ * forward action from `Paused`). `retry → safe` keeps the 3.30 baseline primary deterministic while
+ * diagnostics are loading — or permanently if the diagnostics GET fails — so the bar never renders
+ * zero primary controls (AC2); a present diagnostics rank for `retry` still wins via the join below.
+ * Any token with neither a diagnostics match nor a fallback → the conservative `caution`, so the
+ * primary selection stays deterministic.
+ */
+const RECOVERY_STATIC_SAFETY: Partial<Record<DecisionAction, RecoverySafetyLevel>> = {
+  retry: 'safe',
+  rerun_from_step: 'risky',
+  resume_workflow: 'safe',
+};
+
+/** Coerce a diagnostics `safetyLevel` free string to the strict {@link RecoverySafetyLevel}. */
+function coerceRecoverySafetyLevel(raw: string | undefined): RecoverySafetyLevel | undefined {
+  return raw === 'safe' || raw === 'caution' || raw === 'risky' ? raw : undefined;
+}
+
+/**
+ * Story 4.22 (AC2) — resolve ONE recovery token's safety rank by joining the diagnostics
+ * short-form `actionType` (SHORT-FORM ≠ the wire token — see {@link
+ * RECOVERY_TOKEN_TO_DIAGNOSTICS_ACTION}) to `recommendedRecoveryActions[].safetyLevel`, falling
+ * back to the static table when diagnostics are absent/loading or the token is one diagnostics
+ * never emits. Deterministic even with no diagnostics so the primary selection never flickers.
+ */
+export function resolveRecoverySafety(
+  token: DecisionAction,
+  diagnostics: FailureDiagnostics | undefined,
+): RecoverySafetyLevel {
+  const diagnosticsActionType = RECOVERY_TOKEN_TO_DIAGNOSTICS_ACTION[token];
+  if (diagnosticsActionType !== undefined && diagnostics !== undefined) {
+    const match = diagnostics.recommendedRecoveryActions.find(
+      (action) => action.actionType === diagnosticsActionType,
+    );
+    const level = coerceRecoverySafetyLevel(match?.safetyLevel);
+    if (level !== undefined) {
+      return level;
+    }
+  }
+  return RECOVERY_STATIC_SAFETY[token] ?? 'caution';
+}
+
+/**
+ * Story 4.22 (AC2 / Task 5) — build the per-token safety map the bar renders from, joining every
+ * action to its {@link resolveRecoverySafety} rank. Non-recovery tokens are included harmlessly
+ * (they resolve to `caution`) but the recovery bar only ever reads the recovery tokens.
+ */
+export function buildRecoverySafetyByToken(
+  actions: readonly DecisionAction[],
+  diagnostics: FailureDiagnostics | undefined,
+): Partial<Record<DecisionAction, RecoverySafetyLevel>> {
+  const byToken: Partial<Record<DecisionAction, RecoverySafetyLevel>> = {};
+  for (const action of actions) {
+    byToken[action] = resolveRecoverySafety(action, diagnostics);
+  }
+  return byToken;
+}
+
+/**
+ * Story 4.22 (AC2, UX-DR19) — the deterministic tie-break order for the single primary recovery
+ * control when more than one action resolves `safe`. `retry` is the expected forward action from a
+ * `Failed` run and `resume_workflow` from a `Paused` run, so they rank first; the more consequential
+ * actions never win primary over them.
+ */
+const RECOVERY_PRIMARY_TIE_BREAK: readonly DecisionAction[] = [
+  'retry',
+  'resume_workflow',
+  'reconcile_conflict',
+  'rerun_from_step',
+  'pause_workflow',
+  'classify_failure',
+];
+
+/**
+ * Story 4.22 (AC2) — resolve the SINGLE `safe`-rated action to style primary (UX-DR19: never two
+ * primaries). Filters to the `safe`-ranked actions, then picks by {@link
+ * RECOVERY_PRIMARY_TIE_BREAK} so multiple `safe` actions never both go primary. Returns `null` when
+ * no action is `safe` → the bar renders subordinate-only (view-only), never promoting a
+ * `caution`/`risky` action to primary.
+ */
+export function resolveRecoveryPrimaryAction(
+  actions: readonly DecisionAction[],
+  safetyByToken: Partial<Record<DecisionAction, RecoverySafetyLevel>>,
+): DecisionAction | null {
+  const safeActions = actions.filter((action) => safetyByToken[action] === 'safe');
+  if (safeActions.length === 0) {
+    return null;
+  }
+  for (const candidate of RECOVERY_PRIMARY_TIE_BREAK) {
+    if (safeActions.includes(candidate)) {
+      return candidate;
+    }
+  }
+  // No `safe` action is in the ranked set (unreachable for recovery tokens — all are ranked). Rather
+  // than promote an unranked action to primary, render subordinate-only (null primary).
+  return null;
+}
+
+/**
+ * Story 4.22 — the recovery actions this story renders in the `recovery_operator` bar, in display
+ * order. Retry (3.30 baseline) + the deeper set. `reconcile_conflict` + `classify_failure` are
+ * entry-point seams delegating to stories 4.23 / 4.24 (AC4/AC7).
+ */
+export const RECOVERY_OPERATOR_ACTIONS: readonly DecisionAction[] = [
+  'retry',
+  'resume_workflow',
+  'reconcile_conflict',
+  'rerun_from_step',
+  'pause_workflow',
+  'classify_failure',
+];
+
+/** Set form of {@link RECOVERY_OPERATOR_ACTIONS} for O(1) membership (drives {@link hasRecoveryAction}). */
+const RECOVERY_OPERATOR_ACTION_SET: ReadonlySet<DecisionAction> = new Set(
+  RECOVERY_OPERATOR_ACTIONS,
+);
 
 /** Compose the recovery decision-context line (AC3) from the live read model. */
 export function buildRecoveryContextLabel(detail: WorkflowDetail | undefined): string {

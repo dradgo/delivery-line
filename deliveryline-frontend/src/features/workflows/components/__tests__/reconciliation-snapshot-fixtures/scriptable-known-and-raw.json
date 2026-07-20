@@ -1,0 +1,11 @@
+{
+  "internal": {
+    "state": "open",
+    "branch": "<script>window.__reconBranchXss = 1;</script>",
+    "externalRef": "<img src=x onerror=window.__reconRefXss=1>"
+  },
+  "external": {
+    "state": "merged",
+    "commitSha": "abc123"
+  }
+}

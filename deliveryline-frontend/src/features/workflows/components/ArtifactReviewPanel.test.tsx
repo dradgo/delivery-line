@@ -392,12 +392,27 @@ describe('ArtifactReviewPanelContainer — data seam (AC4, AC9, logging)', () =>
     expect(screen.queryByText('Generated content')).toBeNull();
   });
 
-  it('AC9 — Compare enables when allowed-actions reports compare AND a comparable revision exists', () => {
+  it('AC9 / 4.20 — Compare enables when allowed-actions reports enter_compare_mode AND a comparable revision exists', () => {
     mockUseArtifact.mockReturnValue(fakeArtifactQuery({ data: specArtifactView })); // spec v2
-    mockUseAllowedActions.mockReturnValue(fakeAllowedActionsQuery(['compare']));
+    mockUseAllowedActions.mockReturnValue(fakeAllowedActionsQuery(['enter_compare_mode']));
     render(<ArtifactReviewPanelContainer workflowRunId="run_1" artifactId="art_1" />);
     expect(panel()).toHaveAttribute('data-artifact-panel-state', 'default');
     expect(screen.getByTestId('artifact-compare-entry')).toBeEnabled();
+  });
+
+  it('4.20 AC9 — clicking the enabled Compare control invokes onEnterCompare', async () => {
+    mockUseArtifact.mockReturnValue(fakeArtifactQuery({ data: specArtifactView })); // spec v2
+    mockUseAllowedActions.mockReturnValue(fakeAllowedActionsQuery(['enter_compare_mode']));
+    const onEnterCompare = vi.fn();
+    render(
+      <ArtifactReviewPanelContainer
+        workflowRunId="run_1"
+        artifactId="art_1"
+        onEnterCompare={onEnterCompare}
+      />,
+    );
+    await userEvent.click(screen.getByTestId('artifact-compare-entry'));
+    expect(onEnterCompare).toHaveBeenCalledTimes(1);
   });
 
   it('preserves rendered artifact content during a background refetch', () => {
@@ -430,7 +445,7 @@ describe('ArtifactReviewPanelContainer — data seam (AC4, AC9, logging)', () =>
     mockUseArtifact.mockReturnValue(
       fakeArtifactQuery({ data: { ...specArtifactView, version: 1 } }),
     );
-    mockUseAllowedActions.mockReturnValue(fakeAllowedActionsQuery(['compare']));
+    mockUseAllowedActions.mockReturnValue(fakeAllowedActionsQuery(['enter_compare_mode']));
     render(<ArtifactReviewPanelContainer workflowRunId="run_1" artifactId="art_1" />);
     expect(screen.getByTestId('artifact-compare-entry')).toBeDisabled();
   });

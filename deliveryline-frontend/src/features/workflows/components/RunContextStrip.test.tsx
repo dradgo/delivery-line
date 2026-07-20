@@ -430,6 +430,39 @@ describe('RunContextStrip — recovery baseline (story 3.30, AC2)', () => {
     expect(screen.queryByTestId('run-recovery-baseline')).toBeNull();
   });
 
+  it('AC9 (review D1) — surfaces the applied classification chip humanized via the registry', async () => {
+    server.use(
+      detailResponse(failedDetail),
+      http.get('http://localhost/api/v1/registries/failure-taxonomy', () =>
+        HttpResponse.json({
+          values: [
+            {
+              value: 'agent_execution_failure',
+              humanReadableName: 'Agent Execution Failure',
+              description: 'x',
+              examples: ['y'],
+              deprecated: false,
+            },
+          ],
+        }),
+      ),
+      http.get('http://localhost/api/v1/workflows/:id/failure-classification', () =>
+        HttpResponse.json({
+          workflowRunId: RUN_ID,
+          currentTaxonomyValue: 'agent_execution_failure',
+          currentDisplayLabel: 'agent_execution_failure',
+          deprecated: false,
+          priorClassifications: [],
+        }),
+      ),
+    );
+    renderStrip(<RunContextStrip workflowRunId={RUN_ID} />);
+    const chip = await screen.findByTestId('run-recovery-classification-chip');
+    // Humanized via the registry — never the raw snake_case wire value.
+    expect(chip).toHaveTextContent('Failure classification: Agent Execution Failure');
+    expect(chip).not.toHaveTextContent('agent_execution_failure');
+  });
+
   it('absent recovery fields fall back to Not reported', async () => {
     server.use(
       detailResponse({

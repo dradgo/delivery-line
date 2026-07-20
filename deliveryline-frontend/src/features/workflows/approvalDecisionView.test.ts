@@ -26,8 +26,14 @@ import {
   resolveImplementationArtifactId,
   resolvePrimaryAction,
   resolveSpecArtifactId,
+  buildRecoverySafetyByToken,
+  hasRecoveryAction,
+  resolveRecoveryPrimaryAction,
+  resolveRecoverySafety,
   type ApprovalDecisionView,
+  type DecisionAction,
 } from './approvalDecisionView';
+import type { components } from '@/lib/api/schema';
 import type { WorkflowDetail } from '@/lib/api/queryOptions';
 import {
   blockedNoArtifactView,
@@ -405,5 +411,112 @@ describe('approvalDecisionView — implementation_review helpers (story 3.28)', 
     expect(resolveConsequenceHint('implementation_review', 'reject_implementation')).toMatch(
       /back for rework/,
     );
+  });
+});
+
+// ---- Story 4.22 — recovery_operator full activation (Task 2) --------------------
+
+type FailureDiagnostics = components['schemas']['FailureDiagnosticsResponse'];
+
+function diagnostics(
+  recommended: Array<{ actionType: string; safetyLevel: string }>,
+): FailureDiagnostics {
+  return {
+    workflowRunId: 'run_diag_1',
+    currentState: 'Failed',
+    recommendedRecoveryActions: recommended.map((r) => ({
+      actionType: r.actionType,
+      safetyLevel: r.safetyLevel,
+      reason: 'because',
+      precondition: 'none',
+    })),
+  } as unknown as FailureDiagnostics;
+}
+
+describe('story 4.22 — recovery action vocabulary + safety model', () => {
+  it('normalizeActions keeps the 5 new long-form tokens (not coerced to unknown)', () => {
+    const raw = [
+      'resume_workflow',
+      'reconcile_conflict',
+      'rerun_from_step',
+      'pause_workflow',
+      'classify_failure',
+      'totally_unknown',
+    ];
+    expect(normalizeActions(raw)).toEqual([
+      'resume_workflow',
+      'reconcile_conflict',
+      'rerun_from_step',
+      'pause_workflow',
+      'classify_failure',
+    ]);
+    expect(coerceAction('resume_workflow')).toBe('resume_workflow');
+    expect(coerceAction('classify_failure')).toBe('classify_failure');
+  });
+
+  it('resolveRecoverySafety joins via the SHORT-FORM diagnostics vocabulary', () => {
+    const diag = diagnostics([
+      { actionType: 'retry', safetyLevel: 'safe' },
+      { actionType: 'pause', safetyLevel: 'caution' },
+      { actionType: 'reconcile', safetyLevel: 'risky' },
+      { actionType: 'classify_failure', safetyLevel: 'caution' },
+    ]);
+    expect(resolveRecoverySafety('retry', diag)).toBe('safe');
+    // pause_workflow → diagnostics short-form 'pause'
+    expect(resolveRecoverySafety('pause_workflow', diag)).toBe('caution');
+    // reconcile_conflict → diagnostics short-form 'reconcile'
+    expect(resolveRecoverySafety('reconcile_conflict', diag)).toBe('risky');
+    expect(resolveRecoverySafety('classify_failure', diag)).toBe('caution');
+  });
+
+  it('resolveRecoverySafety uses the static fallback for tokens diagnostics never emit', () => {
+    const diag = diagnostics([{ actionType: 'retry', safetyLevel: 'safe' }]);
+    // rerun_from_step + resume_workflow are absent from diagnostics → static fallback.
+    expect(resolveRecoverySafety('rerun_from_step', diag)).toBe('risky');
+    expect(resolveRecoverySafety('resume_workflow', diag)).toBe('safe');
+  });
+
+  it('resolveRecoverySafety lets a present diagnostics rank override the retry static floor', () => {
+    // The `retry → safe` static entry is only a fallback floor; when diagnostics rank retry, that
+    // value wins (join runs before the static table).
+    const diag = diagnostics([{ actionType: 'retry', safetyLevel: 'caution' }]);
+    expect(resolveRecoverySafety('retry', diag)).toBe('caution');
+  });
+
+  it('resolveRecoverySafety falls back deterministically when diagnostics are absent', () => {
+    // retry gets a `safe` static floor so the 3.30 baseline primary stays deterministic while
+    // diagnostics load (or permanently if the diagnostics GET fails) — no zero-primary window (AC2).
+    expect(resolveRecoverySafety('retry', undefined)).toBe('safe'); // static floor
+    expect(resolveRecoverySafety('resume_workflow', undefined)).toBe('safe'); // static
+    expect(resolveRecoverySafety('rerun_from_step', undefined)).toBe('risky'); // static
+    expect(resolveRecoverySafety('pause_workflow', undefined)).toBe('caution'); // no diag, no static
+  });
+
+  it('resolveRecoveryPrimaryAction picks the single safe action via the tie-break order', () => {
+    const actions: DecisionAction[] = ['pause_workflow', 'retry', 'resume_workflow'];
+    // retry + resume are both safe here → retry wins by tie-break priority.
+    const safety = { retry: 'safe', resume_workflow: 'safe', pause_workflow: 'caution' } as const;
+    expect(resolveRecoveryPrimaryAction(actions, safety)).toBe('retry');
+  });
+
+  it('resolveRecoveryPrimaryAction returns null when no action is safe (subordinate-only)', () => {
+    const actions: DecisionAction[] = ['rerun_from_step', 'pause_workflow'];
+    const safety = { rerun_from_step: 'risky', pause_workflow: 'caution' } as const;
+    expect(resolveRecoveryPrimaryAction(actions, safety)).toBeNull();
+  });
+
+  it('buildRecoverySafetyByToken maps every action + hasRecoveryAction detects recovery tokens', () => {
+    const diag = diagnostics([{ actionType: 'retry', safetyLevel: 'safe' }]);
+    const actions: DecisionAction[] = ['retry', 'rerun_from_step'];
+    const byToken = buildRecoverySafetyByToken(actions, diag);
+    expect(byToken).toEqual({ retry: 'safe', rerun_from_step: 'risky' });
+
+    expect(hasRecoveryAction({ actions: ['retry'] } as ApprovalDecisionView)).toBe(true);
+    expect(hasRecoveryAction({ actions: ['resume_workflow'] } as ApprovalDecisionView)).toBe(true);
+    expect(
+      hasRecoveryAction({
+        actions: ['view_diagnostics'] as unknown as DecisionAction[],
+      } as ApprovalDecisionView),
+    ).toBe(false);
   });
 });

@@ -18,6 +18,7 @@ import org.dradgo.adapters.rest.WorkflowController;
 import org.dradgo.application.idempotency.IdempotencyKeyValidator;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
+import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.runner.ContextBundle;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
@@ -92,6 +93,9 @@ class CliRestEquivalenceContractTest {
   @MockitoBean private WorkflowInspectionService workflowInspectionService;
   @MockitoBean private LocalActorIdentityResolver localActorIdentityResolver;
   @MockitoBean private DeveloperTakeoverService developerTakeoverService;
+  // Story 4.10 — WorkflowController gained the recovery service; the bean must exist for this
+  // @WebMvcTest slice to construct the controller.
+  @MockitoBean private RecoveryService recoveryService;
   @MockitoBean private WorkflowArchiveService workflowArchiveService;
 
   // Story 3f-3 — WorkflowController gained the run-dependency declaration/inspection service; the

@@ -32,6 +32,14 @@ class RunnerPropertiesTest {
   }
 
   @Test
+  void partialDeliveryModeConfigDefaultsAutoCreatePullRequestToTrue() {
+    RunnerProperties.DeliveryMode deliveryMode =
+        new RunnerProperties.DeliveryMode(org.dradgo.domain.registry.PushMode.MANUAL, null);
+
+    assertEquals(true, deliveryMode.autoCreatePullRequest());
+  }
+
+  @Test
   void queueMaxDepthIsClampedToAtLeastOne() {
     // Story 3.17a AC4 — a cap below 1 (0, negative, or an unset primitive bound to 0) would reject
     // every enqueue; the compact ctor coerces it up to 1 rather than dead-queueing.
@@ -60,6 +68,9 @@ class RunnerPropertiesTest {
         d.planStage(),
         d.implementationStage(),
         d.openspec(),
+        d.buildStage(),
+        d.lintStage(),
+        d.deliveryMode(),
         queueMaxDepth);
   }
 
@@ -84,6 +95,9 @@ class RunnerPropertiesTest {
             RunnerProperties.PlanStage.defaults(),
             RunnerProperties.ImplementationStage.defaults(),
             RunnerProperties.OpenSpec.defaults(),
+            RunnerProperties.BuildStage.defaults(),
+            RunnerProperties.LintStage.defaults(),
+            RunnerProperties.DeliveryMode.defaults(),
             100);
     assertEquals(true, enabled.allowShareableLogs());
   }
@@ -147,6 +161,9 @@ class RunnerPropertiesTest {
             new RunnerProperties.PlanStage(RunnerKind.CODEX, true),
             RunnerProperties.ImplementationStage.defaults(),
             RunnerProperties.OpenSpec.defaults(),
+            RunnerProperties.BuildStage.defaults(),
+            RunnerProperties.LintStage.defaults(),
+            RunnerProperties.DeliveryMode.defaults(),
             100);
     assertEquals(
         RunnerKind.CLAUDE,
@@ -174,11 +191,24 @@ class RunnerPropertiesTest {
             new RunnerProperties.PlanStage(RunnerKind.CLAUDE, false),
             RunnerProperties.ImplementationStage.defaults(),
             RunnerProperties.OpenSpec.defaults(),
+            RunnerProperties.BuildStage.defaults(),
+            RunnerProperties.LintStage.defaults(),
+            RunnerProperties.DeliveryMode.defaults(),
             100);
     assertEquals(
         RunnerKind.CLAUDE,
         claudePlan.kindForStage(org.dradgo.domain.registry.RunnerStage.EXECUTION));
     assertEquals(false, claudePlan.planAutoDispatchEnabled());
+
+    // Story 3h-1 (AC1 switch-arm) — BUILD is never runner-kind-dispatched (it runs backend-side via
+    // BuildStageService/BuildCommandPort), so kindForStage(BUILD) must fail loud, exactly like the
+    // REVIEW arm (reaching here for either stage is a routing bug, not a silent mis-resolve).
+    assertThrows(
+        IllegalStateException.class,
+        () -> claudePlan.kindForStage(org.dradgo.domain.registry.RunnerStage.BUILD));
+    assertThrows(
+        IllegalStateException.class,
+        () -> claudePlan.kindForStage(org.dradgo.domain.registry.RunnerStage.REVIEW));
   }
 
   @Test
@@ -217,6 +247,9 @@ class RunnerPropertiesTest {
             new RunnerProperties.PlanStage(RunnerKind.CODEX, true),
             new RunnerProperties.ImplementationStage(RunnerKind.CLAUDE, true),
             RunnerProperties.OpenSpec.defaults(),
+            RunnerProperties.BuildStage.defaults(),
+            RunnerProperties.LintStage.defaults(),
+            RunnerProperties.DeliveryMode.defaults(),
             100);
     assertEquals(
         RunnerKind.CODEX, props.kindForExecutionSubStage(ExecutionSubStage.IMPLEMENTATION_PLAN));
@@ -246,6 +279,9 @@ class RunnerPropertiesTest {
                 RunnerProperties.PlanStage.defaults(),
                 RunnerProperties.ImplementationStage.defaults(),
                 RunnerProperties.OpenSpec.defaults(),
+                RunnerProperties.BuildStage.defaults(),
+                RunnerProperties.LintStage.defaults(),
+                RunnerProperties.DeliveryMode.defaults(),
                 100));
   }
 
@@ -271,6 +307,9 @@ class RunnerPropertiesTest {
                 RunnerProperties.PlanStage.defaults(),
                 RunnerProperties.ImplementationStage.defaults(),
                 RunnerProperties.OpenSpec.defaults(),
+                RunnerProperties.BuildStage.defaults(),
+                RunnerProperties.LintStage.defaults(),
+                RunnerProperties.DeliveryMode.defaults(),
                 100));
   }
 

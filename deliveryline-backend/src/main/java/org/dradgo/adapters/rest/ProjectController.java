@@ -21,6 +21,7 @@ import java.util.Map;
 import org.dradgo.application.idempotency.IdempotencyService;
 import org.dradgo.application.idempotency.IdempotencyService.ReservationDecision;
 import org.dradgo.application.idempotency.IdempotencyService.ReservationOutcome;
+import org.dradgo.application.integration.ticketsource.TicketQueryService;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.project.CreateProjectCommand;
 import org.dradgo.application.project.ProjectConnectivityService;
@@ -29,6 +30,7 @@ import org.dradgo.application.project.ProjectManagementService;
 import org.dradgo.application.project.UpdateProjectCommand;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.domain.DomainException;
+import org.dradgo.domain.integration.ticketsource.TicketQuery;
 import org.dradgo.domain.project.Project;
 import org.dradgo.domain.registry.ConnectorRole;
 import org.dradgo.domain.registry.DomainErrorCode;
@@ -46,6 +48,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -75,6 +78,7 @@ public class ProjectController {
   private final ProjectManagementService projectManagementService;
   private final ProjectConnectivityService projectConnectivityService;
   private final ProjectCredentialService projectCredentialService;
+  private final TicketQueryService ticketQueryService;
   private final IdempotencyService idempotencyService;
   private final LocalActorIdentityResolver localActorIdentityResolver;
 
@@ -82,11 +86,13 @@ public class ProjectController {
       ProjectManagementService projectManagementService,
       ProjectConnectivityService projectConnectivityService,
       ProjectCredentialService projectCredentialService,
+      TicketQueryService ticketQueryService,
       IdempotencyService idempotencyService,
       LocalActorIdentityResolver localActorIdentityResolver) {
     this.projectManagementService = projectManagementService;
     this.projectConnectivityService = projectConnectivityService;
     this.projectCredentialService = projectCredentialService;
+    this.ticketQueryService = ticketQueryService;
     this.idempotencyService = idempotencyService;
     this.localActorIdentityResolver = localActorIdentityResolver;
   }
@@ -135,6 +141,13 @@ public class ProjectController {
             request.openspecEnabled(),
             request.runnerKind(),
             request.stepRunnerKinds(),
+            request.buildStageEnabled(),
+            request.buildCommand(),
+            request.lintStageEnabled(),
+            request.lintCommands(),
+            request.pushMode(),
+            defaultTrue(request.autoCreatePullRequest()),
+            request.testcontainersEnabled(),
             idempotencyKey,
             actorIdentity);
     log.info(
@@ -237,6 +250,13 @@ public class ProjectController {
             request.runnerKind(),
             request.reviewerModelKind(),
             request.stepRunnerKinds(),
+            request.buildStageEnabled(),
+            request.buildCommand(),
+            request.lintStageEnabled(),
+            request.lintCommands(),
+            request.pushMode(),
+            defaultTrue(request.autoCreatePullRequest()),
+            request.testcontainersEnabled(),
             actorIdentity);
     return toResponse(projectManagementService.updateProject(projectId, command));
   }
@@ -412,6 +432,92 @@ public class ProjectController {
     return TestConnectionResponse.from(projectConnectivityService.testConnection(projectId));
   }
 
+  @GetMapping(value = "/{projectId}/ticket-query", produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "queryProjectTickets",
+      summary = "Browse candidate tickets from the project's ticket source (capability-gated)")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description =
+            "A page of candidate tickets plus the source's total match count and a truncated flag."),
+    @ApiResponse(
+        responseCode = "400",
+        description = "INVALID_COMMAND_PAYLOAD (limit out of range, or too many components).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description =
+            "PROJECT_NOT_FOUND, or TICKET_QUERY_NOT_SUPPORTED when the project's ticket source"
+                + " cannot be browsed.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "502",
+        description =
+            "TICKET_QUERY_SOURCE_FAILED — the ticket source answered, but unusably (expired or"
+                + " insufficiently-scoped credential, malformed response). Not retryable.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "503",
+        description =
+            "TICKET_QUERY_SOURCE_UNAVAILABLE — the ticket source was unreachable or answered"
+                + " transiently (timeout, 429, 5xx). Retryable.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public CandidateTicketPageResponse queryProjectTickets(
+      @PathVariable String projectId,
+      @Parameter(
+              description =
+                  "Source assignee identity (JIRA Cloud: an accountId, or an email"
+                      + " the instance resolves). Opaque — passed to the source verbatim.")
+          @RequestParam(required = false)
+          String assignee,
+      @Parameter(
+              description =
+                  "Repeatable/CSV component names; a ticket matching any of them" + " is returned.")
+          @RequestParam(required = false)
+          List<String> components,
+      @Parameter(description = "Source workflow-state name, e.g. \"To Do\".")
+          @RequestParam(required = false)
+          String state,
+      @Parameter(description = "Maximum tickets to return (1..200).")
+          @RequestParam(required = false, defaultValue = "" + TicketQuery.DEFAULT_LIMIT)
+          int limit) {
+    requireLimitInRange(limit);
+    requireComponentCountInRange(components);
+    // Counts/flags only — filter values are never logged (AC7).
+    log.info(
+        "REST query project tickets received projectId={} assigneeFiltered={} componentCount={} stateFiltered={} limit={}",
+        MdcKeys.sanitizeForLog(projectId),
+        assignee != null && !assignee.isBlank(),
+        components == null ? 0 : components.size(),
+        state != null && !state.isBlank(),
+        limit);
+    CandidateTicketPageResponse page =
+        CandidateTicketPageResponse.from(
+            ticketQueryService.queryCandidateTickets(
+                projectId, new TicketQuery(assignee, components, state, limit)));
+    log.info(
+        "REST query project tickets success projectId={} resultCount={} total={} truncated={}",
+        MdcKeys.sanitizeForLog(projectId),
+        page.tickets().size(),
+        page.total(),
+        page.truncated());
+    return page;
+  }
+
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
@@ -421,7 +527,8 @@ public class ProjectController {
         projectCredentialService.isConfigured(project.publicId(), ConnectorRole.TICKET_SOURCE);
     boolean repoConfigured =
         projectCredentialService.isConfigured(project.publicId(), ConnectorRole.REPO_HOST);
-    // Story 3d-2 — the per-project advisory-reviewer credential (ConnectorRole.REVIEWER). A REVIEW
+    // Story 3d-2 — the per-project advisory-reviewer credential (ConnectorRole.REVIEWER). A
+    // REVIEW
     // dispatch (advisory reviewer + the 3f-4 split-proposal) resolves THIS secret with no host-key
     // fallback, so its presence must be surfaced for the UI to set it. Appended last so the
     // existing ticket_source/repo_host array indices are unchanged.
@@ -454,6 +561,10 @@ public class ProjectController {
     }
   }
 
+  private static boolean defaultTrue(Boolean value) {
+    return value == null || value;
+  }
+
   private static String createFingerprint(CreateProjectCommand command) {
     String canonical =
         String.join(
@@ -467,8 +578,41 @@ public class ProjectController {
             nullSafe(command.repoHostKind()),
             Boolean.toString(command.openspecEnabled()),
             nullSafe(command.runnerKind()),
-            canonicalStepRunnerKinds(command.stepRunnerKinds()));
+            canonicalStepRunnerKinds(command.stepRunnerKinds()),
+            // Story 3h-1 (AC2) — both build-config fields MUST be part of the create fingerprint,
+            // else two creates differing only in build config would collide as idempotent replays.
+            Boolean.toString(command.buildStageEnabled()),
+            nullSafe(command.buildCommand()),
+            // Story 3h-2 (AC2) — both lint-config fields MUST be part of the create fingerprint,
+            // else two creates differing only in lint config would collide as idempotent replays.
+            Boolean.toString(command.lintStageEnabled()),
+            canonicalLintCommands(command.lintCommands()),
+            // Story 3h-4 (AC1) — both delivery-config fields MUST be part of the create
+            // fingerprint,
+            // else two creates differing only in delivery config would collide as idempotent
+            // replays. pushMode is the raw wire string (null ⇒ "" canonicalizes to the AUTO
+            // default).
+            nullSafe(command.pushMode()),
+            Boolean.toString(command.autoCreatePullRequest()),
+            // Task 4 (DinD Testcontainers sidecar) — MUST be part of the create fingerprint, else
+            // two creates differing only in this flag would collide as idempotent replays.
+            Boolean.toString(command.testcontainersEnabled()));
     return sha256Hex(canonical);
+  }
+
+  /**
+   * Story 3h-2 — deterministic canonical form of the lint command list for the create fingerprint:
+   * the commands joined in order (order is semantically meaningful — fail-fast runs first-to-last),
+   * newline-delimited. Two same-key creates with the same lint commands fingerprint identically
+   * (and replay); a different list (or order) is a distinct create.
+   */
+  private static String canonicalLintCommands(java.util.List<String> lintCommands) {
+    if (lintCommands == null || lintCommands.isEmpty()) {
+      return "";
+    }
+    return lintCommands.stream()
+        .map(ProjectController::nullSafe)
+        .collect(java.util.stream.Collectors.joining("\n"));
   }
 
   /**
@@ -521,6 +665,59 @@ public class ProjectController {
     return new DomainException(
         DomainErrorCode.CREDENTIAL_MASTER_KEY_UNCONFIGURED,
         "Credential master key is not configured",
+        details);
+  }
+
+  /**
+   * Story 3i-2 — reject an out-of-range limit at the edge, so the REST contract is an explicit
+   * {@code 1..MAX_LIMIT} range rather than two different silent behaviours.
+   *
+   * <p>The two bounds fail differently in the domain, which is why the guard covers both. {@code
+   * limit <= 0} throws {@code IllegalArgumentException} from the {@code TicketQuery} compact
+   * constructor, and that exception has no {@code @ExceptionHandler} — it would render as an opaque
+   * 500. {@code limit > MAX_LIMIT} does <em>not</em> throw: the constructor silently clamps it
+   * down. Clamping is right for an internal caller (it cannot ask the source for an unbounded page)
+   * but wrong for a wire contract, where a request for 500 results must not quietly succeed as 200.
+   * So the adapter rejects what the domain would clamp. Deliberate divergence, not an oversight.
+   *
+   * <p>Bean-validation constraints are deliberately not used: {@code @Validated} on this class
+   * routes them through the AOP {@code MethodValidationPostProcessor}, which raises an unhandled
+   * {@code ConstraintViolationException} rather than the {@code HandlerMethodValidationException}
+   * the mapper knows.
+   */
+  private static void requireLimitInRange(int limit) {
+    if (limit >= 1 && limit <= TicketQuery.MAX_LIMIT) {
+      return;
+    }
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("field", "limit");
+    details.put("rejectedValue", limit);
+    details.put("min", 1);
+    details.put("max", TicketQuery.MAX_LIMIT);
+    throw new DomainException(
+        DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+        "limit must be between 1 and " + TicketQuery.MAX_LIMIT,
+        details);
+  }
+
+  /**
+   * Story 3i-2 — reject an over-large component filter at the edge. Every component token is
+   * rendered into the source's query string, so an unbounded set is an unbounded request. The
+   * {@code TicketQuery} compact constructor throws for the same condition; this guard converts it
+   * into a typed 400 instead of an unhandled {@code IllegalArgumentException} 500.
+   */
+  private static void requireComponentCountInRange(List<String> components) {
+    int count = components == null ? 0 : components.size();
+    if (count <= TicketQuery.MAX_COMPONENTS) {
+      return;
+    }
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("field", "components");
+    details.put("rejectedCount", count);
+    details.put("max", TicketQuery.MAX_COMPONENTS);
+    throw new DomainException(
+        DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+        "components must not exceed " + TicketQuery.MAX_COMPONENTS + " values",
         details);
   }
 

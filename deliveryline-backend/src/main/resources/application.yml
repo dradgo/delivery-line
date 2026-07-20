@@ -26,9 +26,11 @@ spring:
     group:
       # Story 3.13 — github-mock joins the default mock stack alongside linear-mock so the full
       # execution loop runs against deterministic, zero-network integrations in test/local/demo.
-      local: [runners.mock, linear-mock, github-mock]
-      test: [runners.mock, linear-mock, github-mock]
-      demo: [runners.mock, linear-mock, github-mock]
+      # Story 3i-3 (FR82) — bitbucket-mock joins the same default stack so a bitbucket-kind project
+      # resolves a deterministic, zero-network repository host in test/local/demo.
+      local: [runners.mock, linear-mock, github-mock, bitbucket-mock]
+      test: [runners.mock, linear-mock, github-mock, bitbucket-mock]
+      demo: [runners.mock, linear-mock, github-mock, bitbucket-mock]
   # Story 2.13 round-3 review D3 follow-up: make `@JsonIgnoreProperties(ignoreUnknown = false)` on
   # request DTOs actually enforce rejection. Spring Boot's autoconfigured ObjectMapper otherwise
   # disables FAIL_ON_UNKNOWN_PROPERTIES, leaving the annotation no global default to defer to and
@@ -81,6 +83,24 @@ deliveryline:
     # request body supplies a non-blank `reviewerRole`, it is used verbatim; otherwise this value
     # is stamped on the persisted approvals row and the approval.approved audit event.
     default-reviewer-role: product_reviewer
+  artifact:
+    # Story 4.15 (NFR2/FR47): the artifact drift-detection sweep scans for orphan operations (stale
+    # pending artifact_operations), missing payloads (available artifacts whose storage_ref the
+    # LocalArtifactStore can no longer resolve), and checksum mismatches (payload exists but its
+    # recomputed checksum <> checksum_value), recording each to artifact_drift_detected + emitting an
+    # artifact.driftDetected event. DETECTION ONLY — it never mutates status or resolves (repair is
+    # story 4.16). The @Scheduled trigger (ArtifactDriftDetectionConfiguration) is
+    # @ConditionalOnProperty-gated on `enabled`, so a disabled sweep registers no scheduled bean.
+    # `interval-ms` is the fixed-delay between ticks (<=0 normalized to 900000 = 15 min). `batch-limit`
+    # caps available artifacts scanned per tick — the sweep WARNs when a tick fills the batch (no
+    # silent truncation), remainder heals next tick (<=0 normalized to 100). `min-age-minutes` is the
+    # minimum artifact age before the payload/checksum scan considers it, so a just-written payload
+    # mid-flush is never flagged (<0 normalized to 5).
+    drift-detection:
+      enabled: true
+      interval-ms: 900000
+      batch-limit: 100
+      min-age-minutes: 5
   complex-ticket-flow:
     # Story 3f-7 (AC5): recursive-split depth cap. A run whose split depth (distance from the
     # lineage root, walking parentRunId; root = depth 0) is already >= this value is refused with
@@ -108,6 +128,45 @@ deliveryline:
       enabled: true
       interval-ms: 60000
       batch-limit: 100
+  integration:
+    # Story 4.17 (FR41/FR43): the integration-conflict-detection sweep compares internal workflow
+    # state against the cached-vs-fresh external Linear ticket + GitHub PR state and persists detected
+    # conflicts to integration_conflicts (never a silent overwrite — NFR19). The @Scheduled trigger
+    # (IntegrationConflictDetectionConfiguration) is @ConditionalOnProperty-gated on `enabled`, so a
+    # disabled sweep registers no scheduled bean. `interval-ms` is the fixed-delay between ticks (<=0
+    # normalized to 300000 = 5 min). `batch-limit` caps active links scanned per integration type per
+    # tick — the sweep WARNs when a tick fills the batch (no silent truncation), remainder heals next
+    # tick (<=0 normalized to 100).
+    conflict-detection:
+      enabled: true
+      interval-ms: 300000
+      batch-limit: 100
+      # Story 4.18 (AC4/AC5): the conflict categories that auto-pause the run (via
+      # ConflictAutoPauseHandler → RecoveryService.pause with actor='system') when the sweep first
+      # detects them on a non-terminal, non-Paused, non-TakenOver run (NFR21). An UNSET key defaults
+      # to [external_state_advanced, external_state_reverted]; an explicitly EMPTY list opts a pilot
+      # out of auto-pause entirely; unknown category tokens are skipped (never throw). Independent of
+      # the dispatch gate's fixed high-severity set. Documented in docs/integrations/conflict-handling.md.
+      auto-pause-on-categories:
+        - external_state_advanced
+        - external_state_reverted
+  integration-conflict:
+    # Story 4.30 (AC4/AC5): the terminal-run reconciliation sweep self-heals integration_conflicts
+    # rows stranded on a run that already terminalized (Completed/TakenOver/Reconciled) — the
+    # manifestation-(b) residue the 4.17 detector's terminal-run guard cannot cover (pre-existing
+    # strands + the sub-ms TOCTOU window). It SYSTEM-resolves each (a system-actor recovery_actions
+    # row + RECOVERY_RECONCILED event), under the P3a per-run reconcile lock so it never races a live
+    # operator reconcile. The @Scheduled trigger (IntegrationConflictTerminalSweepConfiguration) is
+    # @ConditionalOnProperty-gated on `enabled`, so a disabled sweep registers NO bean and adds zero
+    # scheduled work (byte-identical to pre-story). `interval-ms` is the fixed-delay between ticks
+    # (<=0 normalized to 60000 = 1 min); `batch-limit` caps stranded conflicts cleared per tick — the
+    # sweep WARNs on a full batch (no silent truncation), remainder heals next tick (<=0 → 100).
+    # Default OFF: the detector guard prevents the common case at the source; this durability backstop
+    # is opted in per-deploy (mirrors rollup-sweep's opt-in posture). Turn on to drain a backlog.
+    terminal-sweep:
+      enabled: false
+      interval-ms: 60000
+      batch-limit: 100
   workflow:
     # Story 2.10 (FR13): threshold above which ApprovalService.rejectSpec raises the per-run
     # escalation marker. The escalation event is appended exactly once (when the counter crosses
@@ -120,6 +179,45 @@ deliveryline:
     # the threshold from below); subsequent rejections continue to advance the counter and the
     # workflow stays in Executing — escalation does NOT terminate the workflow.
     implementation-rejection-escalation-threshold: 3
+    # Story 3h-1 (FR75): the bounded build auto-fix cap AND escalation threshold (one value; read by
+    # BuildFixEscalationThresholdProvider). On a BUILD failure the implementation runner is
+    # re-dispatched with the build-error log as referenced feedback for up to N (=this value) fix
+    # attempts; the run transitions to FAILED (runner_build_failed) on the (N+1)-th consecutive build
+    # failure (build_fix_loop_count > cap) and the SHARED per-run escalation marker is flipped once
+    # (same marker as the spec / implementation loops, D5).
+    build-fix-max-loops: 3
+    # Story 3h-2 (FR76): the bounded lint auto-fix cap AND escalation threshold (one value; read by
+    # LintFixEscalationThresholdProvider). Unlike the build loop the lint loop is OPERATOR-DRIVEN
+    # (request_lint_fix) and NEVER auto-FAILs the run: on each request_lint_fix the run re-dispatches
+    # EXECUTION and re-parks at WaitingForLintApproval. When lint_fix_loop_count reaches this cap the
+    # SHARED per-run escalation marker is flipped once (visibility only — same marker as the other
+    # loops, D5); the run stays parked, so there is no infinite-loop risk (each iteration needs a
+    # manual operator action).
+    lint-fix-max-loops: 3
+    # Story 3h-5 (FR79): the bounded CI investigation/fix cap AND escalation threshold (one value;
+    # read by CiFixEscalationThresholdProvider). On a red CI the implementation runner is re-dispatched
+    # with the CI-failure log as referenced feedback for up to N (=this value) fix attempts. On the
+    # (N+1)-th consecutive red CI (ci_fix_loop_count > cap) the SHARED per-run escalation marker is
+    # flipped once (same marker as the spec / implementation / split / build / lint loops, D5) and the
+    # run is LEFT parked at WaitingForReview (WaitingForReview has no ->Failed edge) — CI escalates,
+    # never fails the run (Decision 5).
+    ci-fix-max-loops: 3
+    # Story 3h-5 (AC2/AC4, Decision 4): the CI-investigation sweep. The @ConditionalOnProperty on
+    # `enabled` is the load-bearing PARITY gate — when false/absent the scheduled bean
+    # (CiInvestigationConfiguration) is NEVER registered, so a disabled sweep adds zero scheduled work
+    # and the delivery tail is byte-identical to pre-3h-5. There is NO per-project CI flag; parity is
+    # this global switch alone. Disabled by default (opt-in), mirroring rollup-sweep. Uncomment + set
+    # enabled=true to activate against a github-real repo host.
+    #   * interval-ms — fixed-delay between poll ticks (<=0 normalized to 30000).
+    #   * batch-limit — max pending runs scanned per tick; the sweep WARNs on a full batch (no silent
+    #     truncation), remainder scanned next tick (<=0 normalized to 20).
+    #   * max-poll-attempts — bounded poll budget; once ci_poll_attempts exceeds this the run is
+    #     recorded `unavailable` and polling stops (<=0 normalized to 60).
+    # ci-investigation:
+    #   enabled: false
+    #   interval-ms: 30000
+    #   batch-limit: 20
+    #   max-poll-attempts: 60
     # Story 3f-4 (AC4): threshold above which SplitProposalService.repropose raises the per-run
     # escalation marker (the SAME marker as the spec-rejection / implementation-rejection loops). The
     # escalation event is appended exactly once (when the split-proposal re-propose counter crosses
@@ -236,6 +334,38 @@ deliveryline:
     timeout:
       connect-ms: 5000
       read-ms: 30000
+  bitbucket:
+    # Story 3i-3 (FR82) — real Bitbucket repository-host adapter config (active only under the opt-in
+    # bitbucket-real profile, which is NEVER in a profile group; the bitbucket-mock stays the
+    # default in local/test/demo). The single secret is supplied at runtime via the BITBUCKET_TOKEN
+    # env var (.env / process env) — NEVER committed here. Its encoding is self-describing: a
+    # "workspace:app_password" pair is sent as HTTP Basic; a bare access token is sent as Bearer.
+    # A blank token is allowed at bind time and is fatal only when the bitbucket-real profile
+    # activates the bitbucketRestClient bean (surfaced by the doctor bitbucket-auth probe).
+    token: ${BITBUCKET_TOKEN:}
+    # Host only — the /2.0 REST API version segment is carried in each request path (mirrors the
+    # github.base-url host-only convention), so an absolute-path request never clobbers it.
+    base-url: https://api.bitbucket.org
+    timeout:
+      connect-ms: 5000
+      read-ms: 30000
+  jira:
+    # Story 3i-1 (FR80) — real JIRA ticket-source adapter config (active only under the opt-in
+    # jira-real profile, which is NEVER in a profile group; the jira-mock stays opt-in for
+    # local/demo). JIRA auth uses a bearer token read at request time. The token normally comes from
+    # the project-scoped credential override; JIRA_API_TOKEN is only an optional host-env fallback
+    # for local operations. NEVER commit tokens here. base-url is non-secret deployment config. A
+    # blank token/email/base-url is allowed at bind time; base-url is required when jira-real creates
+    # the jiraRestClient bean.
+    # bean. Mirrors the linear.* / github.* patterns. To run JIRA as the ticket source, activate the
+    # jira-real (or jira-mock) profile and set deliveryline.integration.ticket-source.kind: jira.
+    api-token: ${JIRA_API_TOKEN:}
+    email: ${JIRA_EMAIL:}
+    # base-url: https://acme.atlassian.net  # your JIRA Cloud site URL (required under jira-real)
+    poll-batch-size: 50
+    timeout:
+      connect-ms: 5000
+      read-ms: 30000
   runner:
     stale-threshold-multiplier: 2.0
     timeout-scan-interval-ms: 10000
@@ -294,6 +424,43 @@ deliveryline:
     # the shared test application.yml needs no mirror entry. Uncomment + set true to opt in.
     # openspec:
     #   enabled: true
+    # Story 3h-1 (FR75) — pre-review build-validation stage. When enabled AND a command is set, the
+    # produced code is built backend-side (ProcessBuilder in the materialized host workspace, behind
+    # BuildCommandPort) before push + review; a non-zero exit drives a bounded auto-fix loop
+    # (build-fix-max-loops above). timeout bounds the build process (kill → non-zero on overrun).
+    # Default OFF (commented out) ⇒ byte-identical to pre-3h (BUILD skipped entirely). OPTIONAL +
+    # UNVALIDATED, so the shared test application.yml needs no mirror entry. Seeds the default
+    # project's per-project build config; per-project overrides live on the Project aggregate.
+    # build-stage:
+    #   enabled: true
+    #   command: "mvn -q -DskipTests package"
+    #   timeout: 10m
+    # Story 3h-2 (FR76) — pre-review CPU lint gate. When enabled AND commands are set, the produced
+    # code is linted backend-side (each command via BuildCommandPort in the materialized host
+    # workspace) AFTER a successful BUILD and BEFORE push + review; a command whose exit signals
+    # critical findings parks the run at WaitingForLintApproval for operator approve_lint /
+    # request_lint_fix (the latter re-dispatches EXECUTION, bounded by lint-fix-max-loops above).
+    # timeout bounds each lint process (kill → non-zero on overrun). Default OFF (commented out) ⇒
+    # byte-identical to pre-3h-2 (LINT skipped entirely). OPTIONAL + UNVALIDATED, so the shared test
+    # application.yml needs no mirror entry. Seeds the default project's per-project lint config;
+    # per-project overrides live on the Project aggregate.
+    # lint-stage:
+    #   enabled: true
+    #   commands:
+    #     - "mvn -q -DskipTests checkstyle:check"
+    #     - "npm --prefix frontend run lint"
+    #   timeout: 5m
+    # Story 3h-4 (FR78) — unified delivery gate. push-mode selects whether the backend push (+ PR/MR
+    # creation) at the pr-output delivery tail happens automatically or behind an explicit operator
+    # approve_delivery: 'auto' (the default) pushes inline exactly as pre-3h delivery (the run never
+    # parks); 'manual'/'approve' park the run at WaitingForDelivery. auto-create-pull-request gates
+    # PR creation wherever the push fires (default true ⇒ pre-3h parity). Default (auto, true) ⇒
+    # byte-identical to pre-3h delivery. OPTIONAL + UNVALIDATED, so the shared test application.yml
+    # needs no mirror entry. Seeds the default project's per-project delivery config; per-project
+    # overrides live on the Project aggregate. Uncomment to change the global default.
+    # delivery:
+    #   push-mode: auto
+    #   auto-create-pull-request: true
     recovery:
       batch-size: 100
     mock:
@@ -324,6 +491,14 @@ deliveryline:
       claude:
         - CLAUDE_CODE_OAUTH_TOKEN
         - ANTHROPIC_API_KEY
+    # Story: runner JDK+Maven — mount {deliveryline.home}/maven-cache at /workspace/.m2 (rw) so
+    # repeat Maven builds reuse the downloaded dependency tree. false → cold download each run.
+    maven-cache-enabled: true
+    # Per-run DinD Testcontainers sidecar (only used when a project has testcontainers-enabled=true).
+    testcontainers:
+      dind-image: docker:27-dind
+      memory-bytes: 2147483648   # 2 GiB cap on the privileged sidecar
+      readiness-timeout: 60s
     # Story 3.1 — Docker runner adapter config. Bound to RunnerProperties.Docker.
     # Activated only under the runners.docker profile (the wiring is profile-gated;
     # leaving this block in the shared application.yml keeps the defaults discoverable

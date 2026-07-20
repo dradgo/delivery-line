@@ -74,6 +74,7 @@ final class GitHubFixtureDocument {
     private final int number;
     private final String sourceBranch;
     private final String state;
+    private final boolean merged;
     private final String url;
     private final String createdAt;
 
@@ -84,6 +85,7 @@ final class GitHubFixtureDocument {
         @JsonProperty("number") int number,
         @JsonProperty("sourceBranch") String sourceBranch,
         @JsonProperty("state") String state,
+        @JsonProperty("merged") Boolean merged,
         @JsonProperty("url") String url,
         @JsonProperty("createdAt") String createdAt) {
       this.prRef = prRef;
@@ -91,6 +93,9 @@ final class GitHubFixtureDocument {
       this.number = number;
       this.sourceBranch = sourceBranch;
       this.state = state;
+      // Optional in the fixture JSON — the three happy fixtures are open PRs (merged absent →
+      // false).
+      this.merged = Boolean.TRUE.equals(merged);
       this.url = url;
       this.createdAt = createdAt;
     }
@@ -102,6 +107,7 @@ final class GitHubFixtureDocument {
           number,
           sourceBranch,
           state,
+          merged,
           url,
           parseInstant("createdAt", createdAt));
     }

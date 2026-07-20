@@ -22,6 +22,7 @@
     "recovery.retried",
     "recovery.dispatchFailed",
     "recovery.reconciled",
+    "recovery.resumed",
     "artifact.lineageRecovered",
     "integration.linked",
     "export.created",
@@ -39,6 +40,16 @@
     "console.closed",
     "workflow.archived",
     "workflow.unarchived",
-    "workflow.splitDepthOverride"
+    "workflow.splitDepthOverride",
+    "audit.logDownloaded",
+    "integration.conflictDetected",
+    "delivery.recordedManually",
+    "recovery.rerunFromStep",
+    "linear.runReopenedNotification",
+    "recovery.paused",
+    "recovery.failureClassified",
+    "artifact.driftDetected",
+    "artifact.driftRepaired",
+    "artifact.lineageReconciled"
   ]
 }

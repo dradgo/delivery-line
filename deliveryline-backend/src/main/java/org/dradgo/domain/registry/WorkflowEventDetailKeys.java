@@ -107,6 +107,80 @@ public final class WorkflowEventDetailKeys {
   public static final String PR_NUMBER = "prNumber";
   public static final String PR_STATE = "prState";
 
+  // Integration-conflict keys (added story 4.17 AC4, emitted on INTEGRATION_CONFLICT_DETECTED).
+  // Both
+  // allow-listed: conflictId is the opaque icf_ public id of the persisted conflict row and
+  // conflictCategory is the controlled-vocabulary IntegrationConflictCategory wire token —
+  // non-secret
+  // identifiers, the same shareable-redacted posture as the failureCategory/prState keys emitted
+  // alongside them. NEVER carries external tokens, PR bodies, or raw external payloads.
+  public static final String CONFLICT_ID = "conflictId";
+  public static final String CONFLICT_CATEGORY = "conflictCategory";
+  public static final String RECONCILIATION_DECISION = "reconciliationDecision";
+
+  // Integration-conflict terminal-run auto-clear key (added story 4.30 review, emitted on
+  // RECOVERY_RECONCILED when the terminal-run reconciliation sweep SYSTEM-resolves a conflict
+  // stranded on an already-terminal run). Allow-listed boolean discriminator — the same shareable
+  // posture as viaSplitRollup: it lets a timeline consumer tell a system strand-clear (actorType
+  // SYSTEM, prior==resulting terminal state) from an operator reconcile (which transitions the run
+  // TO Reconciled and carries reconciliationDecision). Never carries payloads.
+  public static final String AUTO_CLEARED = "autoCleared";
+
+  // Artifact-drift keys (added story 4.15 AC4, emitted on ARTIFACT_DRIFT_DETECTED). All
+  // allow-listed:
+  // driftCategory is the controlled-vocabulary DriftCategory wire token (orphan_operation /
+  // missing_payload / checksum_mismatch); driftId is the opaque adr_ public id of the persisted
+  // drift row; operationId is the op_ public id of the drifted artifact operation (the ONLY target
+  // reference an orphan-operation drift carries — artifactId is null for that category, so without
+  // operationId in the allow-list an orphan drift event would render with no target at all). All
+  // are
+  // non-secret identifiers, the same shareable posture as the conflictId / conflictCategory pair
+  // emitted by the sibling integration-conflict detection sweep (story 4.17). The
+  // already-allow-listed
+  // artifactId / correlationId / reason / failureCategory keys carry the rest of the payload.
+  public static final String DRIFT_CATEGORY = "driftCategory";
+  public static final String DRIFT_ID = "driftId";
+  public static final String OPERATION_ID = "operationId";
+
+  // Rerun-from-step keys (added story 4.7 AC5, emitted on RECOVERY_RERUN_FROM_STEP). All
+  // allow-listed: targetStep is the controlled-vocabulary SafeRerunStep wire token; the two
+  // *ArtifactIds / *ApprovalIds arrays are opaque art_/apr_ public ids (non-secret references, the
+  // same shareable posture as triggeringEventId). NEVER carries artifact bodies or approval
+  // reasons.
+  public static final String TARGET_STEP = "targetStep";
+  public static final String SUPERSEDED_ARTIFACT_IDS = "supersededArtifactIds";
+  public static final String INVALIDATED_APPROVAL_IDS = "invalidatedApprovalIds";
+
+  // Failure-taxonomy classification keys (added story 4.9 AC7, emitted on
+  // RECOVERY_FAILURE_CLASSIFIED). Both allow-listed: taxonomyValue and priorTaxonomyValue are
+  // controlled-vocabulary FailureTaxonomyValue wire tokens (the same shareable posture as
+  // reconciliationDecision / targetStep). priorTaxonomyValue is present only on re-classification
+  // (AC9) — prior classifications are reconstructible from this event chain, never from the row.
+  public static final String TAXONOMY_VALUE = "taxonomyValue";
+  public static final String PRIOR_TAXONOMY_VALUE = "priorTaxonomyValue";
+
+  // Artifact-repair key (added story 4.16 AC2, emitted on ARTIFACT_DRIFT_REPAIRED). Allow-listed:
+  // repairAction is the controlled-vocabulary RepairAction wire token (mark_operation_failed /
+  // mark_operation_complete / mark_payload_unavailable / restore_from_backup / mark_corrupted /
+  // re_verify_checksum) that discriminates the single artifact.driftRepaired event — the same
+  // shareable posture as reconciliationDecision / taxonomyValue. The already-allow-listed
+  // driftCategory / driftId / artifactId / operationId / reason / correlationId keys carry the rest
+  // of the payload.
+  public static final String REPAIR_ACTION = "repairAction";
+
+  // Artifact-lineage-reconcile keys (added story 4.16a AC6, emitted on
+  // ARTIFACT_LINEAGE_RECONCILED).
+  // Both allow-listed: lineageAction is the controlled-vocabulary LineageAction wire token
+  // (reattach_to_existing_lineage / terminate_ambiguous_lineage / create_explicit_fork) that
+  // discriminates the single artifact.lineageReconciled event — the same shareable posture as
+  // repairAction / reconciliationDecision. lineageReferenceArtifactId is the SECONDARY artifact the
+  // action involves: the chosen new parent for reattach, the newly created fork head for
+  // create_explicit_fork (absent for terminate) — an opaque art_ public id, non-secret, mirroring
+  // supersededByArtifactId. The already-allow-listed artifactId (=target) / reason / correlationId
+  // keys carry the rest of the payload.
+  public static final String LINEAGE_ACTION = "lineageAction";
+  public static final String LINEAGE_REFERENCE_ARTIFACT_ID = "lineageReferenceArtifactId";
+
   // Server-only (stripped from CLI history; visible only on the originating stdout)
   public static final String IDEMPOTENCY_KEY = "idempotencyKey";
 
@@ -160,7 +234,22 @@ public final class WorkflowEventDetailKeys {
           BRANCH,
           COMMIT_SHA,
           PR_NUMBER,
-          PR_STATE);
+          PR_STATE,
+          CONFLICT_ID,
+          CONFLICT_CATEGORY,
+          RECONCILIATION_DECISION,
+          AUTO_CLEARED,
+          DRIFT_CATEGORY,
+          DRIFT_ID,
+          OPERATION_ID,
+          TARGET_STEP,
+          SUPERSEDED_ARTIFACT_IDS,
+          INVALIDATED_APPROVAL_IDS,
+          TAXONOMY_VALUE,
+          PRIOR_TAXONOMY_VALUE,
+          REPAIR_ACTION,
+          LINEAGE_ACTION,
+          LINEAGE_REFERENCE_ARTIFACT_ID);
 
   /**
    * Keys persisted in {@code workflow_events.details} but intentionally stripped from render.

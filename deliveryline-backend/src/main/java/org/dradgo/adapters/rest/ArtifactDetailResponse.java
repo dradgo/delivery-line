@@ -21,6 +21,14 @@ public record ArtifactDetailResponse(
     @Schema(example = "art_abc123") String artifactId,
     @Schema(example = "spec") String artifactType,
     @Schema(example = "3") int version,
+    @Schema(
+            description =
+                "The immediately-prior version's public id (the artifact's lineage parent): the"
+                    + " Compare-Mode baseline (story 4.20 OQ-2); null for a v1 artifact or a"
+                    + " lineage root.",
+            example = "art_abc122",
+            nullable = true)
+        String parentArtifactId,
     @Schema(example = "available") String status,
     @Schema(example = "shareable-redacted") String classification,
     OffsetDateTime createdAt,
@@ -78,6 +86,7 @@ public record ArtifactDetailResponse(
         view.artifactId(),
         view.artifactType(),
         view.version(),
+        view.parentArtifactId(),
         view.status(),
         view.classification(),
         toUtc(view.createdAt()),

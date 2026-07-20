@@ -17,7 +17,20 @@ public final class WorkflowTransitionTable {
           FailureCategory.RUNNER_TIMEOUT,
           FailureCategory.RUNNER_CRASH,
           FailureCategory.RUNNER_CONTRACT_VIOLATION,
-          FailureCategory.RUNNER_NON_ZERO_EXIT);
+          FailureCategory.RUNNER_NON_ZERO_EXIT,
+          // Story 3h-1 (AC5) — the bounded build auto-fix loop fails the run from EXECUTING with
+          // RUNNER_BUILD_FAILED once the fix cap is exhausted
+          // (BuildStageService.handleBuildFailure).
+          FailureCategory.RUNNER_BUILD_FAILED,
+          // A post-execution workspace secret leak (RunnerBroker.onResult) fails the run from
+          // EXECUTING or INVESTIGATING. Omitting it here made driveWorkflowFailed swallow the
+          // resulting ILLEGAL_TRANSITION, stranding leaked-secret runs in EXECUTING forever.
+          FailureCategory.RUNNER_SECRET_LEAK,
+          // A pre-dispatch testcontainers-infra failure fails the run from EXECUTING/INVESTIGATING.
+          FailureCategory.TESTCONTAINERS_INFRA_FAILED,
+          // Story 4.7 [Review D1] — a recovery rerun-from-step re-enqueue failure compensates by
+          // driving the (INVESTIGATING/EXECUTING) run to FAILED so it stays recoverable.
+          FailureCategory.RECOVERY_DISPATCH_FAILED);
 
   private final Map<WorkflowState, Set<WorkflowState>> allowedTargets;
 
@@ -55,6 +68,16 @@ public final class WorkflowTransitionTable {
     // FAILED was EXECUTING, so RunnerBroker.driveWorkflowFailed silently swallowed the resulting
     // ILLEGAL_TRANSITION for spec-stage runs and they were stranded in INVESTIGATING. The
     // failure-category guard below now admits both EXECUTING and INVESTIGATING as FAILED sources.
+    // Story 4.8 (AC3/AC7) — THE PAUSE SYMMETRY INVARIANT. Every state in
+    // RecoveryService.PAUSABLE_SOURCE_STATES carries a → PAUSED edge here, and the PAUSED row below
+    // carries the matching PAUSED → source return edge, BY CONSTRUCTION: resume (4.5) transitions
+    // back to the typed priorState recorded on the → Paused event, so an inbound edge without its
+    // return edge would strand the run in Paused with a raw ILLEGAL_TRANSITION on resume (4.5's
+    // deferred review finding — closed here). PauseTransitionSymmetryTest pins both directions.
+    // INBOX / PLANNED / SPLIT / WAITING_FOR_DEPENDENCIES are deliberately NOT pausable: an
+    // autonomous driver owns their out-edge (RunDependencyReleaseService fires
+    // WaitingForDependencies → Investigating exactly once; the 3f-7 rollup drives
+    // Split → Completed), and pausing them would silently consume that one-shot trigger.
     put(
         rules,
         WorkflowState.INVESTIGATING,
@@ -63,6 +86,7 @@ public final class WorkflowTransitionTable {
         // resolved runner kind is `manual` (no container launched).
         WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
         WorkflowState.FAILED,
+        WorkflowState.PAUSED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     put(
@@ -71,6 +95,7 @@ public final class WorkflowTransitionTable {
         WorkflowState.EXECUTING,
         WorkflowState.INVESTIGATING,
         WorkflowState.SPLIT,
+        WorkflowState.PAUSED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     put(
@@ -80,6 +105,12 @@ public final class WorkflowTransitionTable {
         // Story 3d-3 (AC2 / R4) — the execution-stage (plan + pr-output) dispatching state parks
         // here when the run's resolved runner kind is `manual`.
         WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+        // Story 3h-2 (AC4) — a CRITICAL lint finding parks the run at the pre-review lint gate
+        // (entered from EXECUTING when the backend-side LINT stage classifies a critical finding).
+        WorkflowState.WAITING_FOR_LINT_APPROVAL,
+        // Story 3h-4 (AC3 / AC4) — a non-auto push mode parks the run at the pre-review delivery
+        // gate instead of pushing (entered from EXECUTING at the current push point).
+        WorkflowState.WAITING_FOR_DELIVERY,
         WorkflowState.FAILED,
         WorkflowState.PAUSED,
         WorkflowState.TAKEN_OVER,
@@ -90,6 +121,7 @@ public final class WorkflowTransitionTable {
         WorkflowState.COMPLETED,
         WorkflowState.EXECUTING,
         WorkflowState.SPLIT,
+        WorkflowState.PAUSED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     // Story 3d-3 (AC2 / R4) — a parked manual run leaves only on operator submission (3d-4 picks
@@ -103,26 +135,75 @@ public final class WorkflowTransitionTable {
         WorkflowState.WAITING_FOR_SPEC_APPROVAL,
         WorkflowState.WAITING_FOR_REVIEW,
         WorkflowState.FAILED,
+        WorkflowState.PAUSED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
-    put(rules, WorkflowState.SPLIT, WorkflowState.COMPLETED);
+    put(rules, WorkflowState.SPLIT, WorkflowState.COMPLETED, WorkflowState.RECONCILED);
     // Story 3f-3 (AC2 / AC6) — the sole out-edge from the dependency-gating state: when the last
     // prerequisite reaches Completed, RunDependencyReleaseService releases the dependent onward
     // into
     // the normal spec-generation path. No direct edges to approval/review/completed states.
-    put(rules, WorkflowState.WAITING_FOR_DEPENDENCIES, WorkflowState.INVESTIGATING);
+    put(
+        rules,
+        WorkflowState.WAITING_FOR_DEPENDENCIES,
+        WorkflowState.INVESTIGATING,
+        WorkflowState.RECONCILED);
+    // Story 3h-2 (AC4 / AC5) — the pre-review lint gate. approve_lint resumes the delivery tail
+    // (-> WaitingForReview); request_lint_fix re-dispatches the implementation runner (->
+    // Executing).
+    // No -> Failed edge: the lint fix loop is operator-driven and never auto-fails (Decision 3).
+    // The
+    // recovery/safety edges (TakenOver / Reconciled) keep a parked run from ever wedging.
+    put(
+        rules,
+        WorkflowState.WAITING_FOR_LINT_APPROVAL,
+        WorkflowState.WAITING_FOR_REVIEW,
+        WorkflowState.EXECUTING,
+        // Story 3h-4 (AC3, Decision 3) — when a lint approval lands on a non-auto push-mode
+        // project, approve_lint routes into the delivery gate rather than resuming the push.
+        WorkflowState.WAITING_FOR_DELIVERY,
+        WorkflowState.PAUSED,
+        WorkflowState.TAKEN_OVER,
+        WorkflowState.RECONCILED);
+    // Story 3h-4 (AC3 / AC4) — the unified delivery gate. approve_delivery advances the run to
+    // WaitingForReview (performing the push in approve mode, or recording the out-of-band delivery
+    // in manual mode). No -> Failed edge: a push failure during approve_delivery rolls the command
+    // back and leaves the run parked for retry (Decision 5). The recovery/safety edges (TakenOver /
+    // Reconciled) keep a parked run from ever wedging.
+    put(
+        rules,
+        WorkflowState.WAITING_FOR_DELIVERY,
+        WorkflowState.WAITING_FOR_REVIEW,
+        WorkflowState.PAUSED,
+        WorkflowState.TAKEN_OVER,
+        WorkflowState.RECONCILED);
     put(rules, WorkflowState.COMPLETED);
     put(
         rules,
         WorkflowState.FAILED,
         WorkflowState.EXECUTING,
         WorkflowState.INVESTIGATING,
+        WorkflowState.PAUSED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
+    // Story 4.8 (AC3/AC7) — the PAUSED return edges: one PAUSED → S edge for EVERY pausable source
+    // S (the symmetry invariant — see the comment above the INVESTIGATING row). resume (4.5)
+    // transitions back to the typed priorState recorded on the → Paused event, so this row MUST
+    // stay
+    // the exact mirror of the inbound → PAUSED edges or resume throws raw ILLEGAL_TRANSITION.
+    // PAUSED → FAILED passes the failure-category guard with a null category (the category rule
+    // applies only to {EXECUTING, INVESTIGATING} → FAILED sources).
     put(
         rules,
         WorkflowState.PAUSED,
         WorkflowState.EXECUTING,
+        WorkflowState.INVESTIGATING,
+        WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+        WorkflowState.WAITING_FOR_REVIEW,
+        WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+        WorkflowState.WAITING_FOR_LINT_APPROVAL,
+        WorkflowState.WAITING_FOR_DELIVERY,
+        WorkflowState.FAILED,
         WorkflowState.TAKEN_OVER,
         WorkflowState.RECONCILED);
     put(rules, WorkflowState.TAKEN_OVER);

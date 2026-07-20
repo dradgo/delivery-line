@@ -62,10 +62,24 @@ for Android and Safari on iOS-class hardware where available.
       primary action is in the **sticky footer** and reachable without hunting at the
       bottom of a long artifact; the rejection rationale dialog is usable on the
       narrow viewport.
-- [ ] **Compare Mode (Epic-4 stub).** The Compare-Mode entry control is present but
-      **disabled** in E2 (`compareEnabled` defaults `false`) — confirm it does not
-      offer a broken side-by-side on mobile. (The full-screen before/after mobile
-      pattern is reserved for Epic 4 — see `RESPONSIVE.md` §3.)
+- [ ] **Compare Mode (mobile bounded state — story 4.21 / UX-DR23).** Open Compare
+      Mode on a **v2+ artifact** (one with a prior revision, so a real baseline
+      compares). Confirm the mobile bounded state per `RESPONSIVE.md` §3:
+  - [ ] It opens as a **dedicated full-screen takeover** (covers the nav rail and the
+        supporting-context panel) — **not** a compressed side-by-side; only one
+        revision is shown at a time.
+  - [ ] The persistent top bar shows the **revision A/B labels**, an always-visible
+        **before/after toggle**, and the **exit (X)** control; the toggle flips which
+        single revision the column shows (spec section-by-section / plan
+        step-by-step). For a PR-output compare the per-file diffs render one file at a
+        time and the before/after toggle is hidden (the diff is inherently
+        before/after).
+  - [ ] The **Previous / Next change** buttons advance through the changed regions in
+        the shown revision (they replace the desktop J/K shortcuts).
+  - [ ] The **exit (X)** returns to the originating review context, preserving the run
+        + artifact selection; the body scrolls beneath the persistent top bar.
+  - [ ] **Tap targets** — the before/after toggle, the prev/next buttons, and the exit
+        control are each ≥ 44×44 CSS px (the `min-h-touch` / `min-w-touch` floor).
 
 ## Pixel-level checks (jsdom cannot measure these — D2/D4)
 
@@ -99,3 +113,11 @@ for Android and Safari on iOS-class hardware where available.
 | _pending_ | Galaxy S23+ / Chrome Android |        |                |
 | _pending_ | iOS-class / Safari          |        |                |
 | _pending_ | Desktop resize / Chrome     |        |                |
+
+> **Compare Mode (mobile bounded state — story 4.21) sign-off note.** The Compare-Mode
+> full-screen takeover is a jsdom-unverifiable surface (D2/D4): the `fixed inset-0`
+> coverage of the nav rail + context panel, the ≥ 44×44 CSS-px tap targets on the
+> before/after toggle + prev/next + exit, and keyboard focus staying trapped within the
+> takeover (no Tab escape into the covered chrome) MUST be confirmed on a Galaxy S23+
+> class device against a **v2+ artifact**. Record the result in the row above and note
+> any deviation from `RESPONSIVE.md` §3.

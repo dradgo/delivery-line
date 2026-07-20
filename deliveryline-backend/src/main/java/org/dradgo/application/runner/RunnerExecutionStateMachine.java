@@ -19,10 +19,12 @@ import org.dradgo.domain.registry.RunnerExecutionStatus;
  *
  * <pre>
  *   pending  → running | completed | failed | timed_out | orphaned | cancelled_for_takeover
- *   queued   → running | cancelled_for_takeover
+ *              | cancelled_for_pause
+ *   queued   → running | cancelled_for_takeover | cancelled_for_pause
  *   running  → completed | failed | timed_out | orphaned | cancelled_for_takeover
+ *              | cancelled_for_pause
  *   timed_out|orphaned → failed (late-result reclassification)
- *   completed|failed|cancelled_for_takeover → (no further transitions)
+ *   completed|failed|cancelled_for_takeover|cancelled_for_pause → (no further transitions)
  * </pre>
  *
  * <p>Story 3.22 (AC5 / Trap T4): {@code queued} was previously ABSENT from the {@code ALLOWED} map
@@ -42,7 +44,10 @@ public final class RunnerExecutionStateMachine {
           RunnerExecutionStatus.FAILED,
           RunnerExecutionStatus.TIMED_OUT,
           RunnerExecutionStatus.ORPHANED,
-          RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER);
+          RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER,
+          // Story 4.8 (AC4) — manual-pause cancellation is terminal for the runner ROW (resume
+          // re-dispatches a FRESH execution; the cancelled row never restarts).
+          RunnerExecutionStatus.CANCELLED_FOR_PAUSE);
 
   static {
     Map<RunnerExecutionStatus, Set<RunnerExecutionStatus>> rules =
@@ -55,14 +60,22 @@ public final class RunnerExecutionStateMachine {
             RunnerExecutionStatus.FAILED,
             RunnerExecutionStatus.TIMED_OUT,
             RunnerExecutionStatus.ORPHANED,
-            RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER));
+            RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER,
+            RunnerExecutionStatus.CANCELLED_FOR_PAUSE));
     // Story 3.22 (Trap T4): queued was absent — add the rule so the guarded
     // markCancelledForTakeover
     // path is legal. The synchronous dequeue (native FOR UPDATE SKIP LOCKED) still flips
     // queued→running outside this guard; this rule covers the takeover (and future guarded) edges.
+    // Story 4.8 (AC4): the guarded markCancelledForPause path flips {pending, queued, running} —
+    // the same dispatch-visible scan set as takeover. AWAITING_MANUAL deliberately has NO
+    // cancelled_for_pause edge: pause is reversible and a cancelled manual park has no re-park
+    // path on resume (Reconciliation 5).
     rules.put(
         RunnerExecutionStatus.QUEUED,
-        EnumSet.of(RunnerExecutionStatus.RUNNING, RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER));
+        EnumSet.of(
+            RunnerExecutionStatus.RUNNING,
+            RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER,
+            RunnerExecutionStatus.CANCELLED_FOR_PAUSE));
     rules.put(
         RunnerExecutionStatus.RUNNING,
         EnumSet.of(
@@ -70,7 +83,8 @@ public final class RunnerExecutionStateMachine {
             RunnerExecutionStatus.FAILED,
             RunnerExecutionStatus.TIMED_OUT,
             RunnerExecutionStatus.ORPHANED,
-            RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER));
+            RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER,
+            RunnerExecutionStatus.CANCELLED_FOR_PAUSE));
     // Story 3d-4 (AC4 / R1): a submitted manual artifact finalizes the parked row to COMPLETED via
     // executionService.recordCompleted. 3d-3 declared only the takeover edge (it just parked rows);
     // 3d-4 is the first code that finalizes one. This is an in-code guard only — the DB CHECK
@@ -88,6 +102,8 @@ public final class RunnerExecutionStateMachine {
     rules.put(RunnerExecutionStatus.ORPHANED, EnumSet.of(RunnerExecutionStatus.FAILED));
     rules.put(
         RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER, EnumSet.noneOf(RunnerExecutionStatus.class));
+    rules.put(
+        RunnerExecutionStatus.CANCELLED_FOR_PAUSE, EnumSet.noneOf(RunnerExecutionStatus.class));
     ALLOWED = Map.copyOf(rules);
   }
 

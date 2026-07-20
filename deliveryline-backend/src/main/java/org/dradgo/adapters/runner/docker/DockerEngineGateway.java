@@ -76,4 +76,10 @@ public interface DockerEngineGateway {
    */
   AutoCloseable attachContainerConsole(
       String containerId, RunnerConsoleStreamPort.RawConsoleSink onChunk, Runnable onEnd);
+
+  /** Creates a user-defined bridge network with the given labels; returns the network id. */
+  String createNetwork(String name, java.util.Map<String, String> labels);
+
+  /** Removes a network by name/id. Idempotent — a missing network is a no-op. */
+  void removeNetwork(String name);
 }

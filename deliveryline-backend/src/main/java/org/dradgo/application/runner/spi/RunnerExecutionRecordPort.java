@@ -183,6 +183,19 @@ public interface RunnerExecutionRecordPort {
       String publicId, OffsetDateTime cancelledAt);
 
   /**
+   * Story 4.8 (AC4) — manual pause: flip a {@code {queued, pending, running}} row to the terminal
+   * {@code cancelled_for_pause} status (state-machine-guarded), stamping {@code completed_at =
+   * cancelledAt}. The reversible sibling of {@link #markCancelledForTakeover}: same
+   * already-terminal-returns-{@code Optional.empty()} idempotent skip, same "the DB flip is the
+   * authoritative stop-dispatch signal" contract. Unlike takeover, an {@code awaiting_manual}
+   * parked row is never flipped (the pause scan set excludes it — pause is reversible and a
+   * cancelled manual park has no re-park path on resume), and the live container (for a previously
+   * {@code running} row) is stopped best-effort POST-commit via the runner adapter — never here.
+   */
+  Optional<RunnerExecutionCancellation> markCancelledForPause(
+      String publicId, OffsetDateTime cancelledAt);
+
+  /**
    * Story 3.2 AC5: marks the row as {@code archived_at = archivedAt} once its on-disk workspace has
    * been deleted by {@code RunnerWorkspaceCleanupJob}. The row stays in its terminal status; only
    * the archive marker advances. Throws {@link org.dradgo.domain.DomainException} when the row is
@@ -261,6 +274,17 @@ public interface RunnerExecutionRecordPort {
    */
   RunnerExecutionSnapshot recordTokenUsage(
       String publicId, Integer inputTokens, Integer outputTokens, Integer totalTokens);
+
+  /**
+   * Story 3h-2 (AC6, FR76) — persist the severity-classified lint findings (an already-serialized,
+   * already-redacted JSON string) onto the LINT execution row's {@code lint_findings} jsonb column.
+   * Like {@link #recordRawOutput} / {@link #recordTokenUsage} this is a METADATA-ONLY update: it
+   * never changes {@code status} (no state-machine guard) and tolerates a still-{@code running} row
+   * (findings are recorded during the LINT capture, before the row is finalized). A {@code null}
+   * payload clears the column. Throws {@link org.dradgo.domain.DomainException} only when the row
+   * is missing.
+   */
+  RunnerExecutionSnapshot recordLintFindings(String publicId, String lintFindingsJson);
 
   /**
    * Story 3d-2 (code-review D1) — pin the reviewed artifact onto a {@link RunnerStage#REVIEW}

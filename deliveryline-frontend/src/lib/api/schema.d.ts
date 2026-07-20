@@ -4,6 +4,166 @@
  */
 
 export interface paths {
+    "/api/v1/artifact-drift/{driftId}/repair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply an operator-driven repair to a detected artifact drift (story 4.16)
+         * @description Operator (workflow_owner) recovery action that resolves a detected artifact_drift_detected row through an explicit, auditable repair (NFR19: no silent overwrite). Records a recovery_actions row + artifact.driftRepaired event and, for the resolving repairs, sets the drift's resolved_at/resolved_by_action_id. Idempotent under Idempotency-Key. A re_verify_checksum that still mismatches leaves the drift open (resolved=false).
+         */
+        post: operations["repairArtifactDrift"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{artifactIdA}/compare/{artifactIdB}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Compute the typed revision delta between two artifact versions of one lineage
+         * @description Returns a typed delta (spec section diff / implementation-plan step diff / prOutput file-level summary) between two artifacts of the same lineage. A = baseline/prior, B = target/current. Idempotent read; no Idempotency-Key. Backs Compare Mode (UX-DR13); full prOutput diff content is lazy-loaded via the per-artifact read using linkedDiffReferences (story 4.20).
+         */
+        get: operations["compareArtifacts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{artifactId}/reconcile-lineage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply an operator-driven lineage-recovery action to an ambiguous artifact (4.16a)
+         * @description Operator (workflow_owner) recovery action that resolves ambiguous artifact lineage through an explicit, auditable decision (NFR19: no silent overwrite). One of reattach_to_existing_lineage (re-parents an orphan onto a chosen leaf), terminate_ambiguous_lineage (flips the lineage terminal so replay cannot revive it), or create_explicit_fork (starts a fresh lineage_recovery branch). Records a recovery_actions row + artifact.lineageReconciled event. Idempotent under Idempotency-Key. The transient ARTIFACT_OPERATION_INTENT_CONFLICT / ARTIFACT_LINEAGE_ALREADY_EXISTS (409) keeps firing on re-ingest until the operator picks one of these actions.
+         */
+        post: operations["reconcileArtifactLineage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit/by-run/{workflowRunId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Query audit history by run
+         * @description Events for a single workflow run, newest-first with cursor pagination. The same read model as `deliveryline audit query --run`.
+         */
+        get: operations["queryAuditByRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit/by-ticket/{ticketRef}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Query audit history by ticket
+         * @description Events across ALL workflow runs linked to a ticket (including retried runs), newest-first with cursor pagination. The same read model as `deliveryline audit query --ticket`.
+         */
+        get: operations["queryAuditByTicket"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integration-conflicts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List integration conflicts
+         * @description Detected integration conflicts, newest-first with cursor pagination, plus global unresolved/resolved counts. Filter by category, integration, run, detection time, and resolved state.
+         */
+        get: operations["listIntegrationConflicts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integration-conflicts/{conflictId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get an integration conflict
+         * @description Full conflict detail: both internal + external state snapshots and safety-ranked reconciliation decision suggestions.
+         */
+        get: operations["getIntegrationConflict"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operator/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List operator fleet-view runs
+         * @description Runs in non-happy operator states (failed/stalled/orphaned/takenover/overridden) across all workflows, with aggregate histograms and cursor pagination. Backs the UI operator queue (story 4.2); the same read model as `deliveryline operator status` (story 4.1).
+         */
+        get: operations["listOperatorRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects": {
         parameters: {
             query?: never;
@@ -102,6 +262,60 @@ export interface paths {
         put?: never;
         /** Run capability-aware connectivity probes (per-check results, HTTP 200) */
         post: operations["testProjectConnection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{projectId}/ticket-query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browse candidate tickets from the project's ticket source (capability-gated) */
+        get: operations["queryProjectTickets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registries/failure-taxonomy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the governed failure-taxonomy registry with operator-facing prose */
+        get: operations["getFailureTaxonomyRegistry"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runner-executions/{rexId}/logs/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a runner execution's redacted log
+         * @description Returns the runner execution's ALREADY-redacted stdout/stderr as a text/plain attachment (story 3.6 post-hoc redaction is the authoritative guarantee; served verbatim, never re-redacted). Served only over the localhost-only binding to the single local operator; gated by the view_runner_logs allowed-action. The download is recorded as a best-effort audit.logDownloaded event. An unavailable log or gate denial returns 404 RUNNER_EXECUTION_NOT_FOUND.
+         */
+        get: operations["downloadRunnerLog"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -236,6 +450,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/approve-delivery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss the pre-review delivery gate (approve_delivery)
+         * @description Operator (workflow_owner) action that dismisses a WaitingForDelivery gate and advances to WaitingForReview. In approve mode it pushes (+ PR per autoCreatePullRequest); in manual mode it records the out-of-band delivery. Idempotent under Idempotency-Key.
+         */
+        post: operations["approveDelivery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflowRunId}/approve-lint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss the pre-review lint gate (approve_lint)
+         * @description Operator (workflow_owner) action that dismisses a WaitingForLintApproval gate and resumes the delivery tail. Idempotent under Idempotency-Key.
+         */
+        post: operations["approveLint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/approve-spec": {
         parameters: {
             query?: never;
@@ -344,6 +598,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/classify-failure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Classify a failed workflow run with a governed failure taxonomy (story 4.14)
+         * @description Operator (workflow_owner) recovery action that stamps a governed FailureTaxonomyValue onto a FAILED run for cross-run pattern analysis (WHY the run failed): writes the workflow_runs.failure_classification triple, records a recovery_actions row + a recovery.failureClassified audit event capturing any prior taxonomy value, and stamps the resolved actor onto the audit trail. Pure metadata — no state transition. Idempotent under Idempotency-Key. Classifying a run that is not in the Failed state surfaces CLASSIFY_NOT_APPLICABLE (409).
+         */
+        post: operations["classifyFailure"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/dependencies": {
         parameters: {
             query?: never;
@@ -408,6 +682,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/failure-classification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the current + prior failure classification for a run */
+        get: operations["getFailureClassification"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflowRunId}/failure-diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the failure-diagnostics deep-dive for a run */
+        get: operations["getFailureDiagnostics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflowRunId}/lint-findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the CPU-lint findings for a workflow run
+         * @description Returns the severity-classified findings the backend-side CPU lint gate produced over the run's implementation output (story 3h-2), with a server-derived state (none/advisory/gated). Advisory only: the operator gate actions ride the allowed-actions matrix, not this read.
+         */
+        get: operations["getLintFindings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/manual-artifact": {
         parameters: {
             query?: never;
@@ -442,6 +770,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Manually pause a workflow run (story 4.13)
+         * @description Operator (workflow_owner) recovery action that pauses a run mid-flight without taking over: halts orchestrator dispatch by flipping every queued + in-flight runner execution to cancelled_for_pause, best-effort stops previously-running containers, records a recovery_actions row + a recovery.paused audit event (preserving the prior state resume will return to), and stamps the resolved actor onto the audit trail. Idempotent under Idempotency-Key. Pausing a run outside the pausable source states (terminal, already Paused, or TakenOver) surfaces PAUSE_NOT_APPLICABLE (409).
+         */
+        post: operations["pause"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflowRunId}/preview-rerun-from-step": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Preview which artifacts/approvals a rerun-from-step would supersede
+         * @description Non-mutating preview of POST .../rerun-from-step: returns the artifacts a rerun to the given safe step would supersede plus the approval it would invalidate, without writing anything. Read-only and idempotent — no Idempotency-Key/actor/role. Backs the Decision Bar recovery_operator rerun dialog (story 4.22).
+         */
+        get: operations["previewRerunFromStep"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/provider-usage": {
         parameters: {
             query?: never;
@@ -456,6 +824,26 @@ export interface paths {
         get: operations["getProviderUsageStatus"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflowRunId}/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reconcile an unresolved integration conflict (story 4.11)
+         * @description Operator (workflow_owner) recovery action that resolves an unresolved integration conflict on a non-terminal run per an explicit ReconciliationDecision (NFR19 — no silent overwrite): records a recovery_actions row + a recovery.reconciled audit event, closes the integration_conflicts row, applies the decision's external-sync side-effects, and stamps the resolved actor onto the audit trail. Idempotent under Idempotency-Key. Reconciling a terminal run surfaces RECONCILE_NOT_APPLICABLE (409).
+         */
+        post: operations["reconcile"];
         delete?: never;
         options?: never;
         head?: never;
@@ -513,6 +901,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflows/{workflowRunId}/request-lint-fix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Feed the lint findings back to the implementation runner (request_lint_fix)
+         * @description Operator (workflow_owner) action that re-dispatches the implementation runner with the lint findings as referenced feedback and re-parks the run at WaitingForLintApproval. Never auto-fails the run. Idempotent under Idempotency-Key.
+         */
+        post: operations["requestLintFix"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflowRunId}/rerun-from-step": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rerun a workflow run from a safe step boundary (story 4.12)
+         * @description Operator (workflow_owner) recovery action that reruns a Failed or WaitingForReview run from a SafeRerunStep boundary (investigating = re-spec, executing = re-implement): invalidates the prior approval at that boundary, records a recovery_actions row + a recovery.rerunFromStep audit event, re-enqueues the runner with a fresh context-bundle version, best-effort reopens the Linear issue, and stamps the resolved actor onto the audit trail. Idempotent under Idempotency-Key. Rerunning from any state outside {Failed, WaitingForReview} surfaces ILLEGAL_TRANSITION (409).
+         */
+        post: operations["rerunFromStep"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflowRunId}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume a paused workflow run (story 4.10)
+         * @description Operator (workflow_owner) recovery action that resumes a Paused run back to its prior executing state: re-dispatches the runner, records a recovery_actions row + a recovery.resumed audit event, and stamps the resolved actor onto the audit trail. Idempotent under Idempotency-Key. Resuming a run that is not Paused surfaces RESUME_NOT_APPLICABLE (409).
+         */
+        post: operations["resume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows/{workflowRunId}/retry-workflow": {
         parameters: {
             query?: never;
@@ -559,7 +1007,7 @@ export interface paths {
         };
         /**
          * Stream a run's latest runner-execution logs (live + historical)
-         * @description Server-Sent Events stream of the run's latest runner execution. While the execution is live the container's logs are followed (docker logs --follow) with BEST-EFFORT per-line redaction; once finished, the persisted post-hoc-redacted log (story 3.6) is replayed — that persisted scan is the AUTHORITATIVE redaction guarantee, the live redaction is best-effort only (ADR 0025). Served only over the localhost-only binding to the single local operator; gated by the view_runner_logs allowed-action. Persists nothing and never mutates runner_executions (ADR 0025 D4). Epic 4 story 4.4 consumes this same viewer (no separate redacted-log download surface). Events: log {stream,line,seq}, status {phase,rex}, end {reason}, error {reason}.
+         * @description Server-Sent Events stream of the run's latest runner execution. While the execution is live the container's logs are followed (docker logs --follow) with BEST-EFFORT per-line redaction; once finished, the persisted post-hoc-redacted log (story 3.6) is replayed — that persisted scan is the AUTHORITATIVE redaction guarantee, the live redaction is best-effort only (ADR 0025). Served only over the localhost-only binding to the single local operator; gated by the view_runner_logs allowed-action. Persists nothing and never mutates runner_executions (ADR 0025 D4). Epic 4 story 4.4 ADDED a separate redacted-log ATTACHMENT download (GET /api/v1/runner-executions/{rexId}/logs/download, downloadRunnerLog) — this reverses the earlier 'no separate download surface' note; this SSE viewer remains the live follow. Events: log {stream,line,seq}, status {phase,rex}, end {reason}, error {reason}.
          */
         get: operations["streamRunnerLogs"];
         put?: never;
@@ -805,6 +1253,26 @@ export interface components {
             /** Format: int32 */
             expectedArtifactVersion: number;
         };
+        /** @description Dismiss the pre-review delivery gate (approve_delivery). */
+        ApproveDeliveryRequest: {
+            /** @description Optional operator note. */
+            reasonText?: string | null;
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
+        };
+        /** @description Dismiss the pre-review lint gate (approve_lint). */
+        ApproveLintRequest: {
+            /** @description Optional operator note. */
+            reasonText?: string | null;
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
+        };
         ApproveSpecRequest: {
             artifactId: string;
             /** Format: int32 */
@@ -874,6 +1342,11 @@ export interface components {
             /** @description prOutput only: the unified diff (size-capped) resolved at ingest; null when the runner produced no resolvable diff. */
             diff?: string | null;
             /**
+             * @description The immediately-prior version's public id (the artifact's lineage parent): the Compare-Mode baseline (story 4.20 OQ-2); null for a v1 artifact or a lineage root.
+             * @example art_abc122
+             */
+            parentArtifactId?: string | null;
+            /**
              * @description prOutput only: the canonical PR reference (org/repo#n) from the active github_pr link (co-present with prState); null when no linked PR.
              * @example octo/hello#42
              */
@@ -893,6 +1366,142 @@ export interface components {
              */
             version?: number;
         };
+        /** @description Apply an operator-driven lineage-recovery action to an ambiguous artifact. */
+        ArtifactLineageReconcileRequest: {
+            /**
+             * @description Action-specific: the art_ id of the lineage leaf to re-parent onto. REQUIRED for reattach_to_existing_lineage (else MISSING_LINEAGE_RECOVERY_FIELD).
+             * @example art_9f3b2c1d
+             */
+            chosenParentArtifactId?: string | null;
+            /**
+             * @description Typed lineage-recovery action. Validated by the service (no @NotBlank) so the typed INVALID_LINEAGE_RECOVERY_ACTION code is reachable.
+             * @example reattach_to_existing_lineage
+             * @enum {string}
+             */
+            lineageAction: "reattach_to_existing_lineage" | "terminate_ambiguous_lineage" | "create_explicit_fork";
+            /** @description Optional operator note explaining the lineage-recovery decision. */
+            reasonText?: string | null;
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
+        };
+        ArtifactLineageReconcileResponse: {
+            correlationId?: string;
+            lineageAction: string;
+            lineageReferenceArtifactId?: string;
+            reconciledEventId?: string;
+            recoveryActionId: string;
+            replayed: boolean;
+            targetArtifactId: string;
+        };
+        /** @description Apply an operator-driven repair to a detected artifact drift. */
+        ArtifactRepairRequest: {
+            /** @description Action-specific: the backup source for restore_from_backup (E4 stub — not yet honored). */
+            backupSource?: string | null;
+            /** @description Action-specific: evidence the operation actually completed. REQUIRED for mark_operation_complete (else MISSING_REPAIR_REQUIRED_FIELD). */
+            completionEvidence?: string | null;
+            /** @description Optional operator note explaining the repair. */
+            reasonText?: string | null;
+            /**
+             * @description Typed repair action. Validated by the service against the drift's category (no @NotBlank) so the typed INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY code is reachable. restore_from_backup is a forward-compat E4 stub (rejected until backup integration lands).
+             * @example mark_corrupted
+             * @enum {string}
+             */
+            repairAction: "mark_operation_failed" | "mark_operation_complete" | "mark_payload_unavailable" | "restore_from_backup" | "mark_corrupted" | "re_verify_checksum";
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
+        };
+        ArtifactRepairResponse: {
+            correlationId?: string;
+            driftId: string;
+            recoveryActionId: string;
+            repairAction: string;
+            repairedEventId?: string;
+            replayed: boolean;
+            resolved: boolean;
+        };
+        ArtifactRevisionSummary: {
+            /**
+             * @description Short-form checksum (<algorithm>:<first 12 hex>); null when unset.
+             * @example SHA-256:9f86d081884c
+             */
+            checksum?: string | null;
+            /** Format: date-time */
+            createdAt?: string;
+            /**
+             * @description Creating actor identity; null when unknown.
+             * @example developer
+             */
+            producedByActor?: string | null;
+            /**
+             * Format: int32
+             * @example 3
+             */
+            version?: number;
+        };
+        /** @description One flat audit event row. */
+        AuditEventRow: {
+            /**
+             * @description Actor identity.
+             * @example system
+             */
+            actorIdentity?: string;
+            /**
+             * @description Actor-type wire string.
+             * @example system
+             */
+            actorType?: string;
+            /** @description Correlation id (from event details), when present. */
+            correlationId?: string | null;
+            /**
+             * @description Event public id.
+             * @example evt_abc123
+             */
+            eventId?: string;
+            /**
+             * @description Event-type wire string.
+             * @example workflow.stateChanged
+             */
+            eventType?: string;
+            /** @description Failure category, when applicable. */
+            failureCategory?: string | null;
+            /** @description Best-effort linked artifact id (from event details), when present. */
+            linkedArtifactId?: string | null;
+            /** @description Prior workflow state, null on non-transition events. */
+            priorState?: string | null;
+            /** @description Redacted reason text. */
+            reason?: string | null;
+            /** @description Resulting workflow state, null on non-transition events. */
+            resultingState?: string | null;
+            /**
+             * Format: date-time
+             * @description Event timestamp (ISO-8601 UTC).
+             */
+            timestamp?: string;
+            /**
+             * @description Owning run public id.
+             * @example run_abc123
+             */
+            workflowRunId?: string;
+        };
+        /** @description Audit history query result with an events page. */
+        AuditQueryResponse: {
+            /** @description The current page of audit events (timestamp DESC). */
+            events?: components["schemas"]["AuditEventRow"][];
+            /** @description Opaque keyset cursor for the next page, or null on the last page. Echo it back as the cursor query param to fetch more. */
+            nextCursor?: string | null;
+            /**
+             * Format: int64
+             * @description Total events matching the filter (independent of limit).
+             * @example 42
+             */
+            totalCount?: number;
+        };
         BatchSubmissionRequest: {
             actorIdentity: string;
             /** @enum {string} */
@@ -911,6 +1520,40 @@ export interface components {
             tickets: components["schemas"]["TicketResult"][];
             /** Format: int32 */
             total: number;
+        };
+        /** @description A candidate ticket returned by a filtered intake browse. */
+        CandidateTicket: {
+            /**
+             * @description Source ticket description; null when the ticket has no body.
+             * @example Totals are rounded half-down instead of half-even.
+             */
+            summary?: string | null;
+            /**
+             * @description Source ticket reference.
+             * @example PROJ-123
+             */
+            ticketRef: string;
+            /**
+             * @description Source ticket headline.
+             * @example Fix the billing rounding error
+             */
+            title: string;
+        };
+        /** @description A page of candidate tickets from a filtered intake browse. */
+        CandidateTicketPage: {
+            /** @description The candidate tickets on this page, newest-updated first. */
+            tickets: components["schemas"]["CandidateTicket"][];
+            /**
+             * Format: int32
+             * @description Total tickets matching the filter at the source, which may exceed the page size.
+             * @example 412
+             */
+            total: number;
+            /**
+             * @description True when the operator is not seeing every match — the page was capped by `limit`, or a ticket could not be mapped and was skipped. Narrow the filter.
+             * @example true
+             */
+            truncated: boolean;
         };
         /** @description A single clarification raised against a spec artifact version. */
         Clarification: {
@@ -958,6 +1601,31 @@ export interface components {
         ClarificationsResponse: {
             clarifications: components["schemas"]["Clarification"][];
         };
+        /** @description Apply a governed failure-taxonomy classification to a failed workflow run. */
+        ClassifyFailureRequest: {
+            /** @description Optional operator note explaining the classification. Genuinely optional — the service stores a blank/absent reason as null (no MISSING_REASON_TEXT). */
+            reasonText?: string | null;
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
+            /**
+             * @description Governed failure-taxonomy wire value recording the operator's judgment of WHY the run failed. Validated by the service (no @NotBlank) so the typed MISSING_/INVALID_/DEPRECATED_TAXONOMY_VALUE codes are reachable.
+             * @example agent_execution_failure
+             * @enum {string}
+             */
+            taxonomyValue: "specification_gap" | "context_gap" | "agent_execution_failure" | "review_rejection" | "integration_or_merge_failure" | "tooling_or_infrastructure_failure";
+        };
+        ClassifyFailureResponse: {
+            classifiedEventId?: string;
+            correlationId?: string;
+            priorTaxonomyValue?: string;
+            recoveryActionId: string;
+            replayed: boolean;
+            taxonomyValue: string;
+            workflowRunId: string;
+        };
         /** @description One connectivity check's tri-state result. */
         ConnectionCheckResult: {
             /**
@@ -980,6 +1648,34 @@ export interface components {
         };
         /** @description Create a new project. */
         CreateProjectRequest: {
+            /**
+             * @description Story 3h-4 — whether a pull/merge request is created wherever the push fires. Default true (pre-3h parity). When false the push still fires but no PR is created/linked.
+             * @example true
+             */
+            autoCreatePullRequest?: boolean;
+            /**
+             * @description Story 3h-1 — optional build command run backend-side in the workspace before review (null/empty = no build, BUILD skipped even if enabled).
+             * @example mvn -q -DskipTests package
+             */
+            buildCommand?: string | null;
+            /**
+             * @description Story 3h-1 — whether the pre-review build-validation stage runs for this project. Default false ⇒ BUILD skipped (pre-3h parity). Requires buildCommand to be set.
+             * @example false
+             */
+            buildStageEnabled?: boolean;
+            /**
+             * @description Story 3h-2 — optional CPU linter commands run backend-side in the workspace before review (null/empty = no lint, LINT skipped even if enabled). Fail-fast: the first command whose exit signals critical findings parks the run.
+             * @example [
+             *       "mvn -q -DskipTests checkstyle:check",
+             *       "npm run lint"
+             *     ]
+             */
+            lintCommands?: string[] | null;
+            /**
+             * @description Story 3h-2 — whether the pre-review CPU lint gate runs for this project. Default false ⇒ LINT skipped (pre-3h-2 parity). Requires lintCommands to be set.
+             * @example false
+             */
+            lintStageEnabled?: boolean;
             /** @example Acme Widgets */
             name: string;
             /**
@@ -987,6 +1683,12 @@ export interface components {
              * @example false
              */
             openspecEnabled?: boolean;
+            /**
+             * @description Story 3h-4 — per-project delivery push mode. 'auto' pushes inline at the delivery tail (pre-3h parity, never parks); 'manual'/'approve' park the run at WaitingForDelivery for an explicit approve_delivery. Default 'auto'.
+             * @example auto
+             * @enum {string|null}
+             */
+            pushMode?: "auto" | "manual" | "approve" | null;
             /** @example github */
             repoHostKind: string;
             /** @example https://github.com/acme/widgets */
@@ -1008,6 +1710,11 @@ export interface components {
             stepRunnerKinds?: {
                 [key: string]: string;
             } | null;
+            /**
+             * @description Task 4 — whether a dockerd Testcontainers sidecar is provisioned for this project's runs. Default false (pre-task-4 parity, no sidecar).
+             * @example false
+             */
+            testcontainersEnabled?: boolean;
             /** @example linear */
             ticketSourceKind: string;
         };
@@ -1034,6 +1741,192 @@ export interface components {
              *     ]
              */
             dependsOnRunIds: string[];
+        };
+        FailureClassificationResponse: {
+            /** Format: date-time */
+            classifiedAt?: string | null;
+            /** @example local-operator */
+            classifiedBy?: string | null;
+            /** @example agent_execution_failure */
+            currentDisplayLabel?: string | null;
+            /** @example agent_execution_failure */
+            currentTaxonomyValue?: string | null;
+            deprecated: boolean;
+            deprecatedReplacementValue?: string | null;
+            priorClassifications: components["schemas"]["PriorClassification"][];
+            /** @example run_abc123 */
+            workflowRunId: string;
+        };
+        FailureDiagnosticsResponse: {
+            /** @example corr_abc123 */
+            correlationId?: string | null;
+            /** @description Why recovery is currently blocked, if it is. */
+            currentBlockingReason?: string | null;
+            /** @example Failed */
+            currentState: string;
+            /** @example execution */
+            failedStage?: string | null;
+            /** @example runner_timeout */
+            failureCategory?: string | null;
+            /** @description Redacted, control-char-stripped failure reason. */
+            failureReason?: string | null;
+            /** Format: date-time */
+            failureTimestamp?: string | null;
+            integrationSyncStatus: components["schemas"]["IntegrationSyncStatusPair"];
+            /** Format: date-time */
+            lastActivityTimestamp?: string | null;
+            /**
+             * @description NFR7 'who acted' — latest governed actor, or 'system'.
+             * @example local-operator
+             */
+            lastActorIdentity: string;
+            /** @example Executing */
+            lastGoodState?: string | null;
+            /** @example Executing */
+            lastSuccessfulStage?: string | null;
+            /** @example retry */
+            nextSafeAction?: string | null;
+            recommendedRecoveryActions: components["schemas"]["RecommendedAction"][];
+            runnerLogReference?: components["schemas"]["FailureRunnerLogReference"];
+        };
+        FailureRunnerLogReference: {
+            /** Format: int64 */
+            byteSize: number;
+            /** @example shareable-redacted */
+            classification: string;
+            /** Format: int32 */
+            redactionCount: number;
+            referencePath: string;
+            /** @example rex_abc123 */
+            runnerExecutionId: string;
+        };
+        FailureTaxonomyRegistryResponse: {
+            values: components["schemas"]["TaxonomyValue"][];
+        };
+        /** @description Full integration-conflict detail with both state snapshots + ranked suggestions. */
+        IntegrationConflictDetail: {
+            /**
+             * @description Conflict category wire string.
+             * @example external_state_advanced
+             * @enum {string}
+             */
+            conflictCategory?: "external_state_advanced" | "external_state_reverted" | "external_resource_removed" | "metadata_drift" | "link_broken";
+            /**
+             * @description Conflict public id.
+             * @example icf_abc123
+             */
+            conflictId?: string;
+            /**
+             * @description External reference (PR/ticket ref).
+             * @example octo/repo#7
+             */
+            externalRef?: string;
+            /** @description External state snapshot as a raw JSON string. */
+            externalStateSnapshot?: string | null;
+            /**
+             * @description Owning integration link public id.
+             * @example ilk_abc123
+             */
+            integrationLinkId?: string;
+            /**
+             * @description Integration type wire string.
+             * @example github_pr
+             */
+            integrationType?: string | null;
+            /** @description Internal state snapshot as a raw JSON string. */
+            internalStateSnapshot?: string | null;
+            /**
+             * Format: date-time
+             * @description Resolution timestamp (ISO-8601 UTC), or null while unresolved.
+             */
+            resolvedAt?: string | null;
+            /** @description Safety-ranked reconciliation decision options (safe first). */
+            suggestedDecisions?: components["schemas"]["SuggestedReconciliationDecision"][];
+            /**
+             * @description Owning run public id.
+             * @example run_abc123
+             */
+            workflowRunId?: string;
+        };
+        /** @description Integration-conflict list page with global unresolved/resolved counts. */
+        IntegrationConflictListResponse: {
+            /** @description The current page of conflicts (detected_at DESC). */
+            conflicts?: components["schemas"]["IntegrationConflictSummary"][];
+            /** @description Opaque keyset cursor for the next page, or null on the last page. Echo it back as the cursor query param to fetch more. */
+            nextCursor?: string | null;
+            /**
+             * Format: int64
+             * @description Total resolved, non-archived conflicts.
+             * @example 12
+             */
+            totalResolved?: number;
+            /**
+             * Format: int64
+             * @description Total currently-unresolved, non-archived conflicts.
+             * @example 3
+             */
+            totalUnresolved?: number;
+            /** @description Unresolved-conflict counts keyed by conflict category (wire strings). */
+            totalUnresolvedByCategory?: {
+                [key: string]: number;
+            };
+            /** @description Unresolved-conflict counts keyed by integration (linear/github/unknown). */
+            totalUnresolvedByIntegration?: {
+                [key: string]: number;
+            };
+        };
+        /** @description One integration-conflict summary row. */
+        IntegrationConflictSummary: {
+            /**
+             * @description Conflict category wire string.
+             * @example external_state_advanced
+             * @enum {string}
+             */
+            conflictCategory?: "external_state_advanced" | "external_state_reverted" | "external_resource_removed" | "metadata_drift" | "link_broken";
+            /**
+             * @description Conflict public id.
+             * @example icf_abc123
+             */
+            conflictId?: string;
+            /**
+             * Format: date-time
+             * @description Detection timestamp (ISO-8601 UTC).
+             */
+            detectedAt?: string;
+            /**
+             * @description External reference (PR/ticket ref).
+             * @example octo/repo#7
+             */
+            externalRef?: string;
+            /**
+             * @description Owning integration link public id.
+             * @example ilk_abc123
+             */
+            integrationLinkId?: string;
+            /**
+             * @description Integration type wire string.
+             * @example github_pr
+             */
+            integrationType?: string | null;
+            /**
+             * @description Owning run public id.
+             * @example run_abc123
+             */
+            workflowRunId?: string;
+        };
+        IntegrationSyncStatus: {
+            /** @example LIN-123 */
+            externalRef?: string | null;
+            /** @example linear */
+            integrationType: string;
+            /** Format: date-time */
+            lastSyncAt?: string | null;
+            /** @example synced */
+            syncStatus: string;
+        };
+        IntegrationSyncStatusPair: {
+            github?: components["schemas"]["IntegrationSyncStatus"];
+            linear?: components["schemas"]["IntegrationSyncStatus"];
         };
         LatestArtifact: {
             /**
@@ -1064,6 +1957,42 @@ export interface components {
              */
             url?: string | null;
         };
+        /** @description A single severity-classified lint finding. */
+        LintFinding: {
+            /** @description Source file (best-effort; null when not parseable). */
+            file?: string | null;
+            /**
+             * Format: int32
+             * @description Source line (best-effort; null when not parseable).
+             */
+            line?: number | null;
+            /** @description Redacted, truncated finding summary. */
+            message?: string | null;
+            /** @description Producing linter/command (null when unknown). */
+            rule?: string | null;
+            /**
+             * @description Finding severity.
+             * @example error
+             * @enum {string}
+             */
+            severity?: "error" | "warning" | "info";
+        };
+        /** @description Severity-classified CPU-lint findings surfaced beside the lint gate. */
+        LintFindings: {
+            /** @description The severity-classified findings; empty when state=none. */
+            findings?: components["schemas"]["LintFinding"][];
+            /**
+             * @description True when at least one critical (error) finding is present.
+             * @example true
+             */
+            hasCritical?: boolean;
+            /**
+             * @description Lint findings state.
+             * @example gated
+             * @enum {string}
+             */
+            state?: "none" | "advisory" | "gated";
+        };
         ManualArtifactSubmissionRequest: {
             /** @description Optional map of contentReference -> base64-encoded artifact bytes (e.g. a spec's markdown), materialized into scratch before ingest. */
             artifactContents?: {
@@ -1092,6 +2021,144 @@ export interface components {
             unavailableReason?: string | null;
             /** @example run_abc123 */
             workflowRunId: string;
+        };
+        /** @description One operator fleet-view run row. */
+        OperatorRunRow: {
+            /** @description Latest event actor identity. */
+            actorIdentity?: string | null;
+            /**
+             * @description Current workflow state wire string.
+             * @example Failed
+             */
+            currentState?: string;
+            /**
+             * @description Escalation marker set on the run.
+             * @example false
+             */
+            escalationMarker?: boolean;
+            /**
+             * @description Latest Failed transition's failure category, when applicable.
+             * @enum {string|null}
+             */
+            failureCategory?: "runner_timeout" | "runner_crash" | "runner_contract_violation" | "runner_non_zero_exit" | "runner_late_result" | "runner_duplicate_result" | "runner_malformed_output" | "runner_secret_leak" | "runner_build_failed" | "orphan" | null;
+            /**
+             * Format: date-time
+             * @description Latest event timestamp (ISO-8601 UTC).
+             */
+            lastTransitionAt?: string | null;
+            /**
+             * @description Active github PR reference.
+             * @example octo/repo#7
+             */
+            linkedPrRef?: string | null;
+            /**
+             * @description Active linear ticket reference.
+             * @example DEL-1234
+             */
+            linkedTicketRef?: string | null;
+            /**
+             * Format: date-time
+             * @description Earliest event timestamp for the run (ISO-8601 UTC).
+             */
+            oldestEventAt?: string | null;
+            /**
+             * @description Server-derived UPPERCASE display signifier (ORPHANED/FAILED/TAKENOVER/STALLED/OVERRIDDEN, else the uppercased state). The UI renders the badge FROM this.
+             * @example STALLED
+             */
+            operatorSignifier?: string;
+            /**
+             * @description Run public id.
+             * @example run_abc123
+             */
+            runId?: string;
+            /**
+             * @description The run's project-level runner-kind override (projects.runner_kind), or null when the project uses the global default or the run has no project.
+             * @enum {string|null}
+             */
+            runnerKind?: "codex" | "claude" | "manual" | null;
+            /**
+             * Format: int32
+             * @description Count of unresolved integration conflicts on the run (story 4.18). The UI renders a non-color "Conflict" chip when > 0, alongside the state signifier.
+             * @example 0
+             */
+            unresolvedConflictCount?: number;
+        };
+        /** @description Operator fleet-view summary with a runs page. */
+        OperatorRunSummary: {
+            /**
+             * @description Histogram of currently-Failed runs by failure-category wire string (full match set); empty unless the state filter includes failed/orphaned.
+             * @example {
+             *       "orphan": 3,
+             *       "runner_build_failed": 2
+             *     }
+             */
+            byFailureCategory?: {
+                [key: string]: number;
+            };
+            /**
+             * @description Histogram of matched runs by current-state wire string (full match set).
+             * @example {
+             *       "Failed": 8,
+             *       "TakenOver": 2
+             *     }
+             */
+            byState?: {
+                [key: string]: number;
+            };
+            /** @description Opaque keyset cursor for the next page, or null on the last page. Echo it back as the cursor query param to fetch more. */
+            nextCursor?: string | null;
+            /**
+             * Format: date-time
+             * @description Oldest matched entry timestamp (ISO-8601 UTC), or null when empty.
+             */
+            oldestEntryAt?: string | null;
+            /** @description The current page of operator rows (lastTransitionAt DESC). */
+            runs?: components["schemas"]["OperatorRunRow"][];
+            /**
+             * Format: int32
+             * @description Total runs matching the filter (independent of limit).
+             * @example 12
+             */
+            total?: number;
+        };
+        PauseResponse: {
+            /** Format: int32 */
+            cancelledInFlightCount: number;
+            /** Format: int32 */
+            cancelledQueuedCount: number;
+            correlationId?: string;
+            currentState: string;
+            pausedEventId?: string;
+            priorState?: string;
+            recoveryActionId: string;
+            replayed: boolean;
+            workflowRunId: string;
+        };
+        /** @description Manually pause a workflow run (pause). */
+        PauseWorkflowRequest: {
+            /** @description Required operator note explaining the pause. Validated by the service (no @NotBlank) so the typed MISSING_REASON_TEXT code is reachable — the defining divergence from ResumeWorkflowRequest.reasonText (genuinely optional) and ReconcileWorkflowRequest.reasonText (@NotBlank). */
+            reasonText: string;
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
+        };
+        PreviewRerunFromStepResponse: {
+            invalidatedApprovalIds: string[];
+            supersededArtifactIds: string[];
+            targetStep: string;
+            workflowRunId: string;
+        };
+        PriorClassification: {
+            /** Format: date-time */
+            classifiedAt: string;
+            /** @example local-operator */
+            classifiedBy?: string | null;
+            /** @example context_gap */
+            displayLabel: string;
+            /** @example context_gap */
+            taxonomyValue: string;
         };
         /** @description RFC 9457 Problem Details payload with DeliveryLine extension fields. */
         ProblemDetailsResponse: {
@@ -1137,6 +2204,15 @@ export interface components {
              *     ]
              */
             allowedActions?: string[];
+            /** @description Story 3h-4 — whether a pull/merge request is created wherever the push fires. */
+            autoCreatePullRequest?: boolean;
+            /**
+             * @description Story 3h-1 — build command run backend-side before review; null = no build.
+             * @example mvn -q -DskipTests package
+             */
+            buildCommand?: string | null;
+            /** @description Story 3h-1 — whether the pre-review build-validation stage runs. */
+            buildStageEnabled?: boolean;
             /**
              * Format: date-time
              * @description Creation timestamp (UTC).
@@ -1150,12 +2226,28 @@ export interface components {
              */
             id?: string;
             /**
+             * @description Story 3h-2 — CPU linter commands run backend-side before review; empty = no lint.
+             * @example [
+             *       "mvn -q -DskipTests checkstyle:check",
+             *       "npm run lint"
+             *     ]
+             */
+            lintCommands?: string[];
+            /** @description Story 3h-2 — whether the pre-review CPU lint gate runs. */
+            lintStageEnabled?: boolean;
+            /**
              * @description Human-readable project name.
              * @example Acme Widgets
              */
             name?: string;
             /** @description Whether OpenSpec is enabled for this project. */
             openspecEnabled?: boolean;
+            /**
+             * @description Story 3h-4 — per-project delivery push mode. 'auto' pushes inline (pre-3h parity); 'manual'/'approve' park at WaitingForDelivery.
+             * @example auto
+             * @enum {string}
+             */
+            pushMode?: "auto" | "manual" | "approve";
             /**
              * @description Repository-host connector kind.
              * @example github
@@ -1197,6 +2289,8 @@ export interface components {
             stepRunnerKinds?: {
                 [key: string]: string;
             };
+            /** @description Task 4 — whether a dockerd Testcontainers sidecar is provisioned for this project's runs. */
+            testcontainersEnabled?: boolean;
             /**
              * @description Ticket-source connector kind.
              * @example linear
@@ -1251,6 +2345,44 @@ export interface components {
              */
             usedFraction?: number | null;
         };
+        RecommendedAction: {
+            /** @example retry */
+            actionType: string;
+            precondition: string;
+            reason: string;
+            /** @example safe */
+            safetyLevel: string;
+        };
+        ReconcileResponse: {
+            correlationId?: string;
+            currentState: string;
+            reconciledEventId?: string;
+            recoveryActionId: string;
+            replayed: boolean;
+            resolvedConflictId: string;
+            workflowRunId: string;
+        };
+        /** @description Reconcile an unresolved integration conflict on a workflow run (reconcile). */
+        ReconcileWorkflowRequest: {
+            /**
+             * @description Public id of the unresolved integration conflict to reconcile.
+             * @example icf_0190000000007000800000000000abcd
+             */
+            conflictId: string;
+            /** @description Required operator note explaining the reconciliation decision. */
+            reasonText: string;
+            /**
+             * @description Reconciliation decision governing how the internal/external state divergence is resolved. Validated by the service (no @NotBlank) so the typed MISSING_/INVALID_RECONCILIATION_DECISION codes are reachable.
+             * @example accept_external_state
+             * @enum {string}
+             */
+            resolutionDecision: "accept_external_state" | "accept_internal_state" | "mark_completed_externally" | "mark_failed_externally";
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
+        };
         RejectImplementationRequest: {
             artifactId: string;
             /** Format: int32 */
@@ -1279,6 +2411,62 @@ export interface components {
              * @example Split the persistence layer out as its own subtask.
              */
             feedbackText: string;
+        };
+        /** @description Feed the lint findings back to the implementation runner (request_lint_fix). */
+        RequestLintFixRequest: {
+            /** @description Optional operator note for the fix re-dispatch. */
+            reasonText?: string | null;
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
+        };
+        /** @description Rerun a governed workflow run from a safe step boundary (rerun-from-step). */
+        RerunFromStepRequest: {
+            /** @description Required operator note explaining the rerun. Validated by the service (no @NotBlank) so the typed MISSING_REASON_TEXT code is reachable — the defining divergence from ReconcileWorkflowRequest.reasonText. */
+            reasonText: string;
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
+            /**
+             * @description Safe step boundary to rerun the run from. Validated by the service (no @NotBlank and not typed as the enum) so the typed INVALID_RERUN_TARGET_STEP code is reachable.
+             * @example investigating
+             * @enum {string}
+             */
+            targetStep: "investigating" | "executing";
+        };
+        RerunFromStepResponse: {
+            correlationId?: string;
+            currentState: string;
+            invalidatedApprovalIds: string[];
+            recoveryActionId: string;
+            replayed: boolean;
+            rerunEventId?: string;
+            runnerExecutionId?: string;
+            supersededArtifactIds: string[];
+            workflowRunId: string;
+        };
+        ResumeResponse: {
+            correlationId?: string;
+            currentState?: string;
+            recoveryActionId: string;
+            replayed: boolean;
+            resumedEventId?: string;
+            runnerExecutionId?: string;
+            workflowRunId: string;
+        };
+        /** @description Resume a paused workflow run (resume). */
+        ResumeWorkflowRequest: {
+            /** @description Optional operator note. */
+            reasonText?: string | null;
+            /**
+             * @description Governing role; must be 'workflow_owner'.
+             * @example workflow_owner
+             */
+            role: string;
         };
         RetryWorkflowRequest: {
             actorIdentity: string;
@@ -1328,6 +2516,72 @@ export interface components {
              * @example runner_crash
              */
             unavailableReason?: string | null;
+        };
+        /** @description Typed delta between two artifact versions of one lineage. */
+        RevisionDelta: {
+            /** @example spec */
+            artifactType?: string;
+            changes?: components["schemas"]["RevisionDeltaChange"][];
+            /** @description prOutput only: [artifactIdA, artifactIdB] so the UI can lazy-load the full diff via the per-artifact read; null for spec/implementationPlan. */
+            linkedDiffReferences?: string[] | null;
+            /** @description True when the two artifacts are byte-equal or differ only in non-semantic whitespace (spec/plan). */
+            noMeaningfulDiff?: boolean;
+            revisionA?: components["schemas"]["ArtifactRevisionSummary"];
+            revisionB?: components["schemas"]["ArtifactRevisionSummary"];
+            summary?: components["schemas"]["RevisionDeltaSummary"];
+        };
+        RevisionDeltaChange: {
+            /**
+             * Format: int32
+             * @description prOutput only: added line count.
+             */
+            addedLines?: number | null;
+            /**
+             * @description Variant discriminator: markdown | planStep | file.
+             * @example markdown
+             */
+            blockType?: string;
+            /** @example modified */
+            changeKind?: string;
+            /**
+             * Format: int32
+             * @description implementationPlan only: revision-B step index.
+             */
+            currentStepOrder?: number | null;
+            /** @description implementationPlan only: revision-B step text. */
+            currentStepText?: string | null;
+            /** @description spec only: revision-B section body. */
+            currentText?: string | null;
+            /** @description prOutput only: changed file path. */
+            filePath?: string | null;
+            /**
+             * Format: int32
+             * @description implementationPlan only: revision-A step index.
+             */
+            priorStepOrder?: number | null;
+            /** @description implementationPlan only: revision-A step text. */
+            priorStepText?: string | null;
+            /** @description spec only: revision-A section body. */
+            priorText?: string | null;
+            /**
+             * Format: int32
+             * @description prOutput only: removed line count.
+             */
+            removedLines?: number | null;
+            /** @description spec only: heading trail. */
+            sectionPath?: string | null;
+            /** @description implementationPlan only: positional step id. */
+            stepId?: string | null;
+        };
+        RevisionDeltaSummary: {
+            /** Format: int32 */
+            addedCount?: number;
+            /** Format: int32 */
+            changedRegionCount?: number;
+            /** Format: int32 */
+            modifiedCount?: number;
+            /** Format: int32 */
+            removedCount?: number;
         };
         /** @description A run's prerequisites, dependents, and blocked-on subset in the dependency DAG. */
         RunDependencies: {
@@ -1533,6 +2787,21 @@ export interface components {
             currentState?: string;
             workflowRunId?: string;
         };
+        /** @description A reconciliation decision option with a coarse safety label. */
+        SuggestedReconciliationDecision: {
+            /**
+             * @description Reconciliation decision wire string.
+             * @example accept_external_state
+             * @enum {string}
+             */
+            decision?: "accept_external_state" | "accept_internal_state" | "mark_completed_externally" | "mark_failed_externally";
+            /**
+             * @description Coarse safety label.
+             * @example safe
+             * @enum {string}
+             */
+            safety?: "safe" | "risky";
+        };
         TakeoverRequest: {
             reasonText: string;
             reviewerRole?: string;
@@ -1556,6 +2825,17 @@ export interface components {
             correlationId?: string;
             reasonText?: string;
         };
+        TaxonomyValue: {
+            deprecated: boolean;
+            description: string;
+            examples: string[];
+            /** @example Agent Execution Failure */
+            humanReadableName: string;
+            /** @description Replacement wire value when this value is deprecated, else absent. */
+            replacementValue?: string | null;
+            /** @example agent_execution_failure */
+            value: string;
+        };
         /** @description Per-check connectivity probe results (HTTP 200). */
         TestConnection: {
             /** @description One result per connectivity check. */
@@ -1575,6 +2855,34 @@ export interface components {
         };
         /** @description Edit a project's mutable configuration. */
         UpdateProjectRequest: {
+            /**
+             * @description Story 3h-4 — whether a pull/merge request is created wherever the push fires, full-replace on update. Default true (pre-3h parity).
+             * @example true
+             */
+            autoCreatePullRequest?: boolean;
+            /**
+             * @description Story 3h-1 — optional build command run backend-side in the workspace before review (null/empty = no build, BUILD skipped even if enabled).
+             * @example mvn -q -DskipTests package
+             */
+            buildCommand?: string | null;
+            /**
+             * @description Story 3h-1 — whether the pre-review build-validation stage runs for this project. Default false ⇒ BUILD skipped (pre-3h parity). Requires buildCommand to be set.
+             * @example false
+             */
+            buildStageEnabled?: boolean;
+            /**
+             * @description Story 3h-2 — optional CPU linter commands run backend-side in the workspace before review, full-replace on update (null/empty clears all lint commands, LINT skipped even if enabled).
+             * @example [
+             *       "mvn -q -DskipTests checkstyle:check",
+             *       "npm run lint"
+             *     ]
+             */
+            lintCommands?: string[] | null;
+            /**
+             * @description Story 3h-2 — whether the pre-review CPU lint gate runs for this project. Default false ⇒ LINT skipped (pre-3h-2 parity). Requires lintCommands to be set.
+             * @example false
+             */
+            lintStageEnabled?: boolean;
             /** @example Acme Widgets */
             name: string;
             /**
@@ -1582,6 +2890,12 @@ export interface components {
              * @example false
              */
             openspecEnabled?: boolean;
+            /**
+             * @description Story 3h-4 — per-project delivery push mode, editable here. 'auto' pushes inline (pre-3h parity); 'manual'/'approve' park the run at WaitingForDelivery. Default 'auto'.
+             * @example auto
+             * @enum {string|null}
+             */
+            pushMode?: "auto" | "manual" | "approve" | null;
             /** @example github */
             repoHostKind: string;
             /** @example https://github.com/acme/widgets */
@@ -1606,6 +2920,11 @@ export interface components {
             stepRunnerKinds?: {
                 [key: string]: string;
             } | null;
+            /**
+             * @description Task 4 — whether a dockerd Testcontainers sidecar is provisioned for this project's runs, editable here. Default false (pre-task-4 parity).
+             * @example false
+             */
+            testcontainersEnabled?: boolean;
             /** @example linear */
             ticketSourceKind: string;
         };
@@ -1621,6 +2940,27 @@ export interface components {
         WorkflowDetail: {
             /** @description Child workflow run public ids for this parent run. */
             childRunIds?: string[];
+            /**
+             * @description Whether the run's repository host enforces required status checks (RepositoryHostCapabilities.supportsRequiredStatusChecks, story 3h-5 AC3). False when the host is unknown.
+             * @example true
+             */
+            ciChecksEnforced?: boolean;
+            /**
+             * Format: int32
+             * @description How many bounded CI fix attempts this run has accumulated (story 3h-5). 0 when no red CI has been investigated.
+             * @example 0
+             */
+            ciFixLoopCount?: number;
+            /**
+             * @description The pushed commit SHA the CI verdict was read for (story 3h-5). Null when never stamped.
+             * @example a1b2c3d4
+             */
+            ciHeadSha?: string | null;
+            /**
+             * @description Latest CI build verdict for this run's pushed commit (story 3h-5, FR79): pending/success/failure/neutral/unavailable. Null when the run was never pushed or the repo host does not support CI status reads.
+             * @example pending
+             */
+            ciStatus?: string | null;
             currentActorIdentity?: string;
             currentActorType?: string;
             /** @example WaitingForSpecApproval */
@@ -1841,6 +3181,396 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    repairArtifactDrift: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                driftId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactRepairRequest"];
+            };
+        };
+        responses: {
+            /** @description Repair applied (or idempotent replay). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRepairResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY, MISSING_REPAIR_REQUIRED_FIELD. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description DRIFT_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description DRIFT_ALREADY_RESOLVED or IDEMPOTENCY_KEY_CONFLICT. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    compareArtifacts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Baseline/prior artifact public id.
+                 * @example art_abc123
+                 */
+                artifactIdA: string;
+                /**
+                 * @description Target/current artifact public id.
+                 * @example art_def456
+                 */
+                artifactIdB: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Typed revision delta. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevisionDelta"];
+                };
+            };
+            /** @description Malformed artifact id (INVALID_ID_PREFIX) or the two ids are not on one lineage (ARTIFACT_LINEAGE_MISMATCH). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such artifact for either id (ARTIFACT_RECORD_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description One of the artifacts is not available / its payload could not be read (ARTIFACT_PAYLOAD_UNAVAILABLE). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    reconcileArtifactLineage: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                artifactId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactLineageReconcileRequest"];
+            };
+        };
+        responses: {
+            /** @description Reconcile applied (or idempotent replay). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactLineageReconcileResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, INVALID_LINEAGE_RECOVERY_ACTION, MISSING_LINEAGE_RECOVERY_FIELD, ARTIFACT_LINEAGE_MISMATCH. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description ARTIFACT_RECORD_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description ARTIFACT_INVALID_STATE_TRANSITION, IDEMPOTENCY_KEY_CONFLICT, or WORKFLOW_RUN_TERMINAL. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    queryAuditByRun: {
+        parameters: {
+            query?: {
+                /** @description Event-type filter (multi-valued). Empty disables the filter. */
+                eventType?: string[];
+                /** @description Actor identity exact-match filter. */
+                actor?: string;
+                /** @description Lower time bound (inclusive), ISO-8601. */
+                since?: string;
+                /** @description Upper time bound (inclusive), ISO-8601. */
+                until?: string;
+                /** @description Max events per page (clamped to [1,200]). Defaults to 50. */
+                limit?: number;
+                /** @description Opaque keyset cursor from a prior response's nextCursor. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Audit events page for the run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditQueryResponse"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX), filter (INVALID_AUDIT_FILTER), or time range (INVALID_TIME_RANGE). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    queryAuditByTicket: {
+        parameters: {
+            query?: {
+                /** @description Event-type filter (multi-valued). Empty disables the filter. */
+                eventType?: string[];
+                /** @description Actor identity exact-match filter. */
+                actor?: string;
+                /** @description Lower time bound (inclusive), ISO-8601. */
+                since?: string;
+                /** @description Upper time bound (inclusive), ISO-8601. */
+                until?: string;
+                /** @description Max events per page (clamped to [1,200]). Defaults to 50. */
+                limit?: number;
+                /** @description Opaque keyset cursor from a prior response's nextCursor. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Ticket external ref, e.g. LIN-123.
+                 * @example LIN-123
+                 */
+                ticketRef: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Audit events page for the ticket. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditQueryResponse"];
+                };
+            };
+            /** @description Malformed filter (INVALID_AUDIT_FILTER) or bad time range (INVALID_TIME_RANGE). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    listIntegrationConflicts: {
+        parameters: {
+            query?: {
+                /** @description Conflict-category filter. */
+                category?: string;
+                /** @description Integration filter. */
+                integration?: "linear" | "github";
+                /**
+                 * @description Owning run public id filter.
+                 * @example run_abc123
+                 */
+                workflowRunId?: string;
+                /** @description Lower detection-time bound (inclusive), ISO-8601. */
+                since?: string;
+                /** @description Resolved filter: omitted = both, false = unresolved only, true = resolved only. */
+                resolved?: boolean;
+                /** @description Max conflicts per page (clamped to [1,200]). Defaults to 50. */
+                limit?: number;
+                /** @description Opaque keyset cursor from a prior response's nextCursor. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Integration-conflict list page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationConflictListResponse"];
+                };
+            };
+            /** @description Malformed filter or cursor (INVALID_COMMAND_PAYLOAD). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    getIntegrationConflict: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Conflict public id.
+                 * @example icf_abc123
+                 */
+                conflictId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The integration conflict. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationConflictDetail"];
+                };
+            };
+            /** @description No such conflict (CONFLICT_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    listOperatorRuns: {
+        parameters: {
+            query?: {
+                /** @description Operator-state filter tokens (multi-valued: failed/stalled/orphaned/takenover/overridden). Empty defaults to failed,stalled,orphaned. */
+                state?: string[];
+                /** @description Failure-category filter tokens (multi-valued, from the registry). Empty disables the filter. */
+                failureCategory?: string[];
+                /** @description Relative recent-activity window token (e.g. 1h, 24h, 7d). Omit for no window. */
+                since?: string;
+                /** @description Runner-kind filter tokens (multi-valued: codex/claude/manual). Empty disables the filter. */
+                runnerKind?: string[];
+                /** @description Max rows per page (clamped to [1,500]). Defaults to 100. */
+                limit?: number;
+                /** @description Opaque keyset cursor from a prior response's nextCursor. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Operator fleet summary (object carrier with aggregate + runs page + cursor). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorRunSummary"];
+                };
+            };
+        };
+    };
     listProjects: {
         parameters: {
             query?: never;
@@ -2173,6 +3903,145 @@ export interface operations {
             };
         };
     };
+    queryProjectTickets: {
+        parameters: {
+            query?: {
+                /** @description Source assignee identity (JIRA Cloud: an accountId, or an email the instance resolves). Opaque — passed to the source verbatim. */
+                assignee?: string;
+                /** @description Repeatable/CSV component names; a ticket matching any of them is returned. */
+                components?: string[];
+                /** @description Source workflow-state name, e.g. "To Do". */
+                state?: string;
+                /** @description Maximum tickets to return (1..200). */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of candidate tickets plus the source's total match count and a truncated flag. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidateTicketPage"];
+                };
+            };
+            /** @description INVALID_COMMAND_PAYLOAD (limit out of range, or too many components). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description PROJECT_NOT_FOUND, or TICKET_QUERY_NOT_SUPPORTED when the project's ticket source cannot be browsed. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description TICKET_QUERY_SOURCE_FAILED — the ticket source answered, but unusably (expired or insufficiently-scoped credential, malformed response). Not retryable. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description TICKET_QUERY_SOURCE_UNAVAILABLE — the ticket source was unreachable or answered transiently (timeout, 429, 5xx). Retryable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    getFailureTaxonomyRegistry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The failure-taxonomy registry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailureTaxonomyRegistryResponse"];
+                };
+            };
+        };
+    };
+    downloadRunnerLog: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Actor role for action gating; view_runner_logs is role-agnostic in the runner-execution states, so the default resolves the gate for any operator.
+                 * @example workflow_owner
+                 */
+                actorRole?: "product_reviewer" | "workflow_owner" | "developer";
+            };
+            header?: {
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                /**
+                 * @description Runner execution public id, e.g. rex_abc123.
+                 * @example rex_abc123
+                 */
+                rexId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The redacted runner log as a text/plain attachment. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": unknown;
+                };
+            };
+            /** @description Malformed runner-execution id (INVALID_ID_PREFIX). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such runner execution, no captured/servable log, or view_runner_logs not allowed (RUNNER_EXECUTION_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
     getRunnerQueueStatus: {
         parameters: {
             query?: {
@@ -2454,6 +4323,118 @@ export interface operations {
             };
             /** @description No such run (RUN_NOT_FOUND). */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    approveDelivery: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveDeliveryRequest"];
+            };
+        };
+        responses: {
+            /** @description Gate dismissed; resulting state returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowStateChangeResponse"];
+                };
+            };
+            /** @description INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, or MISSING/INVALID_IDEMPOTENCY_KEY. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_KEY_CONFLICT or ILLEGAL_TRANSITION. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    approveLint: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveLintRequest"];
+            };
+        };
+        responses: {
+            /** @description Gate dismissed; resulting state returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowStateChangeResponse"];
+                };
+            };
+            /** @description INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, or MISSING/INVALID_IDEMPOTENCY_KEY. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_KEY_CONFLICT or ILLEGAL_TRANSITION. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2796,6 +4777,62 @@ export interface operations {
             };
         };
     };
+    classifyFailure: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClassifyFailureRequest"];
+            };
+        };
+        responses: {
+            /** @description Classification recorded (or idempotent replay). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassifyFailureResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_TAXONOMY_VALUE, INVALID_TAXONOMY_VALUE, DEPRECATED_TAXONOMY_VALUE. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description CLASSIFY_NOT_APPLICABLE (run not in the Failed state) or IDEMPOTENCY_KEY_CONFLICT. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
     getRunDependencies: {
         parameters: {
             query?: never;
@@ -2990,6 +5027,138 @@ export interface operations {
             };
         };
     };
+    getFailureClassification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current + prior classification for the run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailureClassificationResponse"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    getFailureDiagnostics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Failure diagnostics for the run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailureDiagnosticsResponse"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    getLintFindings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lint findings state (+ findings when present). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LintFindings"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
     submitManualArtifact: {
         parameters: {
             query?: never;
@@ -3108,6 +5277,121 @@ export interface operations {
             };
         };
     };
+    pause: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PauseWorkflowRequest"];
+            };
+        };
+        responses: {
+            /** @description Pause recorded; run is Paused with in-flight + queued runner work cancelled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PauseResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_REASON_TEXT. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description PAUSE_NOT_APPLICABLE (wrong/terminal source state) or IDEMPOTENCY_KEY_CONFLICT. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    previewRerunFromStep: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Safe step boundary to rerun into. Recognized values are investigating and executing; any other value returns 400 INVALID_RERUN_TARGET_STEP.
+                 * @example investigating
+                 */
+                targetStep?: "investigating" | "executing";
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Run public id, e.g. run_abc123.
+                 * @example run_abc123
+                 */
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Preview of superseded artifacts + approvals. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewRerunFromStepResponse"];
+                };
+            };
+            /** @description Malformed run id (INVALID_ID_PREFIX) or invalid target step (INVALID_RERUN_TARGET_STEP). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description Run is not in a rerun-eligible source state (ILLEGAL_TRANSITION; allowed sources: Failed, WaitingForReview). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
     getProviderUsageStatus: {
         parameters: {
             query?: {
@@ -3156,6 +5440,62 @@ export interface operations {
             };
             /** @description No such run (RUN_NOT_FOUND). */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    reconcile: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReconcileWorkflowRequest"];
+            };
+        };
+        responses: {
+            /** @description Reconcile recorded; the integration conflict is resolved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReconcileResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_RECONCILIATION_DECISION, INVALID_RECONCILIATION_DECISION. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND, CONFLICT_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RECONCILE_NOT_APPLICABLE, CONFLICT_ALREADY_RESOLVED, or IDEMPOTENCY_KEY_CONFLICT. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3329,6 +5669,174 @@ export interface operations {
             };
             /** @description ARTIFACT_PAYLOAD_UNAVAILABLE. */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    requestLintFix: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RequestLintFixRequest"];
+            };
+        };
+        responses: {
+            /** @description Fix re-dispatched; resulting state returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowStateChangeResponse"];
+                };
+            };
+            /** @description INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, or MISSING/INVALID_IDEMPOTENCY_KEY. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description No such run (RUN_NOT_FOUND). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description IDEMPOTENCY_KEY_CONFLICT or ILLEGAL_TRANSITION. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    rerunFromStep: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RerunFromStepRequest"];
+            };
+        };
+        responses: {
+            /** @description Rerun recorded; run is at the requested safe step boundary. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RerunFromStepResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, INVALID_RERUN_TARGET_STEP, MISSING_REASON_TEXT. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description ILLEGAL_TRANSITION (wrong source state, incl. terminal) or IDEMPOTENCY_KEY_CONFLICT. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+        };
+    };
+    resume: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Actor-Identity"?: string;
+            };
+            path: {
+                workflowRunId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResumeWorkflowRequest"];
+            };
+        };
+        responses: {
+            /** @description Resume recorded; run is back at its prior executing state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResumeResponse"];
+                };
+            };
+            /** @description MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RUN_NOT_FOUND. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetailsResponse"];
+                };
+            };
+            /** @description RESUME_NOT_APPLICABLE, IDEMPOTENCY_KEY_CONFLICT, or ILLEGAL_TRANSITION. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

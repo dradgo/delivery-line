@@ -230,6 +230,38 @@ mutation of `/workspace/repo`, no interactive install** (Trap T-NO-RUNTIME-MUTAT
 non-mutating prompt nudge is deferred to a future story once headless activation is confirmed under
 real execution (story 3.8).
 
+### JDK + Maven toolchain
+
+Both the Claude and Codex runner images carry a pinned **JDK 21** (Temurin, `eclipse-temurin:21-jdk`)
+and **Maven 3.9** (pinned image `maven:3.9-eclipse-temurin-21`), installed in both the production build
+and the conformance-test (`INSTALL_CLAUDE_CLI=false`) build. These tooling components enable agent
+plans to shell out and run real `mvn` builds and compilation tasks within the container.
+
+**Version pinning + upgrade procedure:**
+
+To upgrade the JDK or Maven base images:
+
+```bash
+docker pull eclipse-temurin:21-jdk           # check latest patch / refresh
+docker pull maven:3.9-eclipse-temurin-21     # check latest patch / refresh
+# Verify the pinned versions are current:
+docker run --rm eclipse-temurin:21-jdk java -version
+docker run --rm maven:3.9-eclipse-temurin-21 mvn -version
+# bump ARG JAVA_IMAGE and ARG MAVEN_IMAGE in runners/claude/Dockerfile (mirror runners/codex/Dockerfile — same PR!)
+docker compose build claude-runner
+docker run --rm deliveryline/claude-runner:latest --self-test   # confirm both tooling versions report
+```
+
+**Shared Maven cache (`/workspace/.m2`):**
+
+A persistent Maven local repository is optionally mounted at `/workspace/.m2` (host path configured as
+`{deliveryline.home}/maven-cache`, enabled by the backend when `deliveryline.runner.maven-cache-enabled=true`).
+When present, the cache survives across runs, avoiding repeated dependency downloads. If the mount is
+absent, Maven falls back to a container-local ephemeral repo and re-downloads on each run.
+
+Per the RUNNER_CONTRACT change rule, a JDK or Maven version bump edits **both** runner Dockerfiles + the
+READMEs in the same PR.
+
 ### Image size / layer count (AC9)
 
 Production image (`INSTALL_CLAUDE_CLI=true`, real CLIs): **≈ 167 MB, 12 layers** (≈ 166 MB before

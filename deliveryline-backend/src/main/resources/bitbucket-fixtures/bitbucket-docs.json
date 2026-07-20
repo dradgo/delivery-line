@@ -1,0 +1,22 @@
+{
+  "repository": {
+    "repoRef": "BB-103",
+    "fullName": "deliveryline/runbooks",
+    "defaultBranch": "main",
+    "url": "https://bitbucket.org/deliveryline/runbooks"
+  },
+  "pullRequest": {
+    "prRef": "PR-103",
+    "repoRef": "BB-103",
+    "number": 103,
+    "sourceBranch": "docs/recovery-runbook",
+    "state": "open",
+    "url": "https://bitbucket.org/deliveryline/runbooks/pull-requests/103",
+    "createdAt": "2026-04-23T11:45:00Z"
+  },
+  "branch": {
+    "repoRef": "BB-103",
+    "name": "docs/recovery-runbook",
+    "headSha": "c3d4e5f60718293a4b5c6d7e8f90011223344556"
+  }
+}

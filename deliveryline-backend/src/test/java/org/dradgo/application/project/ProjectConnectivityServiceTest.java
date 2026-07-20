@@ -93,7 +93,7 @@ class ProjectConnectivityServiceTest {
     when(ticketSource.getCapabilities())
         .thenReturn(TicketSourceCapabilities.noCreation(false, false, false));
     when(repoHost.getCapabilities())
-        .thenReturn(new RepositoryHostCapabilities(false, false, false, false, false));
+        .thenReturn(new RepositoryHostCapabilities(false, false, false, false, false, false));
 
     TestConnectionResult result = service.testConnection(PROJECT_ID);
 

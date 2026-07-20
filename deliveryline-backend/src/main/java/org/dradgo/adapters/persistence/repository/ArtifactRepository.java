@@ -40,6 +40,24 @@ public interface ArtifactRepository extends JpaRepository<ArtifactEntity, Long> 
   String findRunnerExecutionIdForArtifact(@Param("artifactId") String artifactId);
 
   /**
+   * Story 4.19 (AC2 / Reconciliation 7): resolve the actor identity that produced the artifact,
+   * read from the artifact's creation event ({@code workflow_events.actor_identity} via {@code
+   * linked_event_id}). Single-statement native query — no entity hydration. Mirrors {@link
+   * #findRunnerExecutionIdForArtifact(String)}.
+   */
+  @Query(
+      value =
+          """
+          SELECT we.actor_identity
+            FROM artifacts a
+            JOIN workflow_events we ON we.id = a.linked_event_id
+           WHERE a.public_id = :artifactId
+           LIMIT 1
+          """,
+      nativeQuery = true)
+  String findProducingActorForArtifact(@Param("artifactId") String artifactId);
+
+  /**
    * Story 1.12c (AC1+AC2): bounded single-statement leaf resolver.
    *
    * <p>Replaces the legacy unbounded sibling load + JVM-side parent-chain walk in {@code
@@ -100,4 +118,53 @@ public interface ArtifactRepository extends JpaRepository<ArtifactEntity, Long> 
       @Param("workflowRunPublicId") String workflowRunPublicId,
       @Param("artifactType") String artifactType,
       @Param("lineageMemberPublicId") String lineageMemberPublicId);
+
+  /**
+   * Story 4.16a [Review D1]: does the given parent artifact have any non-archived child? Used by
+   * {@code reattachToLineage} to reject re-parenting onto a NON-leaf — attaching to a parent that
+   * already has an active child would create two active leaves for the same {@code (run,
+   * artifact_type)}, re-introducing the very lineage ambiguity the reconcile action exists to
+   * resolve. Traverses the {@code parentArtifact} self-association by the parent's {@code
+   * public_id}; {@code archived_at IS NULL} keeps tombstoned children invisible.
+   */
+  @Query(
+      "select count(a) > 0 from ArtifactEntity a"
+          + " where a.parentArtifact.publicId = :parentPublicId and a.archivedAt is null")
+  boolean hasActiveChild(@Param("parentPublicId") String parentPublicId);
+
+  /**
+   * Story 4.15 (AC1): bounded, KEYSET-PAGED oldest-first scan of {@code available} artifacts older
+   * than {@code now() - minAgeMinutes}, for the artifact-drift-detection sweep. DB-side staleness
+   * (both sides on the database clock — no JVM-derived cutoff) mirrors {@code
+   * ArtifactOperationRepository.findPendingOlderThan}. Backed by the V45 partial index {@code
+   * idx_artifacts_status_created_at WHERE status='available'}; {@code SELECT a.*} hydrates the full
+   * entity so the caller can map it via {@code ArtifactEntityMapper}.
+   *
+   * <p><strong>Keyset cursor (story 4.15 review D1).</strong> The sweep is detection-only — it
+   * never flips {@code status}, so a clean {@code available} artifact stays {@code available}
+   * forever. Without a cursor an {@code ORDER BY created_at LIMIT n} scan re-reads the same oldest
+   * {@code n} every tick and NEVER reaches drift on newer artifacts once more than {@code n} are
+   * eligible. {@code (afterCreatedAt, afterPublicId)} is the exclusive keyset cursor the caller
+   * advances each tick ({@code NULL} = start from the oldest); the {@code (created_at, public_id)}
+   * tuple ordering matches so successive ticks walk the whole eligible set. {@code public_id}
+   * (unique) is the stable tiebreak.
+   */
+  @Query(
+      value =
+          """
+          SELECT a.*
+            FROM artifacts a
+           WHERE a.status = 'available'
+             AND a.created_at < now() - (:minAgeMinutes * interval '1 minute')
+             AND (cast(:afterCreatedAt as timestamptz) is null
+                  OR (a.created_at, a.public_id) > (:afterCreatedAt, :afterPublicId))
+           ORDER BY a.created_at ASC, a.public_id ASC
+           LIMIT :batchLimit
+          """,
+      nativeQuery = true)
+  java.util.List<ArtifactEntity> findAvailableCreatedBefore(
+      @Param("minAgeMinutes") long minAgeMinutes,
+      @Param("batchLimit") int batchLimit,
+      @Param("afterCreatedAt") java.time.OffsetDateTime afterCreatedAt,
+      @Param("afterPublicId") String afterPublicId);
 }

@@ -33,6 +33,7 @@ network); this never adds a backend↔runner channel — the file mounts remain 
 | `/workspace/input`  | read-only  | `context-bundle.v1.json` (the input bundle the backend writes) |
 | `/workspace/output` | read-write | `runner-result.v1.json` (the result the entrypoint MUST write) |
 | `/workspace/logs`   | read-write | `runner.stdout`, `runner.stderr` (raw CLI output) |
+| `/workspace/.m2`    | read-write | Shared Maven local repository (host `{deliveryline.home}/maven-cache`), mounted only when `deliveryline.runner.maven-cache-enabled` is true. Optional: absent → Maven falls back to a container-local (ephemeral) repo. |
 
 The entrypoint **never** writes outside `/workspace/output` and `/workspace/logs`.
 
@@ -169,6 +170,35 @@ rule, adding/bumping agent-side tooling (an OpenSpec bump or a superpowers re-ve
 Dockerfiles + entrypoints + READMEs in the same PR. (Headless single-prompt **activation** is not
 wired for either tool — see each runner README's "OpenSpec activation" / "superpowers activation"
 findings; both ship the present-and-discoverable minimum and never mutate `/workspace/repo` at runtime.)
+
+## JDK + Maven toolchain
+
+Both images carry a pinned **JDK 21** (Temurin, `ARG JAVA_IMAGE`) and **Maven 3.9** (`ARG MAVEN_IMAGE`),
+present in production **and** the offline `INSTALL_*_CLI=false` build. These are agent-usable tooling —
+the entrypoint does not invoke them directly, but agent plans can run real `mvn` builds and compile tasks
+via shell-out. Both are **pinned**, not floored: `--self-test` asserts the toolchain matches the
+pinned Java major (`21`) and Maven series (`3.9`) exactly — a Java 22 or Maven 3.10+ image would
+**fail** self-test, by design (a moving target would silently drift from the pin).
+
+Per the change rule: bumping either the JDK or Maven pin **MUST update both runner Dockerfiles + the
+READMEs in the same PR**. See each runner's README for version pinning procedures and the `/workspace/.m2`
+shared cache note.
+
+### Security note — `/workspace/.m2` is a cross-run trust boundary
+
+The `/workspace/.m2` cache dir is created world-writable-by-owner (`chown 1001:1001`, the shared
+`codex`/`claude` runtime uid) and, when `deliveryline.runner.maven-cache-enabled=true`, is
+**bind-mounted read-write and shared across concurrent agent runs** that execute agent-authored code.
+The `-Daether.syncContext.named.factory=file-lock` / `nameMapper=file-gav` `MAVEN_OPTS` flags prevent
+**download races** (two runs resolving the same coordinate concurrently) but they are **not** an
+integrity control: nothing stops a run from **planting a poisoned artifact** (a malicious/mutated jar
+or POM under a real or spoofed coordinate) that a **later, unrelated run** then resolves and executes
+or compiles against — a cache-poisoning / supply-chain vector across the run boundary the rest of this
+contract otherwise treats as isolated (`--network=none`, per-run workspace mounts). This is an accepted
+trade-off for the download-avoidance benefit today; recommended future mitigations (not implemented
+here) are **per-project cache namespacing** (a `.m2` subtree keyed by project/repo rather than one
+shared root) or a **periodic integrity reset** (recreate the cache from a known-clean state on a
+schedule). Anyone changing the cache's sharing scope should re-read this note first.
 
 ## OpenSpec spec-driven authoring (story 3a-8 — opt-in, default OFF)
 

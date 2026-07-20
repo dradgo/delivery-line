@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
@@ -209,6 +210,89 @@ class RunnerContractValidatorTest {
 
     assertFalse(result.valid());
     assertContainsErrorCode(result, ValidationErrorCode.FILE_TOO_LARGE);
+  }
+
+  @Test
+  void planStepsMayContainAbsoluteAndRelativePathsInProse() {
+    // Regression (FIN-40): an implementationPlan's `steps[]` is free-text plan prose — natural
+    // language, code snippets, servlet context paths, example file paths — that the backend only
+    // stores and renders. It is NEVER resolved as a filesystem path, so the path-traversal /
+    // absolute-path guard must NOT reject a plan merely because a step line begins with `/` or
+    // contains `../`. Before the fix, a `/finance-monitor-web` step failed the whole run with
+    // PATH_TRAVERSAL_DETECTED (runner_contract_violation -> Failed).
+    RunnerContractValidator validator = new RunnerContractValidator();
+    String payload =
+        """
+        {
+          "schemaVersion": 1,
+          "workflowRunId": "run_abcd1234",
+          "runnerExecutionId": "rex_valid_plan",
+          "artifactReferences": [
+            {
+              "artifactId": "art_plan0001",
+              "artifactType": "implementationPlan",
+              "steps": [
+                "### Verify local Jetty startup",
+                "/finance-monitor-web",
+                "Then run `cd ../sibling-module && mvn -version`"
+              ],
+              "contextReferences": ["ctx/ref/1"]
+            }
+          ],
+          "normalizedOutput": { "summary": "Generated implementation plan", "outcome": "success" },
+          "checksum": {
+            "algorithm": "SHA-256",
+            "hexDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "classification": "shareable-redacted",
+          "failureCategory": null
+        }
+        """;
+    ValidationResult result =
+        validator.validate(
+            RunnerContractValidator.ValidationTarget.RUNNER_RESULT,
+            payload.getBytes(StandardCharsets.UTF_8),
+            ValidationContext.defaults());
+    assertTrue(
+        result.valid(), () -> "plan prose paths must not trip the guard: " + result.errors());
+  }
+
+  @Test
+  void pathTraversalInAnActualReferencePointerFieldStillFails() {
+    // The guard still protects the real reference-pointer fields the backend resolves as paths: a
+    // `../..`-escaping contextReferences entry must remain rejected even though sibling `steps` are
+    // now exempt.
+    RunnerContractValidator validator = new RunnerContractValidator();
+    String payload =
+        """
+        {
+          "schemaVersion": 1,
+          "workflowRunId": "run_abcd1234",
+          "runnerExecutionId": "rex_valid_plan",
+          "artifactReferences": [
+            {
+              "artifactId": "art_plan0001",
+              "artifactType": "implementationPlan",
+              "steps": ["Add schema resources"],
+              "contextReferences": ["../../etc/passwd"]
+            }
+          ],
+          "normalizedOutput": { "summary": "Generated implementation plan", "outcome": "success" },
+          "checksum": {
+            "algorithm": "SHA-256",
+            "hexDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "classification": "shareable-redacted",
+          "failureCategory": null
+        }
+        """;
+    ValidationResult result =
+        validator.validate(
+            RunnerContractValidator.ValidationTarget.RUNNER_RESULT,
+            payload.getBytes(StandardCharsets.UTF_8),
+            ValidationContext.defaults());
+    assertFalse(result.valid());
+    assertContainsErrorCode(result, ValidationErrorCode.PATH_TRAVERSAL_DETECTED);
   }
 
   private static FixtureExpectations loadExpectations() throws IOException {

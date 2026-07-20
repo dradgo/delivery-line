@@ -30,6 +30,18 @@ public interface ApprovalReadPort {
       String workflowRunPublicId, String artifactType);
 
   /**
+   * Story 4.16a [Review D3] — the currently-valid approved row for ONE specific artifact ({@code
+   * art_…} public id, which pins exactly one version), or {@code Optional.empty()} when that
+   * artifact has no live approval. Backs {@code ApprovalService.invalidateApprovalForArtifact} —
+   * version-specific so terminating an ambiguous lineage version never invalidates a healthy
+   * sibling version's approval (contrast {@link #findLatestApprovedForArtifactLineage}, which is
+   * run+type keyed and returns the highest version).
+   *
+   * @param artifactPublicId the approved/rejected artifact's public id ({@code art_…})
+   */
+  Optional<ApprovalSnapshot> findLatestApprovedForArtifact(String artifactPublicId);
+
+  /**
    * All decisions ({@code approved} or {@code rejected}) for the run + artifact-type filter, in
    * chronological order ({@code decided_at} ascending). Backs {@code
    * WorkflowInspectionService.getSpecHistory} (FR11) — the caller joins each row onto the matching

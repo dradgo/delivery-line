@@ -74,6 +74,7 @@ public class WorkflowEventPersistenceAdapter
     return workflowEventRepository
         .findLatestTransitionToState(
             workflowRunPublicId,
+            org.dradgo.domain.registry.WorkflowEventType.WORKFLOW_STATE_CHANGED.value(),
             Objects.requireNonNull(targetState, "targetState").value(),
             org.springframework.data.domain.PageRequest.of(0, 1))
         .stream()
@@ -86,6 +87,15 @@ public class WorkflowEventPersistenceAdapter
   public Optional<WorkflowEventRecord> findLatestFailureEvent(String workflowRunPublicId) {
     return workflowEventRepository
         .findFirstLatestFailureEvent(workflowRunPublicId)
+        .map(workflowEventEntityMapper::toRecord);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Optional<WorkflowEventRecord> findLatestByWorkflowRunPublicIdAndEventTypeIn(
+      String workflowRunPublicId, java.util.Collection<String> eventTypeValues) {
+    return workflowEventRepository
+        .findFirstLatestByWorkflowRunPublicIdAndEventTypeIn(workflowRunPublicId, eventTypeValues)
         .map(workflowEventEntityMapper::toRecord);
   }
 

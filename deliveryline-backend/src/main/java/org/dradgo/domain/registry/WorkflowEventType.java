@@ -26,6 +26,15 @@ public enum WorkflowEventType implements RegistryValue {
   RECOVERY_RETRIED("recovery.retried"),
   RECOVERY_DISPATCH_FAILED("recovery.dispatchFailed"),
   RECOVERY_RECONCILED("recovery.reconciled"),
+  // Story 4.5 (AC7) — appended in the same REQUIRES_NEW prep transaction as the Paused → prior
+  // executing-state transition + the recovery_actions insert when an operator resumes a paused run.
+  // Recovery namespace (lowerCamel), mirroring recovery.retried / recovery.reconciled (NOT
+  // workflow.resumed). It preserves who resumed + when (FR47 append-only): priorState = Paused,
+  // resultingState = the recovered prior executing state, interventionMarker = true. Detail keys
+  // (triggeringEventId = the Paused transition event, idempotencyKey, reason?, correlationId?) are
+  // already allow-listed. NO Flyway migration — event_type is an un-CHECKed text column and the
+  // registry set is fixture-asserted, not DB-derived.
+  RECOVERY_RESUMED("recovery.resumed"),
   ARTIFACT_LINEAGE_RECOVERED("artifact.lineageRecovered"),
   INTEGRATION_LINKED("integration.linked"),
   EXPORT_CREATED("export.created"),
@@ -82,7 +91,129 @@ public enum WorkflowEventType implements RegistryValue {
   // is auditable in the governed history. Detail keys: deepSplitOverride / splitDepth /
   // maxSplitDepth. NFR43 ("justify each new concept") is satisfied — an operator deliberately
   // overriding a safety cap is exactly what the governed history exists to record.
-  SPLIT_DEPTH_OVERRIDE("workflow.splitDepthOverride");
+  SPLIT_DEPTH_OVERRIDE("workflow.splitDepthOverride"),
+  // Story 4.4 (AC5) — appended (best-effort, in the download request's own transaction) when an
+  // operator downloads a run's already-redacted runner log via GET
+  // /api/v1/runner-executions/{rexId}/logs/download. It is a governed read-access audit record, NOT
+  // a workflow-state change: priorState == resultingState == the run's current state and
+  // interventionMarker = true (mirrors workflow.archived). Detail key is the already-allow-listed
+  // runnerExecutionId. The wire value is lowerCamel (audit.logDownloaded, NOT audit.log_downloaded)
+  // so it satisfies the RegistryContractTest dot-separated-lowerCamel pattern. NO Flyway migration
+  // —
+  // event_type is an un-CHECKed text column and the registry set is fixture-asserted, not
+  // DB-derived.
+  AUDIT_LOG_DOWNLOADED("audit.logDownloaded"),
+  // Story 4.17 (AC4) — appended (once per first-inserted (link, category) conflict) by the
+  // IntegrationConflictDetectionService sweep when internal workflow state disagrees with the
+  // cached-vs-fresh external Linear/GitHub state. NON-lifecycle event like integration.linked
+  // (priorState == resultingState == null, actorType = SYSTEM); the insert-or-skip dedup prevents
+  // per-tick spam. Detail keys reuse failureCategory/linearTicketReference/githubPrReference/
+  // prState/reason/correlationId/workflowRunId + the new allow-listed conflictId/conflictCategory.
+  // NOT in any scenario stream fixture (non-lifecycle, like console.opened). NO Flyway migration —
+  // event_type is un-CHECKed text and the registry set is fixture-asserted, not DB-derived.
+  INTEGRATION_CONFLICT_DETECTED("integration.conflictDetected"),
+  // Story 3h-4 (AC4, ADR 0030) — appended when an operator records an out-of-band delivery for a
+  // run parked at WaitingForDelivery under the `manual` push mode (approve_delivery). The backend
+  // pushes NOTHING (Decision 4, ingestManualResult precedent): the operator pushed by hand, so this
+  // event records that the delivery happened out-of-band and the run advanced to WaitingForReview.
+  // It rides the WaitingForDelivery -> WaitingForReview transition (appended in the same command
+  // tx)
+  // but is NOT itself a workflow-state change — priorState == resultingState == the run's state at
+  // append time (WaitingForReview), interventionMarker = true (a governed operator action). Detail
+  // keys reuse the already-allow-listed runnerExecutionId / workflowRunId / correlationId. NOT in
+  // any scenario stream fixture (like console.opened / integration.conflictDetected). NO Flyway —
+  // event_type is un-CHECKed text and the registry set is fixture-asserted, not DB-derived.
+  DELIVERY_RECORDED_MANUALLY("delivery.recordedManually"),
+  // Story 4.7 (AC5) — appended in the same REQUIRES_NEW prep transaction as the → targetStep
+  // transition + the recovery_actions insert + the prior-approval invalidation when an operator
+  // reruns a run from a safe step boundary (Investigating/Executing). Recovery namespace
+  // (lowerCamel), mirroring recovery.retried / recovery.resumed / recovery.reconciled (NOT
+  // workflow.rerunFromStep as the epic AC5 text says — same reconciliation applied to
+  // workflow.resumed → recovery.resumed). priorState = the run's state at rerun time,
+  // resultingState
+  // = the caller-chosen targetStep, interventionMarker = true. Detail keys: targetStep +
+  // supersededArtifactIds (both NEW, allow-listed here) + invalidatedApprovalIds? +
+  // triggeringEventId/idempotencyKey/reason?/correlationId? (already allow-listed). NO Flyway
+  // migration — event_type is an un-CHECKed text column and the registry set is fixture-asserted.
+  RECOVERY_RERUN_FROM_STEP("recovery.rerunFromStep"),
+  // Story 4.7 (AC7) — appended (best-effort, in its own post-commit transaction) when a rerun-from-
+  // step reopens a run and the reverse Linear notification is posted to the source ticket. Mirrors
+  // the forward linear.completionSyncFailed shape: NEVER rolls back the committed rerun; a missing
+  // link / absent comment capability / adapter failure logs + skips. NO Flyway migration —
+  // event_type is un-CHECKed text and the registry set is fixture-asserted, not DB-derived.
+  LINEAR_RUN_REOPENED_NOTIFICATION("linear.runReopenedNotification"),
+  // Story 4.8 (AC5/AC6) — appended in the same REQUIRES_NEW prep transaction as the → Paused
+  // transition + the runner cancel-flips + the recovery_actions insert when an operator manually
+  // pauses a run. Recovery namespace (lowerCamel), mirroring recovery.retried / recovery.resumed /
+  // recovery.reconciled (NOT workflow.paused as the epic AC5 text says — the same reconciliation
+  // applied to workflow.resumed → recovery.resumed). It exists as the non-null
+  // recovery_actions.resulting_event_id FK anchor the concurrent-replay guard depends on; the prior
+  // state that resume (4.5) reads stays on the TYPED priorState() of the transition's own
+  // WORKFLOW_STATE_CHANGED → Paused event (NO priorState detail key here). priorState = the
+  // pausable
+  // source state, resultingState = Paused, interventionMarker = true. Detail keys
+  // (triggeringEventId?, idempotencyKey, reason, correlationId?) are already allow-listed. NO
+  // Flyway
+  // migration — event_type is an un-CHECKed text column and the registry set is fixture-asserted.
+  RECOVERY_PAUSED("recovery.paused"),
+  // Story 4.9 (AC8) — appended in the same REQUIRES_NEW prep transaction as the workflow_runs
+  // failure-classification column update + the recovery_actions insert when a workflow owner
+  // classifies a failed run against the governed failure taxonomy (FR37/FR38). Recovery namespace
+  // (lowerCamel), mirroring recovery.retried / recovery.resumed / recovery.reconciled (NOT
+  // workflow.failureClassified as the epic AC8 text says — the same reconciliation applied to
+  // workflow.resumed → recovery.resumed). classify is a PURE METADATA operation: no transition, so
+  // the event is a non-transition audit record exactly like audit.logDownloaded — priorState ==
+  // resultingState == the run's current state (Failed), failureCategory = null (the taxonomy is
+  // the orthogonal HUMAN axis; see FailureTaxonomyValue), interventionMarker = true. Detail keys:
+  // taxonomyValue + priorTaxonomyValue? (both NEW, allow-listed by this story) +
+  // triggeringEventId?/idempotencyKey/reason?/correlationId? (already allow-listed). Re-classifying
+  // appends a NEW event — prior classifications live in this event chain, never on the row (AC9).
+  // NO Flyway migration for the event itself — event_type is an un-CHECKed text column and the
+  // registry set is fixture-asserted, not DB-derived.
+  RECOVERY_FAILURE_CLASSIFIED("recovery.failureClassified"),
+  // Story 4.15 (AC4) — appended (once per first-inserted (category, artifact/operation) drift) by
+  // the ArtifactDriftDetectionService sweep when it detects an orphan operation / missing payload /
+  // checksum mismatch. DETECTION-ONLY, NON-lifecycle event like artifact.available / integration.
+  // conflictDetected (priorState == resultingState == null, actorType = SYSTEM); the insert-or-skip
+  // dedup prevents per-tick spam. Detail keys reuse artifactId / correlationId / reason /
+  // failureCategory + the new allow-listed driftCategory. NOT in any scenario stream fixture
+  // (non-lifecycle, like console.opened). NO Flyway migration for the event itself — event_type is
+  // an un-CHECKed text column and the registry set is fixture-asserted, not DB-derived.
+  ARTIFACT_DRIFT_DETECTED("artifact.driftDetected"),
+  // Story 4.16 (AC2 / Reconciliation 10) — appended once per operator repair by
+  // ArtifactReconciliationService.repairArtifactDrift, inside the same REQUIRES_NEW prep
+  // transaction
+  // as the status mutation / approval invalidation / recovery_actions insert / drift resolve. ONE
+  // state-neutral event per repair (NOT per-method event types — OQ-4); details.repairAction (NEW,
+  // allow-listed by this story) discriminates the specific repair (mark_operation_failed /
+  // mark_operation_complete / mark_payload_unavailable / restore_from_backup / mark_corrupted /
+  // re_verify_checksum). NON-lifecycle audit event like artifact.driftDetected (priorState ==
+  // resultingState == null, actor-or-SYSTEM, interventionMarker = true); NOT in any scenario-stream
+  // fixture. Detail keys reuse driftCategory / artifactId / operationId / reason / correlationId +
+  // the new repairAction. NO Flyway migration for the event itself — event_type is an un-CHECKed
+  // text column and the registry set is fixture-asserted, not DB-derived.
+  ARTIFACT_DRIFT_REPAIRED("artifact.driftRepaired"),
+  // Story 4.16a (AC6 / Reconciliation 6) — appended once per operator lineage reconcile by
+  // ArtifactReconciliationService.reconcileLineage, inside the same REQUIRES_NEW prep transaction
+  // as
+  // the lineage mutation (reattach / terminate / fork) / optional approval invalidation /
+  // recovery_actions insert. ONE state-neutral audit event per reconcile (NOT per-action event
+  // types — mirror 4.16's ARTIFACT_DRIFT_REPAIRED); details.lineageAction (NEW, allow-listed by
+  // this
+  // story) discriminates the specific action (reattach_to_existing_lineage /
+  // terminate_ambiguous_lineage / create_explicit_fork). NON-lifecycle audit event like
+  // artifact.driftRepaired (priorState == resultingState == null, actor-or-SYSTEM,
+  // interventionMarker
+  // = true); NOT in any scenario-stream fixture. Detail keys reuse artifactId (=target) / reason /
+  // correlationId + the new lineageAction / lineageReferenceArtifactId (chosen-parent for reattach,
+  // new-fork id for create_explicit_fork). Distinct from the pre-existing
+  // ARTIFACT_LINEAGE_RECOVERED
+  // ("artifact.lineageRecovered") — that is a legacy value; this is "artifact.lineageReconciled".
+  // NO
+  // Flyway migration for the event itself — event_type is an un-CHECKed text column and the
+  // registry
+  // set is fixture-asserted, not DB-derived.
+  ARTIFACT_LINEAGE_RECONCILED("artifact.lineageReconciled");
 
   private static final Map<String, WorkflowEventType> LOOKUP = RegistryParsers.index(values());
 

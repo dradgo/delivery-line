@@ -44,6 +44,14 @@ EXPECTED_OPENSPEC_VERSION="${OPENSPEC_VERSION:-<unset>}"
 # only the discovery path differs). --self-test asserts the dir resolves + reports the pin.
 SUPERPOWERS_SKILLS_DIR="${SUPERPOWERS_SKILLS_DIR:-${HOME:-/home/claude}/.claude/skills/superpowers}"
 EXPECTED_SUPERPOWERS_PIN="${SUPERPOWERS_PIN:-<unset>}"
+# story: runner JDK+Maven — build toolchain the agent's plans rely on. --self-test
+# asserts both are present and match the pinned major/series (Java 21, Maven 3.9 — not
+# a floor) so a broken or drifted image fails in CI, not after a full (token-expensive)
+# execution.
+JAVA_BIN="${JAVA_BIN:-java}"
+MVN_BIN="${MVN_BIN:-mvn}"
+EXPECTED_JAVA_MAJOR="${EXPECTED_JAVA_MAJOR:-21}"
+EXPECTED_MAVEN_SERIES="${EXPECTED_MAVEN_SERIES:-3.9}"
 
 PROMPT_FILE=""
 cleanup() {
@@ -309,6 +317,30 @@ run_self_test() {
     echo "SELF-TEST FAIL: only ${_superpowers_count:-0} SKILL.md under superpowers skills dir $SUPERPOWERS_SKILLS_DIR (expected >= 10; pinned tree ships 14)"
     exit 1
   fi
+  if ! command -v "$JAVA_BIN" >/dev/null 2>&1; then
+    echo "SELF-TEST FAIL: java '$JAVA_BIN' not found on PATH"
+    exit 1
+  fi
+  _java_version="$("$JAVA_BIN" -version 2>&1 | head -1)"
+  case "$_java_version" in
+    *"\"$EXPECTED_JAVA_MAJOR."*|*"\"$EXPECTED_JAVA_MAJOR\""*) ;;
+    *)
+      echo "SELF-TEST FAIL: java version '${_java_version:-<unknown>}' is not major $EXPECTED_JAVA_MAJOR"
+      exit 1
+      ;;
+  esac
+  if ! command -v "$MVN_BIN" >/dev/null 2>&1; then
+    echo "SELF-TEST FAIL: maven '$MVN_BIN' not found on PATH"
+    exit 1
+  fi
+  _maven_version="$("$MVN_BIN" -version 2>&1 | head -1)"
+  case "$_maven_version" in
+    *"Apache Maven $EXPECTED_MAVEN_SERIES"*) ;;
+    *)
+      echo "SELF-TEST FAIL: maven version '${_maven_version:-<unknown>}' is not series $EXPECTED_MAVEN_SERIES"
+      exit 1
+      ;;
+  esac
   echo "deliveryline/claude-runner self-test: OK"
   echo "  entrypoint:     reachable"
   echo "  node:           $("$NODE_BIN" --version)"
@@ -318,6 +350,8 @@ run_self_test() {
   echo "  openspec bin:   $(command -v "$OPENSPEC_CLI_BIN")"
   echo "  openspec version: ${_openspec_version:-<unknown>} (expected pin: $EXPECTED_OPENSPEC_VERSION)"
   echo "  superpowers:    $_superpowers_count skills at $SUPERPOWERS_SKILLS_DIR (pin $EXPECTED_SUPERPOWERS_PIN)"
+  echo "  java version:   ${_java_version:-<unknown>} (JAVA_HOME=$JAVA_HOME)"
+  echo "  maven version:  ${_maven_version:-<unknown>} (MAVEN_HOME=$MAVEN_HOME)"
   echo "  mounts:         input=$INPUT_DIR output=$OUTPUT_DIR logs=$LOGS_DIR"
   echo "  mount status:   input=$([ -d "$INPUT_DIR" ] && echo present || echo absent) output=$([ -d "$OUTPUT_DIR" ] && echo present || echo absent) logs=$([ -d "$LOGS_DIR" ] && echo present || echo absent)"
   echo "  network:        none (file-based contract; no API call in self-test)"
@@ -517,7 +551,14 @@ case "$CLAUDE_SUBCOMMAND" in
     ;;
 esac
 # Assemble the argv with `set --` (no eval, no word-splitting of untrusted values).
-set -- "$CLAUDE_SUBCOMMAND" --dangerously-skip-permissions
+# Story 3g-5 (FR74) — `--output-format stream-json` makes Claude emit a JSONL event stream on stdout,
+# the only mode that surfaces per-turn token usage (the terminal result event's
+# usage{input_tokens,output_tokens}). STREAMING (not the single buffered `json` object) so
+# runner.stdout grows incrementally and the finished-but-hung inactivity guard below stays valid —
+# a buffered `json` run would look idle for the whole turn and trip the guard. `--verbose` is
+# required by the CLI to combine print mode (-p) with stream-json. The build step reconstructs the
+# artifact text + lifts usage from it via `--events-file` (mirrors the codex `--json` twin).
+set -- "$CLAUDE_SUBCOMMAND" --dangerously-skip-permissions --output-format stream-json --verbose
 CLAUDE_REPO_DIR="${DELIVERYLINE_REPO_DIR:-/workspace/repo}"
 # Story 3a-8 — opt-in OpenSpec authoring layer (default OFF). Flag off => none of this runs
 # (byte-identical legacy path). Flag on => append the fence-convention authoring instructions
@@ -742,7 +783,7 @@ log INFO "building runner-result.v1 artifactType=$ARTIFACT_TYPE result=$RESULT_F
 set -- "$NODE_BIN" "$RUNNER_LIB" build \
   --bundle "$BUNDLE_FILE" \
   --stage "$ARTIFACT_TYPE" \
-  --summary-file "$STDOUT_LOG" \
+  --events-file "$STDOUT_LOG" \
   --auth-var "${AUTH_KEY_VAR:-}" \
   --out "$RESULT_FILE"
 # Story 3a-8 (AC5/D4): surface the OpenSpec validate outcome in the result summary, ONLY on

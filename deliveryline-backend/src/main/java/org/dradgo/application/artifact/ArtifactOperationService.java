@@ -529,6 +529,28 @@ public class ArtifactOperationService {
   }
 
   /**
+   * Story 3h-2 (code-review 2026-07-06) — the latest (highest-version) non-archived artifact for a
+   * run + type, or empty. Read-only delegate used by the lint-gate delivery resume ({@code
+   * RunnerBroker.resumeDeliveryTailFromGate}) to re-derive the pr-output artifact id + storageRef
+   * when the in-memory runner result is gone (approve_lint fires later, off a fresh tx).
+   */
+  public Optional<ArtifactRecordSnapshot> findLatestArtifact(
+      String workflowRunId, ArtifactType artifactType) {
+    return artifactRecordPort.findLatestByWorkflowRunIdAndArtifactType(
+        workflowRunId, artifactType.value());
+  }
+
+  /**
+   * Read the raw payload bytes at {@code storageRef} (empty when the ref is blank or unreadable).
+   */
+  public Optional<byte[]> readArtifactBytes(String storageRef) {
+    if (storageRef == null || storageRef.isBlank()) {
+      return Optional.empty();
+    }
+    return artifactPayloadStore.readBytes(storageRef);
+  }
+
+  /**
    * Story 3e-2 (review P1) — the {@code operation_type} already recorded for {@code idempotencyKey}
    * within the run + artifactType (independent of type), if any. A caller that decides CREATE vs
    * UPDATE from mutable state (the broker's SPEC graft) MUST reuse this on a re-harvest instead of

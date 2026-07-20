@@ -1,0 +1,11 @@
+{
+  "internal": {
+    "state": "open",
+    "externalRef": "javascript:window.__reconRefXss=1",
+    "note": "&lt;script&gt;window.__reconEntityXss=1&lt;/script&gt;"
+  },
+  "external": {
+    "state": "closed",
+    "issueState": "done"
+  }
+}

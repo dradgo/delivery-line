@@ -1,6 +1,8 @@
 package org.dradgo.application.artifact;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -13,9 +15,11 @@ import java.util.HexFormat;
 import java.util.Optional;
 import org.dradgo.application.artifact.spi.ArtifactPayloadStore;
 import org.dradgo.application.artifact.spi.ArtifactRecordPort;
+import org.dradgo.domain.DomainException;
 import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
+import org.dradgo.domain.registry.DomainErrorCode;
 import org.junit.jupiter.api.Test;
 
 class ArtifactServiceUnitTest {
@@ -170,5 +174,137 @@ class ArtifactServiceUnitTest {
         checksumValue,
         status,
         archivedAt == null ? null : archivedAt.withOffsetSameInstant(ZoneOffset.UTC));
+  }
+
+  // ---- Story 4.19 (AC1/AC2/AC6) — loadCompareSource gating ----
+
+  @Test
+  void loadCompareSourceRejectsMalformedIdWithInvalidIdPrefix() {
+    ArtifactService service =
+        new ArtifactService(mock(ArtifactRecordPort.class), mock(ArtifactPayloadStore.class));
+
+    DomainException ex =
+        assertThrows(DomainException.class, () -> service.loadCompareSource("run_wrongprefix1"));
+    assertThat(ex.errorCode()).isEqualTo(DomainErrorCode.INVALID_ID_PREFIX);
+  }
+
+  @Test
+  void loadCompareSourceRaisesRecordNotFoundForUnknownId() {
+    ArtifactRecordPort port = mock(ArtifactRecordPort.class);
+    ArtifactService service = new ArtifactService(port, mock(ArtifactPayloadStore.class));
+    when(port.findByPublicId("art_missing12345")).thenReturn(Optional.empty());
+
+    DomainException ex =
+        assertThrows(DomainException.class, () -> service.loadCompareSource("art_missing12345"));
+    assertThat(ex.errorCode()).isEqualTo(DomainErrorCode.ARTIFACT_RECORD_NOT_FOUND);
+  }
+
+  @Test
+  void loadCompareSourceRefusesLocalOnlyAsRecordNotFoundOpacity() {
+    ArtifactRecordPort port = mock(ArtifactRecordPort.class);
+    ArtifactService service = new ArtifactService(port, mock(ArtifactPayloadStore.class));
+    when(port.findByPublicId("art_localonly1234"))
+        .thenReturn(
+            Optional.of(
+                compareArtifact(
+                    "art_localonly1234",
+                    ArtifactStatus.AVAILABLE,
+                    DataClassification.LOCAL_ONLY,
+                    "ref/local",
+                    "checksum-value")));
+
+    DomainException ex =
+        assertThrows(DomainException.class, () -> service.loadCompareSource("art_localonly1234"));
+    assertThat(ex.errorCode()).isEqualTo(DomainErrorCode.ARTIFACT_RECORD_NOT_FOUND);
+  }
+
+  @Test
+  void loadCompareSourceRaisesPayloadUnavailableWhenNotAvailable() {
+    ArtifactRecordPort port = mock(ArtifactRecordPort.class);
+    ArtifactService service = new ArtifactService(port, mock(ArtifactPayloadStore.class));
+    when(port.findByPublicId("art_pending12345"))
+        .thenReturn(
+            Optional.of(
+                compareArtifact(
+                    "art_pending12345",
+                    ArtifactStatus.PENDING,
+                    DataClassification.SHAREABLE_REDACTED,
+                    "ref/pending",
+                    "checksum-value")));
+
+    DomainException ex =
+        assertThrows(DomainException.class, () -> service.loadCompareSource("art_pending12345"));
+    assertThat(ex.errorCode()).isEqualTo(DomainErrorCode.ARTIFACT_PAYLOAD_UNAVAILABLE);
+  }
+
+  @Test
+  void loadCompareSourceRaisesPayloadUnavailableWhenPayloadUnreadable() {
+    ArtifactRecordPort port = mock(ArtifactRecordPort.class);
+    ArtifactPayloadStore payloadStore = mock(ArtifactPayloadStore.class);
+    ArtifactService service = new ArtifactService(port, payloadStore);
+    when(port.findByPublicId("art_unreadable123"))
+        .thenReturn(
+            Optional.of(
+                compareArtifact(
+                    "art_unreadable123",
+                    ArtifactStatus.AVAILABLE,
+                    DataClassification.SHAREABLE_REDACTED,
+                    "ref/unreadable",
+                    "checksum-value")));
+    when(payloadStore.readBytes("ref/unreadable")).thenReturn(Optional.empty());
+
+    DomainException ex =
+        assertThrows(DomainException.class, () -> service.loadCompareSource("art_unreadable123"));
+    assertThat(ex.errorCode()).isEqualTo(DomainErrorCode.ARTIFACT_PAYLOAD_UNAVAILABLE);
+  }
+
+  @Test
+  void loadCompareSourceReturnsGatedSourceWithProducingActor() {
+    ArtifactRecordPort port = mock(ArtifactRecordPort.class);
+    ArtifactPayloadStore payloadStore = mock(ArtifactPayloadStore.class);
+    ArtifactService service = new ArtifactService(port, payloadStore);
+    byte[] payload = "# spec\n\nbody".getBytes(StandardCharsets.UTF_8);
+    when(port.findByPublicId("art_source123456"))
+        .thenReturn(
+            Optional.of(
+                compareArtifact(
+                    "art_source123456",
+                    ArtifactStatus.AVAILABLE,
+                    DataClassification.SHAREABLE_REDACTED,
+                    "ref/source",
+                    "checksum-value")));
+    when(payloadStore.readBytes("ref/source")).thenReturn(Optional.of(payload));
+    when(port.findProducingActorForArtifact("art_source123456"))
+        .thenReturn(Optional.of("developer"));
+
+    ArtifactCompareSource source = service.loadCompareSource("art_source123456");
+
+    assertThat(source.snapshot().publicId()).isEqualTo("art_source123456");
+    assertThat(source.payloadBytes()).isEqualTo(payload);
+    assertThat(source.producedByActor()).isEqualTo("developer");
+  }
+
+  private ArtifactRecordSnapshot compareArtifact(
+      String artifactId,
+      ArtifactStatus status,
+      DataClassification classification,
+      String storageRef,
+      String checksumValue) {
+    return new ArtifactRecordSnapshot(
+        artifactId,
+        "run_ready1234",
+        ArtifactType.SPEC,
+        1,
+        null,
+        classification,
+        storageRef,
+        "SHA-256",
+        checksumValue,
+        null,
+        null,
+        status,
+        null,
+        false,
+        OffsetDateTime.parse("2026-07-15T00:00:00Z"));
   }
 }

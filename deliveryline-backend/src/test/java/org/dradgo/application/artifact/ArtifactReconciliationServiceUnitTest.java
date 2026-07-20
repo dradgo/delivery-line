@@ -48,7 +48,8 @@ class ArtifactReconciliationServiceUnitTest {
             artifactEventPort,
             Clock.fixed(Instant.parse("2026-05-07T14:00:00Z"), ZoneOffset.UTC),
             Duration.ofMinutes(15),
-            callthroughTemplate());
+            callthroughTemplate(),
+            null);
     ArtifactOperationSnapshot stalePending =
         new ArtifactOperationSnapshot(
             "op_pending1234",
@@ -135,7 +136,8 @@ class ArtifactReconciliationServiceUnitTest {
             artifactEventPort,
             Clock.fixed(Instant.parse("2026-05-08T10:00:00Z"), ZoneOffset.UTC),
             Duration.ofMinutes(15),
-            callthroughTemplate());
+            callthroughTemplate(),
+            null);
     ArtifactOperationSnapshot stalePending =
         new ArtifactOperationSnapshot(
             "op_pending5678",
@@ -210,7 +212,8 @@ class ArtifactReconciliationServiceUnitTest {
             artifactEventPort,
             clock,
             Duration.ofMinutes(42),
-            callthroughTemplate());
+            callthroughTemplate(),
+            null);
 
     when(artifactOperationPort.findPendingOlderThan(Duration.ofMinutes(42))).thenReturn(List.of());
 
@@ -243,6 +246,7 @@ class ArtifactReconciliationServiceUnitTest {
                     artifactEventPort,
                     clock,
                     Duration.ofMinutes(15),
+                    null,
                     null));
 
     assertEquals(true, error.getMessage().contains("perItemTransactionTemplate"));
@@ -260,7 +264,8 @@ class ArtifactReconciliationServiceUnitTest {
             artifactEventPort,
             Clock.fixed(Instant.parse("2026-05-09T12:00:00Z"), ZoneOffset.UTC),
             Duration.ofMinutes(15),
-            callthroughTemplate());
+            callthroughTemplate(),
+            null);
     ArtifactOperationSnapshot stalePending =
         new ArtifactOperationSnapshot(
             "op_late1234",
@@ -340,7 +345,8 @@ class ArtifactReconciliationServiceUnitTest {
             artifactEventPort,
             Clock.fixed(Instant.parse("2026-05-09T12:00:00Z"), ZoneOffset.UTC),
             Duration.ofMinutes(15),
-            callthroughTemplate());
+            callthroughTemplate(),
+            null);
     ArtifactOperationSnapshot stalePending =
         new ArtifactOperationSnapshot(
             "op_torn1234",
@@ -398,7 +404,8 @@ class ArtifactReconciliationServiceUnitTest {
             artifactEventPort,
             Clock.fixed(Instant.parse("2026-05-10T09:00:00Z"), ZoneOffset.UTC),
             Duration.ofMinutes(15),
-            callthroughTemplate());
+            callthroughTemplate(),
+            null);
 
     ArtifactOperationSnapshot failingOp =
         new ArtifactOperationSnapshot(

@@ -57,7 +57,27 @@ public class ProjectEntityMapper {
         entity.getRunnerKind(),
         entity.getCreatedAt(),
         entity.getArchivedAt(),
-        stepRunnerKinds);
+        stepRunnerKinds,
+        // Story 3h-1 (AC2) — nullable per-project build command. Coerce blank to null on read
+        // (mirrors reviewerModelKind): build_command has no DB CHECK, so a blank row value would
+        // trip the Project record's non-blank-if-set invariant. NULL is the canonical "no build".
+        blankToNull(entity.getBuildCommand()),
+        entity.isBuildStageEnabled(),
+        // Story 3h-2 (AC2) — split the newline-delimited lint_commands text back into the domain
+        // list (null/blank text → empty list; blank lines dropped). Project's compact ctor copies
+        // it.
+        splitLintCommands(entity.getLintCommands()),
+        entity.isLintStageEnabled(),
+        // Story 3h-4 (AC1) — per-project delivery config (push_mode parsed through
+        // PushMode.fromValue
+        // in the entity getter; auto_create_pull_request a plain boolean).
+        entity.getPushMode(),
+        entity.isAutoCreatePullRequest(),
+        // Task 4 (DinD Testcontainers sidecar) — plain boolean, no parsing needed.
+        entity.isTestcontainersEnabled(),
+        // Story 3m-2 (AC5) — the project's definition binding (nullable Long; null = legacy
+        // pipeline). A plain surrogate FK id, no registry parsing.
+        entity.getWorkflowDefinitionId());
   }
 
   public ProjectEntity toNewEntity(Project project) {
@@ -73,6 +93,19 @@ public class ProjectEntityMapper {
     entity.setReviewerModelKind(project.reviewerModelKind());
     entity.setReviewerGatingEnabled(project.reviewerGatingEnabled());
     entity.setRunnerKind(project.runnerKind());
+    // Story 3h-1 (AC2) — per-project build config round-trips on insert.
+    entity.setBuildCommand(project.buildCommand());
+    entity.setBuildStageEnabled(project.buildStageEnabled());
+    // Story 3h-2 (AC2) — per-project lint config round-trips on insert (list ↔ newline-delimited).
+    entity.setLintCommands(joinLintCommands(project.lintCommands()));
+    entity.setLintStageEnabled(project.lintStageEnabled());
+    // Story 3h-4 (AC1) — per-project delivery config round-trips on insert.
+    entity.setPushMode(project.pushMode());
+    entity.setAutoCreatePullRequest(project.autoCreatePullRequest());
+    // Task 4 (DinD Testcontainers sidecar) — per-project flag round-trips on insert.
+    entity.setTestcontainersEnabled(project.testcontainersEnabled());
+    // Story 3m-2 (AC5) — the definition binding round-trips on insert (null = legacy pipeline).
+    entity.setWorkflowDefinitionId(project.workflowDefinitionId());
     entity.setCreatedAt(project.createdAt());
     entity.setArchivedAt(project.archivedAt());
     return entity;
@@ -101,11 +134,58 @@ public class ProjectEntityMapper {
     // Runner-kind override is editable project config (no REST surface yet in 3d-3; a future story
     // owns editing). Threading it through update keeps a read-modify-write round-trip lossless.
     entity.setRunnerKind(project.runnerKind());
+    // Story 3h-1 (AC2) — build config is editable project config; thread it through update so a
+    // read-modify-write round-trip stays lossless (mirrors reviewer binding / runner-kind).
+    entity.setBuildCommand(project.buildCommand());
+    entity.setBuildStageEnabled(project.buildStageEnabled());
+    // Story 3h-2 (AC2) — lint config is editable project config; thread it through update so a
+    // read-modify-write round-trip stays lossless (mirrors build config).
+    entity.setLintCommands(joinLintCommands(project.lintCommands()));
+    entity.setLintStageEnabled(project.lintStageEnabled());
+    // Story 3h-4 (AC1) — delivery config is editable project config; thread it through update so a
+    // read-modify-write round-trip stays lossless (mirrors build/lint config).
+    entity.setPushMode(project.pushMode());
+    entity.setAutoCreatePullRequest(project.autoCreatePullRequest());
+    // Task 4 (DinD Testcontainers sidecar) — editable project config; thread it through update so a
+    // read-modify-write round-trip stays lossless (mirrors build/lint/delivery config).
+    entity.setTestcontainersEnabled(project.testcontainersEnabled());
+    // Story 3m-2 (AC5) — the definition binding is editable project config (no REST surface yet;
+    // 3m-4/3m-8 own editing). Thread it through update so a read-modify-write round-trip stays
+    // lossless (mirrors testcontainers/delivery config).
+    entity.setWorkflowDefinitionId(project.workflowDefinitionId());
     entity.setArchivedAt(project.archivedAt());
     return entity;
   }
 
   private static String blankToNull(String value) {
     return (value == null || value.isBlank()) ? null : value;
+  }
+
+  /**
+   * Story 3h-2 — the domain lint command list → the newline-delimited {@code lint_commands} text
+   * column. An empty/null list serializes to NULL (the canonical "no lint commands" value); blank
+   * entries are dropped so a stray newline never yields a blank command.
+   */
+  private static String joinLintCommands(java.util.List<String> lintCommands) {
+    if (lintCommands == null || lintCommands.isEmpty()) {
+      return null;
+    }
+    String joined =
+        lintCommands.stream()
+            .filter(command -> command != null && !command.isBlank())
+            .map(String::trim)
+            .collect(java.util.stream.Collectors.joining("\n"));
+    return joined.isBlank() ? null : joined;
+  }
+
+  /**
+   * Story 3h-2 — the newline-delimited {@code lint_commands} text column → the domain lint command
+   * list. A null/blank column reads back an empty list; blank lines are dropped.
+   */
+  private static java.util.List<String> splitLintCommands(String lintCommands) {
+    if (lintCommands == null || lintCommands.isBlank()) {
+      return java.util.List.of();
+    }
+    return lintCommands.lines().map(String::trim).filter(line -> !line.isBlank()).toList();
   }
 }

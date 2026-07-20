@@ -11,7 +11,7 @@
  */
 import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { expectNoA11yViolations } from '@/test/a11y/axe';
 import {
@@ -167,7 +167,7 @@ describe('ImplementationPlanArtifactRenderer', () => {
     expect(compare).toHaveAttribute('title', 'Available in next release');
   });
 
-  it('AC6 — the Compare control enables when the container reports compareEnabled', () => {
+  it('AC6 / 4.20 — the Compare control enables when the container reports compareEnabled', () => {
     render(
       <ImplementationPlanArtifactRenderer
         artifact={implementationPlanArtifactView}
@@ -176,7 +176,21 @@ describe('ImplementationPlanArtifactRenderer', () => {
     );
     const compare = screen.getByTestId('artifact-compare-entry');
     expect(compare).toBeEnabled();
-    expect(compare).not.toHaveAttribute('title');
+    // Story 4.20 — the enabled control now carries an actionable tooltip (was reserved/no-title).
+    expect(compare).toHaveAttribute('title', 'Compare with the previous revision');
+  });
+
+  it('4.20 AC9 — clicking the enabled Compare control invokes onCompare (opens the overlay)', async () => {
+    const onCompare = vi.fn();
+    render(
+      <ImplementationPlanArtifactRenderer
+        artifact={implementationPlanArtifactView}
+        compareEnabled
+        onCompare={onCompare}
+      />,
+    );
+    await userEvent.click(screen.getByTestId('artifact-compare-entry'));
+    expect(onCompare).toHaveBeenCalledTimes(1);
   });
 
   it('renders the body via the .prose typography utility', () => {

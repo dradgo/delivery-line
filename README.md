@@ -14,7 +14,8 @@ dependencies.
 - **Developer reviewing implementation output?** → [`docs/execution-walkthrough.md`](docs/execution-walkthrough.md)
 - **Configuring a project (connectors + credentials)?** → [`docs/project-configuration-walkthrough.md`](docs/project-configuration-walkthrough.md)
 - **Reviewing, running manually, or observing a step?** → [`docs/per-step-execution-control-walkthrough.md`](docs/per-step-execution-control-walkthrough.md)
-- **Run failed?** → [`docs/failure-recovery-walkthrough.md`](docs/failure-recovery-walkthrough.md)
+- **Run failed? (CLI baseline)** → [`docs/failure-recovery-walkthrough.md`](docs/failure-recovery-walkthrough.md)
+- **Operator triaging a failed run in the console?** → [`docs/failed-run-recovery-walkthrough.md`](docs/failed-run-recovery-walkthrough.md)
 - **All CLI commands** → [`docs/cli/`](docs/cli/README.md) (start at the CLI index for
   exit-code bands, idempotency-key contract, and per-command references —
   [`submit` / `status` / `history` / `retry`](docs/cli/workflow-commands.md) and

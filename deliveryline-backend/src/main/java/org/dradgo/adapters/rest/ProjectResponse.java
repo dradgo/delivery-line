@@ -54,6 +54,37 @@ public record ProjectResponse(
                     + "configured. Resolves more specifically than runnerKind.",
             example = "{\"spec\":\"codex\",\"prOutput\":\"manual\"}")
         Map<String, String> stepRunnerKinds,
+    @Schema(description = "Story 3h-1 — whether the pre-review build-validation stage runs.")
+        boolean buildStageEnabled,
+    @Schema(
+            description =
+                "Story 3h-1 — build command run backend-side before review; null = no build.",
+            nullable = true,
+            example = "mvn -q -DskipTests package")
+        String buildCommand,
+    @Schema(description = "Story 3h-2 — whether the pre-review CPU lint gate runs.")
+        boolean lintStageEnabled,
+    @Schema(
+            description =
+                "Story 3h-2 — CPU linter commands run backend-side before review; empty = no lint.",
+            example = "[\"mvn -q -DskipTests checkstyle:check\", \"npm run lint\"]")
+        List<String> lintCommands,
+    @Schema(
+            description =
+                "Story 3h-4 — per-project delivery push mode. 'auto' pushes inline (pre-3h parity); "
+                    + "'manual'/'approve' park at WaitingForDelivery.",
+            allowableValues = {"auto", "manual", "approve"},
+            example = "auto")
+        String pushMode,
+    @Schema(
+            description =
+                "Story 3h-4 — whether a pull/merge request is created wherever the push fires.")
+        boolean autoCreatePullRequest,
+    @Schema(
+            description =
+                "Task 4 — whether a dockerd Testcontainers sidecar is provisioned for this "
+                    + "project's runs.")
+        boolean testcontainersEnabled,
     @Schema(description = "Creation timestamp (UTC).") OffsetDateTime createdAt,
     @Schema(description = "Per-role credential presence (never the value).")
         List<CredentialPresenceResponse> credentials,
@@ -78,6 +109,13 @@ public record ProjectResponse(
         project.runnerKind() == null ? null : project.runnerKind().value(),
         project.reviewerModelKind(),
         toWireStepRunnerKinds(project.stepRunnerKinds()),
+        project.buildStageEnabled(),
+        project.buildCommand(),
+        project.lintStageEnabled(),
+        project.lintCommands(),
+        project.pushMode().value(),
+        project.autoCreatePullRequest(),
+        project.testcontainersEnabled(),
         project.createdAt(),
         credentials,
         allowedActions);

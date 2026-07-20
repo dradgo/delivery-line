@@ -569,6 +569,7 @@ class RunnerBrokerUnitTest {
             () -> null,
             ticketProvider,
             () -> null,
+            () -> null,
             () -> null);
 
     RepositoryWorkspaceService.RepositoryMount mount =
@@ -1412,12 +1413,20 @@ class RunnerBrokerUnitTest {
     verify(executionService).recordFailed(REX_ID, FailureCategory.RUNNER_SECRET_LEAK);
     verify(executionService, never()).recordCompleted(any());
     verify(secretScanService).quarantine(eq(REX_ID), any());
-    // Story 3.5 AC4 (review patch): a leak is scoped to the runner_execution + event + quarantine
-    // and must NOT drive the workflow-run state — operator-driven recovery owns that path. Pin the
-    // load-bearing invariant the production comment asserts so a future change that wires
-    // driveWorkflowFailed into the leak branch is caught.
-    verify(workflowTransitionService, never())
-        .transition(any(), any(), any(), any(), any(), any(), any());
+    // A leak MUST drive the run to FAILED like every other runner failure. Scoping it to the
+    // execution + event + quarantine (the original 3.5 AC4 reading) left the run sitting in
+    // EXECUTING forever: the timeout scan skips it (the execution row is already terminal) and
+    // RecommendationService returns no actions for a non-FAILED run, so no operator recovery path
+    // ever opened. Diagnosed on run_009f4595…, which needed a manual state correction to unstick.
+    verify(workflowTransitionService)
+        .transition(
+            eq(RUN_ID),
+            eq(WorkflowState.FAILED),
+            any(),
+            eq("runner_secret_leak"),
+            any(),
+            eq(FailureCategory.RUNNER_SECRET_LEAK),
+            any());
     ArgumentCaptor<java.util.Map<String, Object>> detailsCaptor =
         ArgumentCaptor.forClass(java.util.Map.class);
     verify(eventPort)
@@ -1978,6 +1987,36 @@ class RunnerBrokerUnitTest {
         .transition(any(), any(), any(), any(), any(), any(), any());
   }
 
+  // Story 4.8 (AC4) — a container that finishes inside the pause race window is logged + ignored,
+  // mirroring the takeover arm above: no result side effects, no transition attempt on the Paused
+  // run.
+  @Test
+  void onResultAfterPauseCancellationPerformsNoResultSideEffects() {
+    RunnerExecutionSnapshot cancelled =
+        new RunnerExecutionSnapshot(
+            REX_ID,
+            RUN_ID,
+            RunnerStage.EXECUTION,
+            RunnerExecutionStatus.CANCELLED_FOR_PAUSE,
+            1,
+            OffsetDateTime.now(CLOCK),
+            OffsetDateTime.now(CLOCK).minusSeconds(60),
+            null,
+            OffsetDateTime.now(CLOCK),
+            OffsetDateTime.now(CLOCK),
+            null);
+    when(recordPort.findByPublicId(REX_ID)).thenReturn(Optional.of(cancelled));
+
+    broker.onResult(REX_ID, "{\"schemaVersion\":1".getBytes(StandardCharsets.UTF_8));
+
+    verify(executionService, never()).recordFailed(any(), any());
+    verify(executionService, never()).recordCompleted(any());
+    verify(artifactOperationService, never()).recordOperation(any());
+    verify(eventPort, never()).append(any(), any(), any(), any(), any(), any(), any());
+    verify(workflowTransitionService, never())
+        .transition(any(), any(), any(), any(), any(), any(), any());
+  }
+
   @Test
   void onResultLateMalformedPayloadMarksLateResultFailedWithoutArtifactHarvest() {
     RunnerExecutionSnapshot timedOut =
@@ -2424,6 +2463,9 @@ class RunnerBrokerUnitTest {
             RunnerProperties.PlanStage.defaults(),
             RunnerProperties.ImplementationStage.defaults(),
             RunnerProperties.OpenSpec.defaults(),
+            RunnerProperties.BuildStage.defaults(),
+            RunnerProperties.LintStage.defaults(),
+            RunnerProperties.DeliveryMode.defaults(),
             100);
     broker =
         new RunnerBroker(
@@ -3367,6 +3409,7 @@ class RunnerBrokerUnitTest {
         () -> orchestration,
         null,
         () -> linkService,
+        () -> null,
         () -> null);
   }
 

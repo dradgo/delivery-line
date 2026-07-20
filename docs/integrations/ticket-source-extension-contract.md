@@ -23,6 +23,18 @@ Only `IntegrationLinkService` and the vendor-specific polling host bean may call
 - Return tickets whose `updatedAt` is strictly after `since`, **ordered ascending by `updatedAt`** (callers advance their watermark to `max(updatedAt)`, which must be monotonic). Apply the adapter's own paging internally. Return an empty list when there is nothing new.
 - A source that does not support polling declares `supportsPolling=false`; the polling host must not be wired for it.
 
+### `TicketQueryResult queryTickets(TicketQuery query)`
+
+- **Optional operation (story 3i-2 / FR81):** consumers MUST check `getCapabilities().supportsTicketQuery()` first. An adapter that does not advertise it throws `UnsupportedOperationException` — it must **not** return an empty result, which is indistinguishable from "nothing matched" and would misreport an unsupported connector as an empty backlog.
+- Browse *candidate* tickets matching the neutral `TicketQuery{assignee, components, state, limit}` filter, newest-updated first, bounded by `limit` (clamped to `TicketQuery.MAX_LIMIT`). `components` is bounded by `TicketQuery.MAX_COMPONENTS`, which **rejects** rather than clamps: silently dropping tokens from a `component in (…)` clause would *narrow* the match set and hide tickets the operator explicitly asked for. Contrast with `pollNewTickets`: that is a background sweep bounded by an `updatedAt` watermark; this is a foreground, operator-driven read with no time boundary.
+- **Build the vendor query by omission.** An absent filter field (null/blank `assignee`/`state`, empty `components`) contributes **no clause at all**. Never render it as a match-all predicate — `assignee is not EMPTY` quietly narrows an unfiltered browse, and an unbounded `component in ()` is not even valid in most dialects.
+- **Every filter value is an injection boundary.** The values are operator-supplied and opaque (for JIRA Cloud, `assignee` is an `accountId` or a resolvable email — we never interpret it). Escape each one for your query dialect before it reaches the query string.
+- Map results onto the neutral `TicketSummary{ticketRef, title, summary}`. `summary` is **nullable** — a source ticket with no description is legal and must not crash the mapping.
+- **Report the source's total, not the page size.** `TicketQueryResult{tickets, total}` carries how many tickets matched *at the source*; `truncated()` is `total > tickets.size()`. Without it a browse matching 400 tickets is indistinguishable from one matching exactly `limit`, and the operator has no signal to narrow the filter. A source that cannot report a total returns `TicketQueryResult.complete(tickets)` rather than inventing a number.
+- **Skip an unmappable ticket; do not fail the page.** A source-side permission scheme can hide a required field (JIRA field-level security hides `summary`) from the browsing account while still returning the issue. Skip that row, count it, and log the count at WARN — never the row's content. It still counts toward `total`, so `truncated()` stays honest. This deliberately differs from `pollNewTickets`, which fails the whole batch: poll is a retriable background sweep where a hard failure is a legible signal; browse is a foreground request where partial results strictly beat none.
+- Return `TicketQueryResult.empty()` when nothing matches; throw a classified `TicketSourceAdapterException` on network/auth/state failures, exactly as `pollNewTickets` does. **The application service translates that exception** — see `TicketQueryService`, which maps `IntegrationFailureCategory` onto `TICKET_QUERY_SOURCE_UNAVAILABLE` (503, retryable) or `TICKET_QUERY_SOURCE_FAILED` (502). An adapter exception that reaches a controller uncaught renders as an opaque 500.
+- The **only** legal caller is `TicketQueryService` (the capability gate); REST and CLI route through it, never the adapter.
+
 ### `CommentResult postGovernedRunComment(TicketRef ref, GovernedRunComment summary)`
 
 - Best-effort write-back of a governed run summary to the source ticket.
@@ -31,7 +43,8 @@ Only `IntegrationLinkService` and the vendor-specific polling host bean may call
 
 ### `TicketSourceCapabilities getCapabilities()`
 
-- Declare which optional operations the source supports: `supportsCommentOnTicket`, `supportsPolling`, `supportsTicketStateUpdates`. Consuming services gate optional calls on these flags.
+- Declare which optional operations the source supports: `supportsCommentOnTicket`, `supportsPolling`, `supportsTicketStateUpdates`, `supportsTicketCreation`, `supportsSourceTicketUrl`, `supportsTicketQuery`. Consuming services gate optional calls on these flags.
+- Build the record through its named factories (`noCreation`, `linearDefaults`, `jiraDefaults`) — never a raw constructor call — so adding a flag stays a three-factory edit. There is **no reflective capability-drift test**: the assertions in `TicketSourceCapabilitiesTest` ARE the pin, so a new flag that is not asserted there is unguarded.
 
 ## Error classification
 
@@ -73,7 +86,29 @@ A new source must:
 - Cover config-driven selection: the configured `kind` (+ profile) activates the right implementation, and a `kind` with no implementation fails fast at boot.
 - Honor the test-naming conventions: `@SpringBootTest`+Testcontainers tests are `*IT` (Failsafe); ArchUnit `@ArchTest`s run in Failsafe, not Surefire.
 
+## Worked example: JIRA (story 3i-1)
+
+JIRA is the first non-Linear connector to exercise this contract end-to-end (`ConnectorKind.JIRA`,
+`kind=jira`, `adapters.integration.ticketsource.jira`). It is a **real** implementation (all
+capabilities true, real JIRA REST v3 HTTP) — the opposite of the degraded `gitlab` stub. Notes for
+the next author:
+
+- **Not `@Primary`.** Resolution keys on `connectorKind()`; a second `@Primary` collides with
+  `LinearRealAdapter` for the single-injection polling host when both real profiles co-activate.
+- **Vendor body format lives behind the port.** JIRA comment/description bodies are ADF; the
+  `<!-- deliveryline:... -->` markers are embedded in an ADF text node and scanned back by
+  extracting comment text. The neutral `Ticket`/`CommentResult`/`CreateSubticketResult` shapes are
+  unchanged — no ADF type crosses the port.
+- **State is read-only on the neutral `Ticket`.** `sourceStatus` (name) + `sourceStatusId` (opaque
+  `fields.status.id`) populate from `fields.status`; there is no state-write.
+- **Auth is deployment + per-project.** HTTP Basic `email:apiToken`; the email is deployment-level
+  (`deliveryline.jira.email`) and the token is the per-project write-only credential under
+  `ConnectorRole.TICKET_SOURCE`, preferred via the `CREDENTIAL_OVERRIDE_ATTRIBUTE` at request time.
+- **Doctor + redaction fan-out.** A `jira-auth` doctor probe + `DOCTOR_JIRA_{TOKEN_MISSING,AUTH_FAILED}`
+  codes, and a `project-credential-jira-token.json` redaction fixture (the Atlassian token rides a
+  `SECRET_FIELD`-covered key — Atlassian tokens have no stable prefix, so no vendor regex).
+
 ## References
 
-- `../adr/0007-ticket-source-abstraction.md` — the abstraction decision record.
+- `../adr/0007-ticket-source-abstraction.md` — the abstraction decision record (incl. the JIRA section).
 - `linear-completion-sync.md` — the completion-sync flow and security posture.

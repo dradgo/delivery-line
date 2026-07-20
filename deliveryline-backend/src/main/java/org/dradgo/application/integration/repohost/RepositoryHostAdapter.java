@@ -3,6 +3,7 @@ package org.dradgo.application.integration.repohost;
 import java.util.Optional;
 import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.domain.integration.repohost.Branch;
+import org.dradgo.domain.integration.repohost.CiStatus;
 import org.dradgo.domain.integration.repohost.CommentResult;
 import org.dradgo.domain.integration.repohost.PullRequest;
 import org.dradgo.domain.integration.repohost.PullRequestRef;
@@ -92,6 +93,22 @@ public interface RepositoryHostAdapter {
    * degrade when the host does not support comment posting.
    */
   CommentResult commentOnPullRequest(PullRequestRef ref, String body);
+
+  /**
+   * Story 3h-5 (AC1, FR79) — read the CI build verdict for a pushed commit. Returns a
+   * vendor-neutral {@link CiStatus} composed from the host's native check/pipeline API (for GitHub:
+   * the check-runs for the ref plus, for each failed run, its failure annotations). {@code ref} is
+   * a <strong>commit SHA</strong> — the pushed commit from {@code
+   * RepositoryPushOutcome.commitSha()}.
+   *
+   * <p><strong>Capability-gated.</strong> Callers MUST check {@link
+   * RepositoryHostCapabilities#supportsCiStatusReads()} first; a host that reports {@code false}
+   * may throw a classified {@link RepositoryHostAdapterException} here (its {@code SYNC_FAILURE}
+   * not-implemented signal). The adapter never retries — the scheduled sweep owns the retry/backoff
+   * budget; transient host failures surface as a classified {@link RepositoryHostAdapterException}
+   * the sweep swallows and retries next tick.
+   */
+  CiStatus readCheckRuns(RepositoryRef repo, String ref);
 
   /**
    * Declare which optional operations this repository host supports (story 3.33 AC3). Consuming

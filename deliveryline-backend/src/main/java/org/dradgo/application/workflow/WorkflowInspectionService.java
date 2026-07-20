@@ -1,16 +1,25 @@
 package org.dradgo.application.workflow;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collections;
+import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.dradgo.application.approval.ApprovalSnapshot;
 import org.dradgo.application.approval.spi.ApprovalReadPort;
 import org.dradgo.application.artifact.ArtifactChecksum;
@@ -27,23 +36,33 @@ import org.dradgo.application.integration.IntegrationLinkService.TicketOriginVie
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.project.ProjectStore;
 import org.dradgo.application.recovery.FailureDescription;
+import org.dradgo.application.recovery.RecommendationService;
+import org.dradgo.application.recovery.RecommendedAction;
 import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.spi.RecoveryActionRecordPort;
 import org.dradgo.application.recovery.spi.RecoveryActionSnapshot;
 import org.dradgo.application.runner.ContextBundle;
 import org.dradgo.application.runner.ProviderUsageSnapshotView;
 import org.dradgo.application.runner.ProviderUsageStatusService;
+import org.dradgo.application.runner.RedactedRunnerLog;
 import org.dradgo.application.runner.RunnerLogReference;
 import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.application.runner.RunnerWorkerPoolProperties;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
+import org.dradgo.application.runner.spi.RunnerLogStore;
 import org.dradgo.application.runner.spi.RunnerQueueCounts;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.security.RedactionPolicyService;
 import org.dradgo.application.security.RedactionResult;
+import org.dradgo.application.workflow.spi.FailureClassificationRecord;
+import org.dradgo.application.workflow.spi.OperatorRunAggregate;
+import org.dradgo.application.workflow.spi.OperatorRunQuery;
+import org.dradgo.application.workflow.spi.OperatorRunReadPort;
+import org.dradgo.application.workflow.spi.OperatorRunRowSnapshot;
 import org.dradgo.application.workflow.spi.WorkflowEventReadPort;
 import org.dradgo.application.workflow.spi.WorkflowEventRecord;
+import org.dradgo.application.workflow.spi.WorkflowRunFailureClassificationPort;
 import org.dradgo.application.workflow.spi.WorkflowRunReadPort;
 import org.dradgo.application.workflow.spi.WorkflowRunSnapshot;
 import org.dradgo.domain.DomainException;
@@ -54,9 +73,14 @@ import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.FailureCategory;
+import org.dradgo.domain.registry.FailureTaxonomyValue;
+import org.dradgo.domain.registry.IntegrationSyncStatus;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
+import org.dradgo.domain.registry.RunnerKind;
 import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowEventDetailKeys;
+import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -107,6 +131,12 @@ public class WorkflowInspectionService {
   // Story 3f-4 — threads hasOpenSplitProposal into the action matrix (advisory split overlay).
   private final org.dradgo.application.workflow.spi.SplitProposalReadPort splitProposalReadPort;
   private ProjectStore projectStore;
+  private org.dradgo.application.integration.conflict.IntegrationConflictService
+      integrationConflictService;
+  // Story 3h-5 (AC3) — resolves the CI detail read-model fields. Optional setter injection so the
+  // ~7 `new WorkflowInspectionService(...)` test sites are untouched; null in lean contexts ⇒ the
+  // neutral empty read model (ci fields null/0/false).
+  private org.dradgo.application.workflow.ci.CiReadModelResolver ciReadModelResolver;
   // Story 3b-5 — parses the structured prOutput payload (branch/commitSha/diff) for the
   // artifact-read projection. A plain instance field, not a constructor dependency, so the ~7 `new
   // WorkflowInspectionService(...)` test sites are untouched ([[runnerproperties-record-fanout]]).
@@ -166,6 +196,19 @@ public class WorkflowInspectionService {
     this.projectStore = projectStore;
   }
 
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setIntegrationConflictService(
+      org.dradgo.application.integration.conflict.IntegrationConflictService
+          integrationConflictService) {
+    this.integrationConflictService = integrationConflictService;
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setCiReadModelResolver(
+      org.dradgo.application.workflow.ci.CiReadModelResolver ciReadModelResolver) {
+    this.ciReadModelResolver = ciReadModelResolver;
+  }
+
   // Story 3f-3 (AC8) — the run-dependency read port, backing the dependency graph embedded in the
   // workflow detail. Optional SETTER injection (mirroring stepReviewReadPort / projectStore) so the
   // ~10 lean `new WorkflowInspectionService(...)` test ctors stay untouched; production Spring
@@ -185,6 +228,19 @@ public class WorkflowInspectionService {
     this.stepReviewReadPort = stepReviewReadPort;
   }
 
+  // Story 4.1 (AC2/AC6) — the operator fleet read port, backing getOperatorRunSummary. Optional
+  // SETTER injection (mirroring stepReviewReadPort / runDependencyPort / projectStore) so the ~10
+  // lean `new WorkflowInspectionService(...)` unit ctors stay untouched
+  // ([[runnerproperties-record-component-fanout]]); production Spring wires
+  // OperatorRunPersistenceAdapter. Absent in lean ctors → getOperatorRunSummary throws
+  // INTERNAL_ERROR (requireOperatorPortWired), never a NullPointerException.
+  private OperatorRunReadPort operatorRunReadPort;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setOperatorRunReadPort(OperatorRunReadPort operatorRunReadPort) {
+    this.operatorRunReadPort = operatorRunReadPort;
+  }
+
   // Story 3d-7 (FR69, AC5) — the provider-usage read service, backing getProviderUsageStatus.
   // Optional SETTER injection (mirroring stepReviewReadPort) so the lean `new
   // WorkflowInspectionService(...)` test ctors stay untouched; production Spring wires the
@@ -198,6 +254,45 @@ public class WorkflowInspectionService {
   @org.springframework.beans.factory.annotation.Autowired(required = false)
   void setProviderUsageStatusService(ProviderUsageStatusService providerUsageStatusService) {
     this.providerUsageStatusService = providerUsageStatusService;
+  }
+
+  // Story 4.4 (AC1/AC2) — the pure safety-ranking policy, backing getFailureDiagnostics'
+  // recommendedRecoveryActions. Optional SETTER injection (mirroring providerUsageStatusService) so
+  // the ~10 lean `new WorkflowInspectionService(...)` unit ctors stay untouched
+  // ([[docker-adapter-ctor-dep-fans-out]]); production Spring wires the application.recovery
+  // @Service. Absent in lean ctors → getFailureDiagnostics reports an empty recommendation list.
+  private RecommendationService recommendationService;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setRecommendationService(RecommendationService recommendationService) {
+    this.recommendationService = recommendationService;
+  }
+
+  // Story 4.9 (AC9) — the failure-classification read port, backing getFailureClassification.
+  // Optional SETTER injection (mirroring operatorRunReadPort) so the ~10 lean `new
+  // WorkflowInspectionService(...)` unit ctors stay untouched; production Spring wires
+  // WorkflowRunPersistenceAdapter. Absent in lean ctors → getFailureClassification throws
+  // INTERNAL_ERROR (requireFailureClassificationPortWired), never a NullPointerException.
+  private WorkflowRunFailureClassificationPort failureClassificationPort;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setFailureClassificationPort(
+      WorkflowRunFailureClassificationPort failureClassificationPort) {
+    this.failureClassificationPort = failureClassificationPort;
+  }
+
+  // Story 4.4 (AC5) — the durable redacted runner-log store, backing getRedactedRunnerLog (the seam
+  // the download endpoint reads; ArchUnit forbids adapters.rest from importing
+  // application.runner..,
+  // so the store is surfaced through this application.workflow service). Optional SETTER injection
+  // so
+  // the lean unit ctors stay untouched; production Spring wires adapters.files.LocalRunnerLogStore.
+  // Absent in lean ctors → getRedactedRunnerLog returns an `unavailable` result.
+  private RunnerLogStore runnerLogStore;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setRunnerLogStore(RunnerLogStore runnerLogStore) {
+    this.runnerLogStore = runnerLogStore;
   }
 
   /**
@@ -376,6 +471,83 @@ public class WorkflowInspectionService {
       boolean selfReview,
       String unavailableReason,
       OffsetDateTime createdAt) {}
+
+  // Story 3h-2 (AC6) — deserialize the lint_findings jsonb payload. Reused (not a per-call new
+  // mapper); a malformed payload degrades to `none` rather than 5xx-ing an advisory read leg.
+  private static final ObjectMapper LINT_FINDINGS_MAPPER = new ObjectMapper();
+
+  /**
+   * Story 3h-2 (AC6, FR76) — server-derived lint-findings projection for the advisory {@code GET
+   * …/lint-findings} read leg backing the FE lint panel (3h-6). Mirrors {@link
+   * #getReviewerVerdict}: read-only, prefix-validated only, NO governed action, and NEVER 5xx on
+   * missing/malformed findings (returns {@code state:"none"}). {@code state} is derived from the
+   * latest {@link RunnerStage#LINT} execution's findings AND the run's current state:
+   *
+   * <ul>
+   *   <li>{@code none} — no LINT execution, no findings payload, or an empty findings list;
+   *   <li>{@code gated} — critical findings AND the run is currently parked at {@code
+   *       WaitingForLintApproval} (the gate is actively holding delivery);
+   *   <li>{@code advisory} — findings present but not currently gating (non-critical, or
+   *       critical-but-already-approved).
+   * </ul>
+   */
+  @Transactional(readOnly = true)
+  public LintFindingsView getLintFindings(String workflowRunPublicId) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    org.dradgo.application.workflow.spi.WorkflowRunSnapshot run =
+        workflowRunReadPort
+            .findByPublicId(workflowRunPublicId)
+            .orElseThrow(() -> runNotFound(workflowRunPublicId));
+
+    Optional<org.dradgo.application.runner.spi.RunnerExecutionSnapshot> lintExec =
+        runnerExecutionRecordPort.findLatestByWorkflowRunPublicIdAndStage(
+            workflowRunPublicId, org.dradgo.domain.registry.RunnerStage.LINT);
+    if (lintExec.isEmpty() || lintExec.get().lintFindings() == null) {
+      // No findings detail available (never ran, or a serialize-null persist). Still derive the
+      // gate from the run's current state so a run PARKED at WaitingForLintApproval with a null
+      // findings column reads as "gated" (the operator sees an active gate) instead of "none".
+      boolean gated = run.currentState() == WorkflowState.WAITING_FOR_LINT_APPROVAL;
+      log.debug(
+          "getLintFindings {} workflowRunId={} (no lint execution/findings)",
+          gated ? "gated-without-findings" : "none",
+          workflowRunPublicId);
+      return new LintFindingsView(gated ? "gated" : "none", gated, List.of());
+    }
+
+    LintFindings findings = parseLintFindings(lintExec.get().lintFindings());
+    if (findings.findings().isEmpty()) {
+      return new LintFindingsView("none", findings.hasCritical(), List.of());
+    }
+    String state =
+        (findings.hasCritical() && run.currentState() == WorkflowState.WAITING_FOR_LINT_APPROVAL)
+            ? "gated"
+            : "advisory";
+    log.info(
+        "getLintFindings workflowRunId={} state={} findingCount={} hasCritical={}",
+        workflowRunPublicId,
+        state,
+        findings.findings().size(),
+        findings.hasCritical());
+    return new LintFindingsView(state, findings.hasCritical(), findings.findings());
+  }
+
+  private static LintFindings parseLintFindings(String json) {
+    try {
+      return LINT_FINDINGS_MAPPER.readValue(json, LintFindings.class);
+    } catch (RuntimeException | com.fasterxml.jackson.core.JsonProcessingException parseFailure) {
+      log.warn(
+          "getLintFindings could not parse lint_findings payload (treating as none): {}",
+          parseFailure.getMessage());
+      return LintFindings.clean();
+    }
+  }
+
+  /**
+   * Story 3h-2 (Task 4) — server-derived lint-findings projection for the {@code GET
+   * …/lint-findings} read leg. {@code state} ∈ {@code none|advisory|gated}; {@code findings} is the
+   * severity-classified list (empty when {@code state == none}).
+   */
+  public record LintFindingsView(String state, boolean hasCritical, List<LintFinding> findings) {}
 
   /**
    * Story 3g-4 (FR74, AC1) — the per-step token read leg backing {@code GET
@@ -856,6 +1028,395 @@ public class WorkflowInspectionService {
     return max.isZero() ? Duration.ofSeconds(1) : max;
   }
 
+  // Story 4.1 — operator fleet-view caps (AC3). Distinct from the listRuns 50/200 convention: an
+  // operator command can pull massive result sets, so we default 100 and hard-cap 500. Clamp (not
+  // reject) an out-of-range --limit, matching the listRuns clamp-limit convention (Dev Notes).
+  // The default limit (100) lives on the CLI @Option(defaultValue="100"); the service only clamps
+  // to
+  // [1, MAX] (listRuns convention) — no service-level default constant (removed as dead: review
+  // 4.1).
+  static final int OPERATOR_LIST_MAX_LIMIT = 500;
+
+  // Default operator-state selection when --state is omitted (AC3 / Reconciliation 5).
+  private static final Set<OperatorRunState> DEFAULT_OPERATOR_STATES =
+      Collections.unmodifiableSet(
+          EnumSet.of(OperatorRunState.FAILED, OperatorRunState.STALLED, OperatorRunState.ORPHANED));
+
+  // Story 4.1 Reconciliation 6 — the relative-duration grammar for --since. NOT ISO-8601
+  // Duration.parse (which needs `PT1H` and throws on `1h`); a small `(\d+)(m|h|d|w)` parser.
+  private static final Pattern RELATIVE_DURATION_PATTERN = Pattern.compile("(\\d+)([mhdw])");
+  private static final List<String> SINCE_SUPPORTED_FORMATS =
+      List.of("30m", "1h", "24h", "7d", "2w");
+
+  /**
+   * Story 4.1 (AC1/AC2/AC3) — the fleet-view read seam backing {@code deliveryline operator
+   * status}. Returns runs in non-happy operator states across ALL workflows with diagnostic
+   * summaries. READ-ONLY: touches no write / transition / queue / recovery path.
+   *
+   * <p>The five {@code --state} tokens are an OPERATOR-STATE vocabulary ({@link OperatorRunState}),
+   * NOT {@link WorkflowState} values (story 4.1 Reconciliation 1) — each maps to a derived
+   * predicate (Reconciliation 5). The two histograms ({@code byState} / {@code byFailureCategory}),
+   * {@code total}, and {@code oldestEntryAt} reflect the FULL matching set; {@code runs} is the
+   * {@code lastTransitionAt DESC} page capped by {@code --limit} (clamped to {@code [1,500]},
+   * default 100). All token / duration / limit resolution happens HERE so the CLI adapter stays
+   * thin (AC9).
+   *
+   * <p>AC8 (deferred): this is a prefix-free multi-run read like {@link #listRuns} — it carries NO
+   * governed {@code AllowedAction}. The {@code view_operator_status} action is deferred to E5+
+   * role-based access (Reconciliation 7); wire it into the {@code AllowedAction} registry then.
+   */
+  @Transactional(readOnly = true)
+  public OperatorRunSummary getOperatorRunSummary(OperatorRunFilter filter) {
+    Objects.requireNonNull(filter, "filter");
+    requireOperatorPortWired();
+    long start = System.nanoTime();
+    Set<OperatorRunState> states = resolveOperatorStates(filter.stateTokens());
+    Duration sinceWindow = parseRelativeDuration(filter.since());
+    int limit = Math.min(Math.max(filter.limit(), 1), OPERATOR_LIST_MAX_LIMIT);
+    Duration stallWindow = maxStaleWindow();
+    List<String> runnerKinds = resolveRunnerKinds(filter.runnerKinds());
+    List<String> failureCategories = resolveFailureCategories(filter.failureCategories());
+    CursorKeyset cursor = decodeCursor(filter.cursor());
+    log.info(
+        "getOperatorRunSummary entry states={} sinceSeconds={} stallSeconds={} limit={}"
+            + " runnerKinds={} failureCategories={} cursorPresent={}",
+        states,
+        sinceWindow == null ? null : sinceWindow.toSeconds(),
+        stallWindow.toSeconds(),
+        limit,
+        runnerKinds,
+        failureCategories,
+        cursor.active());
+
+    OperatorRunQuery query =
+        new OperatorRunQuery(
+            states.contains(OperatorRunState.FAILED),
+            states.contains(OperatorRunState.STALLED),
+            states.contains(OperatorRunState.ORPHANED),
+            states.contains(OperatorRunState.TAKENOVER),
+            states.contains(OperatorRunState.OVERRIDDEN),
+            sinceWindow,
+            stallWindow,
+            false,
+            runnerKinds,
+            failureCategories,
+            cursor.lastTransitionAt(),
+            cursor.runId());
+
+    OperatorRunAggregate aggregate = operatorRunReadPort.loadOperatorRunAggregate(query);
+    // Fetch limit+1 so a full extra row signals hasMore; drop it and encode nextCursor from the
+    // last KEPT row's keyset (story 4.2 AC5). The aggregate is cursor-independent (unchanged query
+    // path), so total/histograms stay stable across pages.
+    List<OperatorRunRowSnapshot> fetched = operatorRunReadPort.listOperatorRuns(query, limit + 1);
+    boolean hasMore = fetched.size() > limit;
+    List<OperatorRunRowSnapshot> rows = hasMore ? fetched.subList(0, limit) : fetched;
+    String nextCursor = hasMore ? encodeCursor(rows.get(rows.size() - 1)) : null;
+
+    Map<WorkflowState, Integer> byState = new EnumMap<>(WorkflowState.class);
+    aggregate
+        .countsByState()
+        .forEach(
+            (wire, count) -> byState.put(WorkflowState.fromValue(wire, "currentState"), count));
+    Map<FailureCategory, Integer> byFailureCategory = new EnumMap<>(FailureCategory.class);
+    aggregate
+        .countsByFailureCategory()
+        .forEach(
+            (wire, count) ->
+                byFailureCategory.put(FailureCategory.fromValue(wire, "failureCategory"), count));
+
+    // Story 4.18 (AC1) — batch-fetch the unresolved-conflict count for the page's runs in ONE
+    // grouped query (never per-row — that would N+1 the hot queue path). Nullable-guarded: absent
+    // the conflict service (lean contexts) every row reports 0.
+    List<String> pageRunIds = rows.stream().map(OperatorRunRowSnapshot::runId).toList();
+    Map<String, Integer> unresolvedConflictCounts =
+        integrationConflictService == null || pageRunIds.isEmpty()
+            ? Map.of()
+            : integrationConflictService.unresolvedCountByRun(pageRunIds);
+
+    List<OperatorRunRow> runRows = new ArrayList<>(rows.size());
+    for (OperatorRunRowSnapshot row : rows) {
+      runRows.add(
+          new OperatorRunRow(
+              row.runId(),
+              WorkflowState.fromValue(row.currentState(), "currentState"),
+              row.failureCategory(),
+              row.lastTransitionAt(),
+              row.actorIdentity(),
+              row.linkedTicketRef(),
+              row.linkedPrRef(),
+              row.escalationMarker(),
+              row.oldestEventAt(),
+              row.operatorSignifier(),
+              row.runnerKind(),
+              unresolvedConflictCounts.getOrDefault(row.runId(), 0)));
+    }
+
+    OperatorRunSummary summary =
+        new OperatorRunSummary(
+            aggregate.total(),
+            byState,
+            byFailureCategory,
+            aggregate.oldestEntryAt(),
+            runRows,
+            nextCursor);
+    log.info(
+        "getOperatorRunSummary success total={} returnedRows={} nextCursorPresent={} durationMs={}",
+        summary.total(),
+        runRows.size(),
+        nextCursor != null,
+        (System.nanoTime() - start) / 1_000_000L);
+    return summary;
+  }
+
+  private void requireOperatorPortWired() {
+    if (operatorRunReadPort == null) {
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("reason", "operator_run_read_port_not_wired");
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "OperatorRunReadPort is not wired; getOperatorRunSummary requires the persistence adapter",
+          details);
+    }
+  }
+
+  /**
+   * Resolve the raw comma-split {@code --state} tokens to the operator-state predicate set. Empty
+   * (no flag) → the default {@code {failed,stalled,orphaned}}; an unknown token raises {@code
+   * INVALID_COMMAND_PAYLOAD} (story 4.1 Reconciliation 7).
+   */
+  private Set<OperatorRunState> resolveOperatorStates(List<String> tokens) {
+    if (tokens == null || tokens.isEmpty()) {
+      return DEFAULT_OPERATOR_STATES;
+    }
+    Set<OperatorRunState> resolved = EnumSet.noneOf(OperatorRunState.class);
+    for (String token : tokens) {
+      if (token == null || token.isBlank()) {
+        continue;
+      }
+      resolved.add(OperatorRunState.fromToken(token.trim()));
+    }
+    return resolved.isEmpty() ? DEFAULT_OPERATOR_STATES : resolved;
+  }
+
+  /**
+   * Parse a relative {@code --since} token ({@code (\d+)(m|h|d|w)} → {@link Duration}); {@code
+   * null}/blank → no time filter. Invalid → {@code INVALID_COMMAND_PAYLOAD} with {@code
+   * details{since, supportedFormats}} (story 4.1 Reconciliation 6).
+   */
+  private Duration parseRelativeDuration(String since) {
+    if (since == null || since.isBlank()) {
+      return null;
+    }
+    String trimmed = since.trim();
+    Matcher matcher = RELATIVE_DURATION_PATTERN.matcher(trimmed);
+    if (!matcher.matches()) {
+      throw invalidSince(trimmed);
+    }
+    long amount;
+    try {
+      amount = Long.parseLong(matcher.group(1));
+    } catch (NumberFormatException overflow) {
+      throw invalidSince(trimmed);
+    }
+    if (amount <= 0) {
+      throw invalidSince(trimmed);
+    }
+    try {
+      // A big-but-parseable amount (e.g. 999999999999999d) overflows Duration's internal
+      // Math.multiplyExact — surface it as INVALID_COMMAND_PAYLOAD, not a raw ArithmeticException.
+      // The week case multiplies explicitly, so use multiplyExact there too (never a silent wrap).
+      return switch (matcher.group(2)) {
+        case "m" -> Duration.ofMinutes(amount);
+        case "h" -> Duration.ofHours(amount);
+        case "d" -> Duration.ofDays(amount);
+        case "w" -> Duration.ofDays(Math.multiplyExact(amount, 7L));
+        default -> throw invalidSince(trimmed);
+      };
+    } catch (ArithmeticException overflow) {
+      throw invalidSince(trimmed);
+    }
+  }
+
+  private DomainException invalidSince(String since) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("since", since);
+    details.put("supportedFormats", SINCE_SUPPORTED_FORMATS);
+    log.warn("getOperatorRunSummary invalid --since value since={}", MdcKeys.sanitizeForLog(since));
+    return new DomainException(
+        DomainErrorCode.INVALID_COMMAND_PAYLOAD, "Unsupported --since value: " + since, details);
+  }
+
+  /**
+   * Story 4.2 (AC3) — resolve the raw runner-kind filter tokens into de-duplicated wire strings,
+   * validated against the {@link RunnerKind} registry. Empty/blank input disables the filter
+   * (returns an empty list). An unknown token raises {@link
+   * DomainErrorCode#INVALID_COMMAND_PAYLOAD} (no silent drop), mirroring the {@code --since} /
+   * {@code --state} handling so the caller sees a typed error, not an empty result.
+   */
+  private List<String> resolveRunnerKinds(List<String> tokens) {
+    if (tokens == null || tokens.isEmpty()) {
+      return List.of();
+    }
+    List<String> resolved = new ArrayList<>();
+    for (String token : tokens) {
+      if (token == null || token.isBlank()) {
+        continue;
+      }
+      String normalized = token.trim().toLowerCase(java.util.Locale.ROOT);
+      RunnerKind kind = null;
+      for (RunnerKind candidate : RunnerKind.values()) {
+        if (candidate.value().equals(normalized)) {
+          kind = candidate;
+          break;
+        }
+      }
+      if (kind == null) {
+        throw invalidRunnerKind(token);
+      }
+      if (!resolved.contains(kind.value())) {
+        resolved.add(kind.value());
+      }
+    }
+    return resolved;
+  }
+
+  private DomainException invalidRunnerKind(String runnerKind) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("runnerKind", runnerKind);
+    List<String> supported = new ArrayList<>();
+    for (RunnerKind value : RunnerKind.values()) {
+      supported.add(value.value());
+    }
+    details.put("supportedRunnerKinds", supported);
+    log.warn(
+        "getOperatorRunSummary invalid runnerKind runnerKind={}",
+        MdcKeys.sanitizeForLog(runnerKind));
+    return new DomainException(
+        DomainErrorCode.INVALID_COMMAND_PAYLOAD, "Unsupported runnerKind: " + runnerKind, details);
+  }
+
+  /**
+   * Story 4.2 (AC3) — resolve the raw failure-category filter tokens into de-duplicated wire
+   * strings, validated against the {@link FailureCategory} registry. Empty/blank input disables the
+   * filter. An unknown token raises {@link DomainErrorCode#INVALID_COMMAND_PAYLOAD} (no silent
+   * drop).
+   */
+  private List<String> resolveFailureCategories(List<String> tokens) {
+    if (tokens == null || tokens.isEmpty()) {
+      return List.of();
+    }
+    List<String> resolved = new ArrayList<>();
+    for (String token : tokens) {
+      if (token == null || token.isBlank()) {
+        continue;
+      }
+      String normalized = token.trim().toLowerCase(java.util.Locale.ROOT);
+      FailureCategory category = null;
+      for (FailureCategory candidate : FailureCategory.values()) {
+        if (candidate.value().equals(normalized)) {
+          category = candidate;
+          break;
+        }
+      }
+      if (category == null) {
+        throw invalidFailureCategory(token);
+      }
+      if (!resolved.contains(category.value())) {
+        resolved.add(category.value());
+      }
+    }
+    return resolved;
+  }
+
+  private DomainException invalidFailureCategory(String failureCategory) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("failureCategory", failureCategory);
+    List<String> supported = new ArrayList<>();
+    for (FailureCategory value : FailureCategory.values()) {
+      supported.add(value.value());
+    }
+    details.put("supportedFailureCategories", supported);
+    log.warn(
+        "getOperatorRunSummary invalid failureCategory failureCategory={}",
+        MdcKeys.sanitizeForLog(failureCategory));
+    return new DomainException(
+        DomainErrorCode.INVALID_COMMAND_PAYLOAD,
+        "Unsupported failureCategory: " + failureCategory,
+        details);
+  }
+
+  /**
+   * Story 4.2 (AC5) — the decoded keyset cursor. {@code lastTransitionAt} is nullable (the cursor
+   * row sat in the {@code nulls last} tail); {@code runId} is the tiebreaker and is non-null when a
+   * cursor is active. A no-cursor request decodes to {@code inactive()} ({@code runId == null}).
+   */
+  private record CursorKeyset(OffsetDateTime lastTransitionAt, String runId) {
+    static CursorKeyset inactive() {
+      return new CursorKeyset(null, null);
+    }
+
+    boolean active() {
+      return runId != null;
+    }
+  }
+
+  /**
+   * Decode the opaque base64url {@code <lastTransitionAt>|<runId>} cursor (story 4.2 AC5). An empty
+   * timestamp segment encodes a {@code nulls last} tail cursor. Any malformed input (bad base64,
+   * wrong segment count, unparseable timestamp, blank run id) raises {@link
+   * DomainErrorCode#INVALID_COMMAND_PAYLOAD} with a sanitized {@code cursor} detail.
+   */
+  private CursorKeyset decodeCursor(String rawCursor) {
+    if (rawCursor == null || rawCursor.isBlank()) {
+      return CursorKeyset.inactive();
+    }
+    String decoded;
+    try {
+      decoded = new String(Base64.getUrlDecoder().decode(rawCursor.trim()), StandardCharsets.UTF_8);
+    } catch (IllegalArgumentException badBase64) {
+      throw invalidCursor(rawCursor);
+    }
+    int separator = decoded.indexOf('|');
+    if (separator < 0) {
+      throw invalidCursor(rawCursor);
+    }
+    String timestampPart = decoded.substring(0, separator);
+    String runId = decoded.substring(separator + 1);
+    if (runId.isBlank()) {
+      throw invalidCursor(rawCursor);
+    }
+    OffsetDateTime lastTransitionAt = null;
+    if (!timestampPart.isEmpty()) {
+      try {
+        lastTransitionAt = OffsetDateTime.parse(timestampPart);
+      } catch (DateTimeParseException badTimestamp) {
+        throw invalidCursor(rawCursor);
+      }
+    }
+    return new CursorKeyset(lastTransitionAt, runId);
+  }
+
+  /**
+   * Encode the last returned row's keyset into an opaque base64url cursor (story 4.2 AC5). A null
+   * {@code lastTransitionAt} encodes as an empty timestamp segment so the tail page decodes back to
+   * a {@code nulls last} cursor.
+   */
+  private String encodeCursor(OperatorRunRowSnapshot row) {
+    String timestampPart = row.lastTransitionAt() == null ? "" : row.lastTransitionAt().toString();
+    String raw = timestampPart + "|" + row.runId();
+    return Base64.getUrlEncoder()
+        .withoutPadding()
+        .encodeToString(raw.getBytes(StandardCharsets.UTF_8));
+  }
+
+  private DomainException invalidCursor(String cursor) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("cursor", cursor);
+    log.warn("getOperatorRunSummary invalid cursor cursor={}", MdcKeys.sanitizeForLog(cursor));
+    return new DomainException(
+        DomainErrorCode.INVALID_COMMAND_PAYLOAD, "Malformed operator-runs cursor", details);
+  }
+
   /**
    * Story 2.14 — recognized {@code actorRole} query-param values for the allowed-actions endpoint.
    * Distinct from {@link ApprovalReviewerRoleResolver}'s set: that resolver always falls back to a
@@ -872,6 +1433,16 @@ public class WorkflowInspectionService {
   static final String ROLE_PRODUCT_REVIEWER = "product_reviewer";
 
   static final String ROLE_WORKFLOW_OWNER = "workflow_owner";
+
+  // Story 4.6 code review (P1) — the reconcile_conflict overlay is only actionable for the workflow
+  // owner on a NON-terminal run, because RecoveryService.reconcile rejects terminal states with
+  // RECONCILE_NOT_APPLICABLE. Story 4.30 (Reconciliation 1) collapsed the former private
+  // RECONCILE_TERMINAL_STATES set — the third hardcode of the COMPLETED/TAKEN_OVER/RECONCILED
+  // triple
+  // — into the single WorkflowState.isTerminal() predicate. Gating the conflict scan on role +
+  // non-terminal state keeps the integration_conflicts query off the allowed-actions hot path (it
+  // never runs for non-owner roles or terminal runs) and stops the overlay from advertising an
+  // action that would always 409 — the same state-gating discipline as hasActiveSplitDispatch.
 
   /**
    * Story 3.20 (AC12 / OQ-3) — the developer-review actor role recognized for {@code
@@ -950,8 +1521,16 @@ public class WorkflowInspectionService {
       // keeps the spec bundle (the spec-approval flow). Without this the implementation-review
       // accept/reject PERMANENTLY 409s APPROVAL_VERSION_MISMATCH (stamp says spec=1, binder demands
       // the execution bundle), unfixable by refresh.
+      // Story 3h-2 (AC5) — WAITING_FOR_LINT_APPROVAL sits on the IMPLEMENTATION (between EXECUTING
+      // and REVIEW), so it reuses the EXECUTION context-bundle version like WAITING_FOR_REVIEW (not
+      // the spec bundle).
+      // Story 3h-4 (AC3) — WAITING_FOR_DELIVERY also sits on the IMPLEMENTATION tail (the
+      // pre-review
+      // push gate), so it reuses the EXECUTION context-bundle version like the lint gate.
       Integer bundleVersion =
-          state == WorkflowState.WAITING_FOR_REVIEW
+          (state == WorkflowState.WAITING_FOR_REVIEW
+                  || state == WorkflowState.WAITING_FOR_LINT_APPROVAL
+                  || state == WorkflowState.WAITING_FOR_DELIVERY)
               ? resolveImplementationContextBundleVersion(workflowRunPublicId)
               : resolveSpecContextBundleVersion(latestSpecPublicId);
 
@@ -970,6 +1549,13 @@ public class WorkflowInspectionService {
           (state == WorkflowState.WAITING_FOR_SPEC_APPROVAL
                   || state == WorkflowState.WAITING_FOR_REVIEW)
               && hasActiveSplitDispatch(workflowRunPublicId);
+      // Story 4.6 code review (P1): only the workflow owner on a non-terminal run can act on a
+      // conflict, so gate the scan on role + state (mirroring hasActiveSplitDispatch) rather than
+      // querying integration_conflicts on every getAllowedActions call.
+      boolean hasUnresolvedConflict =
+          ROLE_WORKFLOW_OWNER.equals(resolvedRole)
+              && !state.isTerminal()
+              && hasUnresolvedConflict(workflowRunPublicId);
       List<AllowedAction> actions =
           computeActionMatrix(
               state,
@@ -978,7 +1564,8 @@ public class WorkflowInspectionService {
               latestSpecPublicId,
               summary.archivedAt() != null,
               hasOpenSplitProposal,
-              hasActiveSplitDispatch);
+              hasActiveSplitDispatch,
+              hasUnresolvedConflict);
 
       AllowedActionsView view =
           new AllowedActionsView(
@@ -1028,7 +1615,8 @@ public class WorkflowInspectionService {
       String latestSpecPublicId,
       boolean archived,
       boolean hasOpenSplitProposal,
-      boolean hasActiveSplitDispatch) {
+      boolean hasActiveSplitDispatch,
+      boolean hasUnresolvedConflict) {
     List<AllowedAction> result =
         new ArrayList<>(
             baseActionMatrix(state, actorRole, pendingClarifications, latestSpecPublicId));
@@ -1038,6 +1626,14 @@ public class WorkflowInspectionService {
     // exists, else repropose_split + continue_as_single. (approve_split is added by 3f-5.) Appended
     // before the archive overlay so the gate actions stay grouped.
     appendSplitOverlay(result, state, actorRole, hasOpenSplitProposal, hasActiveSplitDispatch);
+    appendConflictOverlay(result, actorRole, hasUnresolvedConflict);
+    // Story 4.20 (AC9) — the Compare-Mode entry overlay. Additive + a no-op outside the bound
+    // state/role set (so every other matrix row stays byte-identical), mirroring the
+    // conflict/split overlays. Surfaces enter_compare_mode BROADLY for the reviewing/inspecting
+    // roles; the FE combines it with the concrete per-artifact version>1 predicate and picks the
+    // A/B pair, so the matrix stays version-agnostic (no artifact read in the pure state×role
+    // switch).
+    appendCompareOverlay(result, state, actorRole);
     // Soft-hide is a run-owner triage affordance only (review decision 3d-8/D1): gate
     // archive_run/unarchive_run to workflow_owner, mirroring RETRY / OPEN_DIAGNOSTIC_CONSOLE.
     // It stays additive + orthogonal to the per-state lifecycle actions, just role-scoped.
@@ -1049,6 +1645,45 @@ public class WorkflowInspectionService {
 
   // Story 3f-4 (AC1) — the proposal-aware split overlay. A no-op outside the two gate/role
   // combinations, so every other matrix row stays byte-identical.
+  private void appendConflictOverlay(
+      List<AllowedAction> actions, String actorRole, boolean hasUnresolvedConflict) {
+    if (hasUnresolvedConflict && ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+      actions.add(AllowedAction.RECONCILE_CONFLICT);
+    }
+  }
+
+  // Story 4.20 (AC9, Reconciliation 4 / OQ-1) — surface enter_compare_mode for the
+  // reviewing/inspecting roles at the artifact-review + operator states: WAITING_FOR_SPEC_APPROVAL
+  // (product_reviewer / workflow_owner), WAITING_FOR_REVIEW (developer), FAILED / PAUSED
+  // (workflow_owner — the operator failure-context compare, AC10.c). A no-op for every other
+  // state×role so all other matrix rows stay byte-identical. The backend action means "compare is
+  // conceptually reachable for this run+role"; the FE re-gates on the concrete artifact version>1
+  // and picks the A/B pair, keeping the matrix version-agnostic.
+  private void appendCompareOverlay(
+      List<AllowedAction> actions, WorkflowState state, String actorRole) {
+    boolean specGateReviewer =
+        state == WorkflowState.WAITING_FOR_SPEC_APPROVAL
+            && (ROLE_PRODUCT_REVIEWER.equals(actorRole) || ROLE_WORKFLOW_OWNER.equals(actorRole));
+    boolean reviewGateDeveloper =
+        state == WorkflowState.WAITING_FOR_REVIEW && ROLE_DEVELOPER.equals(actorRole);
+    boolean operatorState =
+        (state == WorkflowState.FAILED || state == WorkflowState.PAUSED)
+            && ROLE_WORKFLOW_OWNER.equals(actorRole);
+    if (specGateReviewer || reviewGateDeveloper || operatorState) {
+      actions.add(AllowedAction.ENTER_COMPARE_MODE);
+    }
+  }
+
+  private boolean hasUnresolvedConflict(String workflowRunPublicId) {
+    if (integrationConflictService == null) {
+      return false;
+    }
+    return !integrationConflictService
+        .listUnresolvedConflicts(
+            org.dradgo.application.integration.conflict.ConflictFilter.forRun(workflowRunPublicId))
+        .isEmpty();
+  }
+
   private void appendSplitOverlay(
       List<AllowedAction> actions,
       WorkflowState state,
@@ -1132,6 +1767,9 @@ public class WorkflowInspectionService {
           actions.add(AllowedAction.VIEW_RUNNER_LOGS);
           if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
             actions.add(AllowedAction.OPEN_DIAGNOSTIC_CONSOLE);
+            // Story 4.8 (AC10): pause is offered at every PAUSABLE_SOURCE_STATES arm for the
+            // workflow_owner gate role (canonical executor RecoveryService.pause).
+            actions.add(AllowedAction.PAUSE_WORKFLOW);
           }
           return List.copyOf(actions);
         }
@@ -1163,11 +1801,13 @@ public class WorkflowInspectionService {
           // + workflow_owner here). The run owner can also drive them; other recognized roles (e.g.
           // developer) keep the view + answer set only.
           if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+            // Story 4.8 (AC10): + pause_workflow (a pausable source state; workflow_owner only).
             return List.of(
                 AllowedAction.VIEW_ONLY,
                 AllowedAction.ANSWER_CLARIFICATION,
                 AllowedAction.ACCEPT_CLARIFICATION,
-                AllowedAction.REGENERATE_SPEC);
+                AllowedAction.REGENERATE_SPEC,
+                AllowedAction.PAUSE_WORKFLOW);
           }
           return List.of(AllowedAction.VIEW_ONLY, AllowedAction.ANSWER_CLARIFICATION);
         }
@@ -1180,12 +1820,14 @@ public class WorkflowInspectionService {
         // live-container states where a container exists to attach; the endpoint re-checks liveness
         // at attach time (LIVE-ONLY, DD-3).
         if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+          // Story 4.8 (AC10): + pause_workflow (a pausable source state; workflow_owner only).
           return List.of(
               AllowedAction.VIEW_ONLY,
               AllowedAction.AWAIT_OUTCOME,
               AllowedAction.VIEW_RUNNER_LOGS,
               AllowedAction.OPEN_DIAGNOSTIC_CONSOLE,
-              AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
+              AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+              AllowedAction.PAUSE_WORKFLOW);
         }
         return List.of(
             AllowedAction.VIEW_ONLY,
@@ -1206,6 +1848,21 @@ public class WorkflowInspectionService {
               AllowedAction.VIEW_RUNNER_LOGS,
               AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
         }
+        // Story 4.7 (AC10): rerun_from_step is surfaced to the workflow_owner here (canonical
+        // executor RecoveryService.rerunFromStep). WAITING_FOR_REVIEW has a legal rerun edge to
+        // Executing (WAITING_FOR_REVIEW→INVESTIGATING is unwired and would surface
+        // ILLEGAL_TRANSITION
+        // if attempted — the flat action does not enumerate the sub-steps, that is story
+        // 4.12/4.22).
+        if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+          // Story 4.8 (AC10): + pause_workflow (a pausable source state; workflow_owner only).
+          return List.of(
+              AllowedAction.RERUN_FROM_STEP,
+              AllowedAction.PAUSE_WORKFLOW,
+              AllowedAction.VIEW_ONLY,
+              AllowedAction.VIEW_RUNNER_LOGS,
+              AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
+        }
         return List.of(
             AllowedAction.VIEW_ONLY,
             AllowedAction.VIEW_RUNNER_LOGS,
@@ -1216,10 +1873,17 @@ public class WorkflowInspectionService {
         // other role gets view_only. The endpoints that honor these land in 3d-4; 3d-3 only
         // registers + surfaces them so the run already advertises them when 3d-4 wires the routes.
         if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+          // Story 4.8 (AC10): + pause_workflow (a pausable source state; workflow_owner only). The
+          // parked awaiting_manual row is NOT cancelled by pause (Reconciliation 5) — while
+          // Paused, a manual-artifact submission gets a clean ILLEGAL_TRANSITION 409 from
+          // ManualArtifactSubmissionService's explicit current-state gate (4.8 review: the
+          // PAUSED → WaitingForSpecApproval/WaitingForReview resume edges made the transition
+          // itself legal, so the table alone no longer rejects it); the operator resumes first.
           return List.of(
               AllowedAction.OBTAIN_MANUAL_BUNDLE,
               AllowedAction.SUBMIT_MANUAL_ARTIFACT,
-              AllowedAction.VIEW_ONLY);
+              AllowedAction.VIEW_ONLY,
+              AllowedAction.PAUSE_WORKFLOW);
         }
         return List.of(AllowedAction.VIEW_ONLY);
       case SPLIT:
@@ -1230,6 +1894,45 @@ public class WorkflowInspectionService {
         // when its prerequisites complete, so no spec/plan/manual/approval actions are exposed. The
         // computeActionMatrix wrapper still appends archive/unarchive for the workflow owner.
         return List.of(AllowedAction.VIEW_ONLY);
+      case WAITING_FOR_LINT_APPROVAL:
+        // Story 3h-2 (AC5): the pre-review lint gate. Its two operator actions (approve_lint /
+        // request_lint_fix) are surfaced ONLY to the workflow_owner gate role
+        // ([recovery-bar-wrong-allowed-actions-role]); every other role gets view-only + the log/
+        // usage views (the LINT + producing runner execution logs are a primary diagnostic here).
+        if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+          // Story 4.8 (AC10): + pause_workflow (a pausable source state; workflow_owner only).
+          return List.of(
+              AllowedAction.APPROVE_LINT,
+              AllowedAction.REQUEST_LINT_FIX,
+              AllowedAction.VIEW_ONLY,
+              AllowedAction.VIEW_RUNNER_LOGS,
+              AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+              AllowedAction.PAUSE_WORKFLOW);
+        }
+        return List.of(
+            AllowedAction.VIEW_ONLY,
+            AllowedAction.VIEW_RUNNER_LOGS,
+            AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
+      case WAITING_FOR_DELIVERY:
+        // Story 3h-4 (AC3): the unified delivery gate. Its single operator action
+        // (approve_delivery)
+        // is surfaced ONLY to the workflow_owner gate role
+        // ([recovery-bar-wrong-allowed-actions-role]); every other role gets view-only + the log/
+        // usage views (the producing PR_OUTPUT runner execution logs are a primary diagnostic
+        // here).
+        if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+          // Story 4.8 (AC10): + pause_workflow (a pausable source state; workflow_owner only).
+          return List.of(
+              AllowedAction.APPROVE_DELIVERY,
+              AllowedAction.VIEW_ONLY,
+              AllowedAction.VIEW_RUNNER_LOGS,
+              AllowedAction.VIEW_PROVIDER_USAGE_STATUS,
+              AllowedAction.PAUSE_WORKFLOW);
+        }
+        return List.of(
+            AllowedAction.VIEW_ONLY,
+            AllowedAction.VIEW_RUNNER_LOGS,
+            AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
       case COMPLETED:
         return List.of(AllowedAction.VIEW_ONLY);
       case FAILED:
@@ -1237,8 +1940,20 @@ public class WorkflowInspectionService {
           // Story 3d-5 (AC6): the failed runner execution's logs are a primary diagnostic surface,
           // so view_runner_logs is offered to every role here.
           if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+            // Story 4.7 (AC10): rerun_from_step is surfaced alongside retry for the workflow_owner
+            // (canonical executor RecoveryService.rerunFromStep). FAILED has a legal rerun edge to
+            // both Investigating and Executing.
+            // Story 4.8 (AC10): + pause_workflow — FAILED is a MANDATORY pausable source (4.4's
+            // RecommendationService already advertises pause as safe on Failed runs).
+            // Story 4.9 (AC11): + classify_failure — the governed failure-taxonomy affordance
+            // (canonical executor RecoveryService.classifyFailure, a pure metadata operation).
+            // FAILED-only + workflow_owner-only, matching the service's CLASSIFY_NOT_APPLICABLE
+            // gate.
             return List.of(
                 AllowedAction.RETRY,
+                AllowedAction.RERUN_FROM_STEP,
+                AllowedAction.PAUSE_WORKFLOW,
+                AllowedAction.CLASSIFY_FAILURE,
                 AllowedAction.VIEW_DIAGNOSTICS,
                 AllowedAction.VIEW_RUNNER_LOGS,
                 AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
@@ -1250,8 +1965,18 @@ public class WorkflowInspectionService {
               AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
         }
       case PAUSED:
-        // SEAM (Epic 4): Epic 4 adds resume here for workflow_owner.
-        // Story 3d-5 (AC6): the paused run's runner execution logs remain viewable.
+        // Story 4.5 (AC9): resume_workflow is surfaced ONLY to the workflow_owner gate role
+        // (canonical executor RecoveryService.resume). Other roles keep the view-only +
+        // diagnostics/
+        // log set. Story 3d-5 (AC6): the paused run's runner execution logs remain viewable.
+        if (ROLE_WORKFLOW_OWNER.equals(actorRole)) {
+          return List.of(
+              AllowedAction.RESUME_WORKFLOW,
+              AllowedAction.VIEW_ONLY,
+              AllowedAction.VIEW_DIAGNOSTICS,
+              AllowedAction.VIEW_RUNNER_LOGS,
+              AllowedAction.VIEW_PROVIDER_USAGE_STATUS);
+        }
         return List.of(
             AllowedAction.VIEW_ONLY,
             AllowedAction.VIEW_DIAGNOSTICS,
@@ -1399,6 +2124,13 @@ public class WorkflowInspectionService {
               runnerExecutionRecordPort.findByWorkflowRunPublicIdAndStatusIn(
                   run.publicId(), ALL_RUNNER_EXECUTION_STATUSES));
 
+      // Story 3h-5 (AC3) — CI-investigation read model. Neutral empty when no resolver is wired
+      // (lean test contexts): ci fields null/0/false.
+      org.dradgo.application.workflow.ci.CiReadModelResolver.CiRunReadModel ciReadModel =
+          ciReadModelResolver == null
+              ? org.dradgo.application.workflow.ci.CiReadModelResolver.CiRunReadModel.empty()
+              : ciReadModelResolver.resolve(run.publicId());
+
       WorkflowStatusView view =
           new WorkflowStatusView(
               run.publicId(),
@@ -1424,7 +2156,11 @@ public class WorkflowInspectionService {
               project == null ? null : project.projectSlug(),
               dependencyGraph,
               decompositionStatus,
-              runTotalTokens);
+              runTotalTokens,
+              ciReadModel.ciStatus(),
+              ciReadModel.ciHeadSha(),
+              ciReadModel.ciFixLoopCount(),
+              ciReadModel.ciChecksEnforced());
       log.info(
           "inspecting workflow_run snapshot success workflowRunId={} currentState={}"
               + " totalTokensPresent={}",
@@ -1907,6 +2643,7 @@ public class WorkflowInspectionService {
               artifact.publicId(),
               artifact.artifactType().value(),
               artifact.version(),
+              artifact.parentArtifactId(),
               artifact.status().value(),
               artifact.classification().value(),
               artifact.createdAt(),
@@ -2313,6 +3050,396 @@ public class WorkflowInspectionService {
     }
   }
 
+  /**
+   * Story 4.4 (AC1/AC7) — assemble the typed failure-diagnostics deep-dive view for a run, REUSING
+   * {@link RecoveryService#describeFailure} for the failure spread ({@code failedStage} / {@code
+   * lastSuccessfulStage} / {@code failureCategory} / {@code failureTimestamp} / {@code
+   * lastActivityTimestamp} / {@code nextSafeAction} / {@code correlationId} — never re-derived) and
+   * adding the redacted failure reason, the runner-log reference, per-integration sync status, the
+   * dependency-blocking reason, the last actor (NFR7 "who acted"), and the safety-ranked
+   * recommended recovery actions.
+   *
+   * <p>A non-{@code Failed} run gets a benign view: {@code describeFailure} yields {@code
+   * view_only}/{@code await_outcome} with null failure fields and {@link RecommendationService}
+   * returns an empty list. All nested fields are nullable-documented (NOT {@link Optional}).
+   * Read-only — never mutates state, never logs the raw reason.
+   *
+   * @param workflowRunId the {@code run_}-prefixed run id (prefix-validated first; {@code
+   *     RUN_NOT_FOUND} when absent)
+   */
+  @Transactional(readOnly = true)
+  public FailureDiagnostics getFailureDiagnostics(String workflowRunId) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    try {
+      log.info("getFailureDiagnostics entry workflowRunId={}", workflowRunId);
+      WorkflowRunSnapshot run =
+          workflowRunReadPort
+              .findByPublicId(workflowRunId)
+              .orElseThrow(() -> runNotFound(workflowRunId));
+
+      // REUSE the failure read — do NOT re-derive the failure spread (Reconciliation 1).
+      FailureDescription failure = recoveryService.describeFailure(workflowRunId);
+
+      Optional<WorkflowEventRecord> latestFailureEvent =
+          workflowEventReadPort.findLatestFailureEvent(workflowRunId);
+      String failureReason =
+          redactReason(latestFailureEvent.map(WorkflowEventRecord::reason).orElse(null));
+
+      // NFR7 "who acted" — the latest RECOVERY or TAKEOVER actor, or `system` when unattributed.
+      String lastActorIdentity = deriveWhoActed(run, workflowRunId);
+
+      // runnerLogReference? — the latest rex for the run, surfaced only when a log actually exists.
+      // Flatten the application.runner RunnerLogReference into an application.workflow view HERE so
+      // the CLI/REST adapters never import application.runner (ArchUnit).
+      RunnerLogReferenceResult logResult =
+          findLatestRunnerExecutionId(workflowRunId)
+              .map(this::getRunnerLogReference)
+              .filter(RunnerLogReferenceResult::available)
+              .orElse(null);
+      RunnerLogReferenceView runnerLogReference =
+          logResult == null
+              ? null
+              : new RunnerLogReferenceView(
+                  logResult.runnerExecutionId(),
+                  logResult.reference().referencePath(),
+                  logResult.reference().byteSize(),
+                  logResult.reference().classification().value(),
+                  logResult.reference().redactionCount());
+
+      // integrationSyncStatus { linear, github } — Reconciliation 8 (non-locking read-only links).
+      IntegrationSyncStatusView linearSyncStatus =
+          integrationLinkService
+              .findActiveLinearLinkReadOnly(workflowRunId)
+              .map(WorkflowInspectionService::toIntegrationSyncStatus)
+              .orElse(null);
+      IntegrationSyncStatusView githubSyncStatus =
+          integrationLinkService
+              .findActiveGitHubPrLinkReadOnly(workflowRunId)
+              .map(WorkflowInspectionService::toIntegrationSyncStatus)
+              .orElse(null);
+      boolean linearDrift = isSyncDrift(linearSyncStatus);
+      boolean githubDrift = isSyncDrift(githubSyncStatus);
+
+      // currentBlockingReason — dependency blocked-on set OR await_manual_reconciliation.
+      RunDependencyGraphView dependencyGraph =
+          runDependencyPort == null
+              ? RunDependencyGraphView.empty()
+              : runDependencyPort.graphView(run.publicId());
+      String currentBlockingReason =
+          deriveBlockingReason(failure.nextSafeAction(), dependencyGraph);
+
+      List<RecommendedAction> ranked =
+          recommendationService == null
+              ? List.of()
+              : recommendationService.recommend(
+                  run.currentState(),
+                  failure.failureCategory(),
+                  linearDrift,
+                  githubDrift,
+                  failure.nextSafeAction());
+      List<RecommendedActionView> recommendedRecoveryActions =
+          ranked.stream().map(WorkflowInspectionService::toRecommendedActionView).toList();
+
+      FailureDiagnostics diagnostics =
+          new FailureDiagnostics(
+              run.currentState(),
+              failure.failedStage(),
+              failure.lastSuccessfulStage(),
+              failure.failureCategory(),
+              failureReason,
+              failure.failureTimestamp(),
+              failure.lastActivityTimestamp(),
+              failure.diagnosticReferenceCorrelationId(),
+              // lastGoodState shares the failure event's priorState source (documented overlap).
+              failure.lastSuccessfulStage(),
+              currentBlockingReason,
+              failure.nextSafeAction(),
+              lastActorIdentity,
+              runnerLogReference,
+              linearSyncStatus,
+              githubSyncStatus,
+              recommendedRecoveryActions);
+      log.info(
+          "getFailureDiagnostics success workflowRunId={} currentState={} resultingRecommendationCount={}"
+              + " runnerLogPresent={}",
+          workflowRunId,
+          run.currentState().value(),
+          recommendedRecoveryActions.size(),
+          runnerLogReference != null);
+      return diagnostics;
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  /**
+   * Story 4.9 (AC9) — the failure-classification read surface: the CURRENT classification triple
+   * from the {@code workflow_runs} columns plus the full PRIOR chain reconstructed from the run's
+   * {@code recovery.failureClassified} events (FR47 append-only — re-classification overwrites the
+   * column but every application is preserved as an event). Deliberately a NEW method, NOT a
+   * widening of {@link FailureDiagnostics} — that record is mirrored 1:1 by {@code
+   * FailureDiagnosticsResponse} and pinned by the OpenAPI snapshot contract, and 4.9 ships no REST
+   * surface (4.14 consumes this).
+   *
+   * <p>Labels render via {@code FailureTaxonomyValue.displayLabel()}, so a future deprecated value
+   * reads {@code "legacy_value (deprecated)"} while staying fully parseable (NFR33 — reads are
+   * total). A never-classified run returns a view with null current fields and an empty prior list.
+   *
+   * @param workflowRunId the {@code run_}-prefixed run id (prefix-validated first; {@code
+   *     RUN_NOT_FOUND} when absent)
+   */
+  @Transactional(readOnly = true)
+  public FailureClassificationView getFailureClassification(String workflowRunId) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    requireFailureClassificationPortWired();
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    try {
+      log.info("getFailureClassification entry workflowRunId={}", workflowRunId);
+      // Story 4.24 (AC/Task 3) — an unknown run id is RUN_NOT_FOUND (404); a KNOWN but
+      // never-classified run falls through to a null current classification + empty priors (200).
+      // The existence probe runs after requireFailureClassificationPortWired() so an unwired port
+      // still surfaces INTERNAL_ERROR first.
+      workflowRunReadPort
+          .findByPublicId(workflowRunId)
+          .orElseThrow(() -> runNotFound(workflowRunId));
+      Optional<FailureClassificationRecord> current =
+          failureClassificationPort.findClassification(workflowRunId);
+
+      // The classify event chain, ascending; every event's own taxonomyValue is one applied
+      // classification. The LAST one mirrors the current column value; everything before it is a
+      // prior classification, rendered most-recent-first (AC9 "previously Y at Z").
+      List<WorkflowEventRecord> classifyEvents =
+          workflowEventReadPort.listByWorkflowRunPublicId(workflowRunId, null).stream()
+              .filter(event -> event.eventType() == WorkflowEventType.RECOVERY_FAILURE_CLASSIFIED)
+              .toList();
+      List<PriorClassification> priors = new ArrayList<>();
+      for (int i = classifyEvents.size() - 2; i >= 0; i--) {
+        WorkflowEventRecord event = classifyEvents.get(i);
+        Object wire = event.details().get(WorkflowEventDetailKeys.TAXONOMY_VALUE);
+        if (wire == null) {
+          continue;
+        }
+        FailureTaxonomyValue taxonomy =
+            FailureTaxonomyValue.fromNullableValue(wire.toString(), "details.taxonomyValue");
+        priors.add(
+            new PriorClassification(
+                taxonomy.value(),
+                taxonomy.displayLabel(),
+                event.createdAt(),
+                event.actorIdentity()));
+      }
+
+      FailureTaxonomyValue currentTaxonomy =
+          current.map(FailureClassificationRecord::taxonomyValue).orElse(null);
+      FailureClassificationView view =
+          new FailureClassificationView(
+              currentTaxonomy == null ? null : currentTaxonomy.value(),
+              currentTaxonomy == null ? null : currentTaxonomy.displayLabel(),
+              currentTaxonomy != null && currentTaxonomy.deprecated(),
+              currentTaxonomy == null ? null : currentTaxonomy.deprecatedReplacementValue(),
+              current.map(FailureClassificationRecord::classifiedAt).orElse(null),
+              current.map(FailureClassificationRecord::classifiedBy).orElse(null),
+              List.copyOf(priors));
+      log.info(
+          "getFailureClassification success workflowRunId={} classified={} priorCount={}",
+          workflowRunId,
+          currentTaxonomy != null,
+          priors.size());
+      return view;
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  private void requireFailureClassificationPortWired() {
+    if (failureClassificationPort == null) {
+      throw new DomainException(
+          DomainErrorCode.INTERNAL_ERROR,
+          "WorkflowRunFailureClassificationPort is not wired",
+          Map.of("reason", "failure_classification_port_unwired"));
+    }
+  }
+
+  /**
+   * Story 4.4 (AC5) — surface the ALREADY-redacted runner log (stdout/stderr/truncated) + the
+   * on-disk classification/byteSize metadata + the resolved {@code workflowRunId} (for the download
+   * endpoint's {@code view_runner_logs} gate) through {@code application.workflow}, so {@code
+   * adapters.rest} never imports {@code application.runner..} (ArchUnit — Reconciliation 6/7).
+   *
+   * <p><strong>Does NOT re-redact</strong> and <strong>does NOT route through {@code
+   * redactForExport}</strong> (Reconciliation 4): the story-3.6 capture already wrote only
+   * sanitized bytes and classified {@code local-only} by default, so the export path would throw
+   * {@code EXPORT_CLASSIFICATION_VIOLATION}. This is a local-operator read. The served
+   * classification is asserted {@code local-only}|{@code shareable-redacted} (never {@code
+   * shareable-full}/{@code derived-public-safe}); anything else degrades to an {@code unavailable}
+   * result → 404.
+   *
+   * <p>Returns an {@code unavailable} result (reasons {@code runnerExecutionNotFound} / {@code
+   * logsNotCaptured} / {@code classificationNotServable}) mirroring {@link #getRunnerLogReference}
+   * when the rex is missing, has no captured log, the store is unwired, or the classification is
+   * not servable.
+   */
+  @Transactional(readOnly = true)
+  public RedactedRunnerLogView getRedactedRunnerLog(String runnerExecutionId) {
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
+    try {
+      log.info("getRedactedRunnerLog entry runnerExecutionId={}", runnerExecutionId);
+      Optional<RunnerExecutionSnapshot> rex =
+          runnerExecutionRecordPort.findByPublicId(runnerExecutionId);
+      if (rex.isEmpty()) {
+        log.warn(
+            "getRedactedRunnerLog miss runnerExecutionId={} reason=runnerExecutionNotFound",
+            runnerExecutionId);
+        return RedactedRunnerLogView.unavailable(runnerExecutionId, "runnerExecutionNotFound");
+      }
+      RunnerExecutionSnapshot snapshot = rex.get();
+      Optional<RedactedRunnerLog> redacted =
+          runnerLogStore == null
+              ? Optional.empty()
+              : runnerLogStore.readRedacted(runnerExecutionId);
+      if (redacted.isEmpty()) {
+        log.warn(
+            "getRedactedRunnerLog miss runnerExecutionId={} reason=logsNotCaptured",
+            runnerExecutionId);
+        return RedactedRunnerLogView.unavailable(runnerExecutionId, "logsNotCaptured");
+      }
+      DataClassification classification =
+          snapshot.rawOutputClassification() == null
+              ? DataClassification.LOCAL_ONLY
+              : snapshot.rawOutputClassification();
+      if (classification != DataClassification.LOCAL_ONLY
+          && classification != DataClassification.SHAREABLE_REDACTED) {
+        log.warn(
+            "getRedactedRunnerLog refused runnerExecutionId={} reason=classificationNotServable"
+                + " classification={}",
+            runnerExecutionId,
+            classification.value());
+        return RedactedRunnerLogView.unavailable(runnerExecutionId, "classificationNotServable");
+      }
+      RedactedRunnerLog body = redacted.get();
+      log.info(
+          "getRedactedRunnerLog success runnerExecutionId={} classification={} byteSize={} truncated={}",
+          runnerExecutionId,
+          classification.value(),
+          snapshot.rawOutputByteSize(),
+          body.truncated());
+      return RedactedRunnerLogView.available(
+          runnerExecutionId,
+          snapshot.workflowRunPublicId(),
+          body.stdout(),
+          body.stderr(),
+          body.truncated(),
+          classification.value(),
+          snapshot.rawOutputByteSize());
+    } finally {
+      MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
+    }
+  }
+
+  private static RecommendedActionView toRecommendedActionView(RecommendedAction action) {
+    return new RecommendedActionView(
+        action.actionType(), action.safetyLevel(), action.reason(), action.precondition());
+  }
+
+  private static IntegrationSyncStatusView toIntegrationSyncStatus(
+      org.dradgo.application.integration.IntegrationLink link) {
+    return new IntegrationSyncStatusView(
+        link.integrationType(),
+        link.externalRef(),
+        link.syncStatus().value(),
+        link.lastSyncAt() == null ? null : link.lastSyncAt().atOffset(ZoneOffset.UTC));
+  }
+
+  private static boolean isSyncDrift(IntegrationSyncStatusView view) {
+    if (view == null) {
+      return false;
+    }
+    return IntegrationSyncStatus.STALE.value().equals(view.syncStatus())
+        || IntegrationSyncStatus.FAILED.value().equals(view.syncStatus());
+  }
+
+  // NFR7 "who acted" (story 4.4 review) — attribute to the latest RECOVERY or TAKEOVER actor, never
+  // to a later intervention event (audit.logDownloaded / workflow.archived / console.*). Using the
+  // run's latest event of ANY type let a downloader's audit.logDownloaded mask the real actor once
+  // an operator downloaded the redacted log. Takeover is a workflow.stateChanged event (not a
+  // distinct event_type), so it is attributed via the same authoritative source getRunSummary uses
+  // (the takeover recovery_actions row, else the → TakenOver transition event). Falls back to
+  // "system" when no recovery/takeover actor exists.
+  private static final java.util.List<String> RECOVERY_ACTOR_EVENT_TYPES =
+      java.util.List.of(
+          WorkflowEventType.RECOVERY_RETRIED.value(),
+          WorkflowEventType.RECOVERY_RECONCILED.value());
+
+  private String deriveWhoActed(WorkflowRunSnapshot run, String workflowRunId) {
+    if (run.currentState() == WorkflowState.TAKEN_OVER) {
+      Optional<String> takeoverActor =
+          recoveryActionRecordPort
+              .findLatestTakeoverForRun(workflowRunId)
+              .map(RecoveryActionSnapshot::actorIdentity)
+              .filter(actor -> actor != null && !actor.isBlank());
+      if (takeoverActor.isPresent()) {
+        return takeoverActor.get();
+      }
+      Optional<String> transitionActor =
+          workflowEventReadPort
+              .findLatestTransitionToState(workflowRunId, WorkflowState.TAKEN_OVER)
+              .map(WorkflowEventRecord::actorIdentity)
+              .filter(actor -> actor != null && !actor.isBlank());
+      if (transitionActor.isPresent()) {
+        return transitionActor.get();
+      }
+    }
+    return workflowEventReadPort
+        .findLatestByWorkflowRunPublicIdAndEventTypeIn(workflowRunId, RECOVERY_ACTOR_EVENT_TYPES)
+        .map(WorkflowEventRecord::actorIdentity)
+        .filter(actor -> actor != null && !actor.isBlank())
+        .orElse("system");
+  }
+
+  private static String deriveBlockingReason(
+      String nextSafeAction, RunDependencyGraphView dependencyGraph) {
+    if ("await_manual_reconciliation".equals(nextSafeAction)) {
+      return "Awaiting manual reconciliation before recovery.";
+    }
+    if (dependencyGraph != null && dependencyGraph.blockedByDependencies()) {
+      int blocked = dependencyGraph.blockedOn().size();
+      return "Blocked on "
+          + blocked
+          + " unfinished prerequisite run"
+          + (blocked == 1 ? "" : "s")
+          + ".";
+    }
+    return null;
+  }
+
+  /**
+   * Story 4.4 (AC1) — redact {@code reason} via the redaction policy (mirror 4.3 Reconciliation 10)
+   * then strip control characters so a newline/CR in a reason cannot inject a spurious CLI line or
+   * JSON control byte. NET-NEW here — the other inspection surfaces pass {@code reason} raw.
+   */
+  private String redactReason(String rawReason) {
+    if (rawReason == null) {
+      return null;
+    }
+    String sanitized =
+        redactionPolicyService
+            .redact(rawReason, DataClassification.SHAREABLE_REDACTED.value())
+            .sanitizedText();
+    return stripControlChars(sanitized);
+  }
+
+  private static String stripControlChars(String value) {
+    if (value == null) {
+      return null;
+    }
+    // Java's \p{Cntrl} is ASCII-only ([\x00-\x1F\x7F]); also strip the Unicode line terminators
+    // NEL (U+0085), LINE SEPARATOR (U+2028) and PARAGRAPH SEPARATOR (U+2029) so a crafted reason
+    // cannot inject a spurious line into the grep-safe one-line-per-field CLI text output.
+    return value.replaceAll("[\\p{Cntrl}\\u0085\\u2028\\u2029]", " ");
+  }
+
   private static String specVersionKey(String artifactId, int version) {
     return artifactId + ":" + version;
   }
@@ -2600,7 +3727,17 @@ public class WorkflowInspectionService {
       // Story 3g-4 (FR74, AC2) — run-level token consumption: sum of the non-null per-step
       // totalTokens over ALL executions of the run. Null when no step reported any (never 0); not
       // synthesized from input+output.
-      Integer totalTokens) {
+      Integer totalTokens,
+      // Story 3h-5 (AC3) — CI-investigation read model (trailing nullable/default fields on the
+      // DETAIL view only; WorkflowSummaryResponse is NOT touched). ciStatus/ciHeadSha are null for
+      // a
+      // never-pushed/never-polled run; ciFixLoopCount defaults 0; ciChecksEnforced is the first
+      // production reader of RepositoryHostCapabilities.supportsRequiredStatusChecks() (defaults
+      // false when the host is unknown/throws).
+      String ciStatus,
+      String ciHeadSha,
+      int ciFixLoopCount,
+      boolean ciChecksEnforced) {
 
     public WorkflowStatusView(
         String workflowRunId,
@@ -2643,7 +3780,12 @@ public class WorkflowInspectionService {
           null,
           RunDependencyGraphView.empty(),
           null,
-          null);
+          null,
+          // Story 3h-5 (AC3) — CI read-model defaults for the legacy short constructor.
+          null,
+          null,
+          0,
+          false);
     }
   }
 
@@ -2687,6 +3829,11 @@ public class WorkflowInspectionService {
       String artifactId,
       String artifactType,
       int version,
+      // Story 4.20 (OQ-2) — the immediately-prior version's public id (the artifact's lineage
+      // parent), or null for a v1 artifact / a root of its lineage. Surfaces the Compare-Mode
+      // baseline id the frontend needs to resolve `artifactIdA` (current vs immediately-prior);
+      // sourced from the already-populated `ArtifactRecordSnapshot.parentArtifactId`.
+      String parentArtifactId,
       String status,
       String classification,
       OffsetDateTime createdAt,
@@ -3084,6 +4231,158 @@ public class WorkflowInspectionService {
   }
 
   /**
+   * Story 4.4 (AC1/AC7) — the typed failure-diagnostics deep-dive view. Nested HERE (in {@code
+   * application.workflow}) so the CLI {@code operator diagnose} adapter and the REST {@code
+   * FailureDiagnosticsResponse} DTO can both import it without touching {@code
+   * application.recovery} / {@code application.runner} (Reconciliation 7). Fields are documented
+   * nullable rather than wrapped in {@link Optional}.
+   *
+   * @param currentState the run's current workflow state (never null)
+   * @param failedStage runner stage of the most recent FAILED runner_execution, or null
+   *     (non-Failed)
+   * @param lastSuccessfulStage prior_state of the workflow → Failed event, or null
+   * @param failureCategory normalized failure category, or null
+   * @param failureReason the latest failure event's reason, redacted + control-char-stripped, or
+   *     null
+   * @param failureTimestamp created_at of the workflow → Failed event (UTC), or null
+   * @param lastActivityTimestamp last activity of the most recent runner_execution (UTC), or null
+   * @param correlationId the most recent correlation id recorded for the run, or null
+   * @param lastGoodState the last successful workflow state (shares {@code lastSuccessfulStage}'s
+   *     source — documented overlap), or null
+   * @param currentBlockingReason human string derived from the dependency blocked-on set or {@code
+   *     await_manual_reconciliation}, or null when nothing blocks recovery
+   * @param nextSafeAction {@code retry}/{@code await_manual_reconciliation}/{@code
+   *     await_outcome}/{@code view_only}
+   * @param lastActorIdentity NFR7 "who acted" — the latest governed event's actor, or {@code
+   *     system}
+   * @param runnerLogReference the latest runner-execution's redacted-log reference, or null when no
+   *     log exists (carries {@code runnerExecutionId} for the download link)
+   * @param linearSyncStatus the active Linear link's sync status, or null when no Linear link
+   * @param githubSyncStatus the active GitHub PR link's sync status, or null when no PR link
+   * @param recommendedRecoveryActions safety-ranked recovery advice (safe → caution → risky); empty
+   *     for a non-Failed run
+   */
+  public record FailureDiagnostics(
+      WorkflowState currentState,
+      String failedStage,
+      String lastSuccessfulStage,
+      String failureCategory,
+      String failureReason,
+      OffsetDateTime failureTimestamp,
+      OffsetDateTime lastActivityTimestamp,
+      String correlationId,
+      String lastGoodState,
+      String currentBlockingReason,
+      String nextSafeAction,
+      String lastActorIdentity,
+      RunnerLogReferenceView runnerLogReference,
+      IntegrationSyncStatusView linearSyncStatus,
+      IntegrationSyncStatusView githubSyncStatus,
+      List<RecommendedActionView> recommendedRecoveryActions) {}
+
+  /**
+   * Story 4.9 (AC9/AC6) — the failure-classification read view: current classification (null fields
+   * when the run was never classified) + the prior chain from the {@code
+   * recovery.failureClassified} events, most-recent-first. {@code currentDisplayLabel} carries the
+   * {@code (deprecated)} affix for a deprecated-but-historical value; {@code
+   * deprecatedReplacementValue} is the remediation hint (null for an active value). Consumers are
+   * stories 4.14 (REST/CLI) + 4.24 (FE).
+   */
+  public record FailureClassificationView(
+      String currentTaxonomyValue,
+      String currentDisplayLabel,
+      boolean deprecated,
+      String deprecatedReplacementValue,
+      OffsetDateTime classifiedAt,
+      String classifiedBy,
+      List<PriorClassification> priorClassifications) {}
+
+  /** Story 4.9 (AC9) — one overwritten prior classification, reconstructed from the event chain. */
+  public record PriorClassification(
+      String taxonomyValue,
+      String displayLabel,
+      OffsetDateTime classifiedAt,
+      String classifiedBy) {}
+
+  /**
+   * Story 4.4 (AC1/AC5) — flat, content-free reference to a run's redacted runner log, projected
+   * into {@code application.workflow} so the CLI/REST adapters never import {@code
+   * application.runner.RunnerLogReference} (ArchUnit {@code REST_CONTROLLERS_STAY_THIN...}). {@code
+   * runnerExecutionId} drives the download link.
+   */
+  public record RunnerLogReferenceView(
+      String runnerExecutionId,
+      String referencePath,
+      long byteSize,
+      String classification,
+      int redactionCount) {}
+
+  /**
+   * Story 4.4 (AC1/AC2) — adapter-facing projection of {@link RecommendedAction} (adapters never
+   * import {@code application.recovery}). {@code safetyLevel} ∈ {@code safe|caution|risky}; {@code
+   * actionType} is within the {@code recovery_actions} CHECK vocabulary.
+   */
+  public record RecommendedActionView(
+      String actionType, String safetyLevel, String reason, String precondition) {}
+
+  /**
+   * Story 4.4 (AC1/AC6) — per-integration sync status for the diagnostics view. {@code syncStatus}
+   * ∈ {@code linked|synced|stale|failed|superseded}; {@code stale}/{@code failed} is the "drifted"
+   * flag the FE renders. {@code externalRef}/{@code lastSyncAt} may be null.
+   */
+  public record IntegrationSyncStatusView(
+      String integrationType, String externalRef, String syncStatus, OffsetDateTime lastSyncAt) {}
+
+  /**
+   * Story 4.4 (AC5) — the already-redacted runner-log payload + metadata surfaced through {@code
+   * application.workflow} for the download endpoint. Exactly one of a captured body ({@code
+   * available()}) or a {@code reason} is set. {@code workflowRunId} carries the resolved run for
+   * the {@code view_runner_logs} gate. Bytes are served VERBATIM — never re-redacted
+   * (Reconciliation 4).
+   */
+  public record RedactedRunnerLogView(
+      String runnerExecutionId,
+      String workflowRunId,
+      String stdout,
+      String stderr,
+      boolean truncated,
+      String classification,
+      Long byteSize,
+      String reason) {
+
+    public static RedactedRunnerLogView available(
+        String runnerExecutionId,
+        String workflowRunId,
+        String stdout,
+        String stderr,
+        boolean truncated,
+        String classification,
+        Long byteSize) {
+      return new RedactedRunnerLogView(
+          runnerExecutionId,
+          workflowRunId,
+          stdout,
+          stderr,
+          truncated,
+          classification,
+          byteSize,
+          null);
+    }
+
+    public static RedactedRunnerLogView unavailable(String runnerExecutionId, String reason) {
+      if (reason == null || reason.isBlank()) {
+        throw new IllegalArgumentException("reason must not be blank");
+      }
+      return new RedactedRunnerLogView(
+          runnerExecutionId, null, null, null, false, null, null, reason);
+    }
+
+    public boolean available() {
+      return reason == null;
+    }
+  }
+
+  /**
    * Story 3.19 (AC1/AC3) — typed runner-queue + worker-pool inspection view. Defined HERE (nested
    * in {@code application.workflow}), NOT under {@code application.runner}, because the ArchUnit
    * rule {@code REST_CONTROLLERS_STAY_THIN_AND_AVOID_SPI_OR_PERSISTENCE_OR_RUNNER} forbids {@code
@@ -3139,4 +4438,140 @@ public class WorkflowInspectionService {
       String currentWorkflowRunId,
       OffsetDateTime dispatchedAt,
       String currentStage) {}
+
+  /**
+   * Story 4.1 (AC1/AC3) — the OPERATOR-STATE filter vocabulary for {@code deliveryline operator
+   * status --state}. A plain application-layer enum, NOT a {@code domain.registry.RegistryValue}:
+   * it is a CLI filter vocabulary, not a wire-contract-governed value, so it needs no drift test /
+   * placeholder manifest / {@code RegistryContractTest} entry (avoids the
+   * [[new-domainerrorcode-three-sites]] fan-out — story 4.1 Reconciliation 1). Each token maps to a
+   * DERIVED query predicate (Reconciliation 5), NOT to a {@link WorkflowState} (there is no {@code
+   * Stalled}/{@code Orphaned}/{@code Overridden} state).
+   */
+  public enum OperatorRunState {
+    FAILED("failed"),
+    STALLED("stalled"),
+    ORPHANED("orphaned"),
+    TAKENOVER("takenover"),
+    OVERRIDDEN("overridden");
+
+    private final String token;
+
+    OperatorRunState(String token) {
+      this.token = token;
+    }
+
+    /** The lowercase wire token accepted on {@code --state}. */
+    public String token() {
+      return token;
+    }
+
+    /**
+     * Resolve a raw {@code --state} token; an unknown value raises {@code INVALID_COMMAND_PAYLOAD}
+     * with {@code details{state, supportedTokens}} (story 4.1 Reconciliation 7).
+     */
+    public static OperatorRunState fromToken(String raw) {
+      if (raw != null) {
+        String normalized = raw.trim().toLowerCase(java.util.Locale.ROOT);
+        for (OperatorRunState candidate : values()) {
+          if (candidate.token.equals(normalized)) {
+            return candidate;
+          }
+        }
+      }
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("state", raw);
+      List<String> supported = new ArrayList<>();
+      for (OperatorRunState value : values()) {
+        supported.add(value.token);
+      }
+      details.put("supportedTokens", supported);
+      throw new DomainException(
+          DomainErrorCode.INVALID_COMMAND_PAYLOAD, "Unsupported --state token: " + raw, details);
+    }
+  }
+
+  /**
+   * Story 4.1 (AC3) — the raw parsed CLI filter handed from {@code OperatorCommands} to {@link
+   * #getOperatorRunSummary}. Carries the un-resolved inputs (comma-split state tokens, the relative
+   * {@code --since} token, the requested limit); ALL token/duration/limit resolution happens inside
+   * the service so the adapter stays thin (AC9).
+   *
+   * @param stateTokens comma-split {@code --state} tokens (empty → default {@code
+   *     failed,stalled,orphaned})
+   * @param since the raw {@code --since} relative-duration token, or {@code null}/blank for no
+   *     window
+   * @param limit the requested row cap (clamped to {@code [1,500]} in the service)
+   * @param runnerKinds story 4.2 (AC3) — the raw runner-kind filter tokens ({@code codex}/{@code
+   *     claude}/{@code manual}); empty disables the filter. Resolved/validated in the service.
+   * @param failureCategories story 4.2 (AC3) — the raw failure-category filter tokens (from the
+   *     {@link FailureCategory} registry); empty disables the filter. Resolved/validated in the
+   *     service.
+   * @param cursor story 4.2 (AC5) — the opaque keyset pagination cursor from a prior response's
+   *     {@code nextCursor}, or {@code null}/blank for the first page. Decoded/validated in the
+   *     service.
+   */
+  public record OperatorRunFilter(
+      List<String> stateTokens,
+      String since,
+      int limit,
+      List<String> runnerKinds,
+      List<String> failureCategories,
+      String cursor) {
+
+    /**
+     * Back-compatible 4.1 constructor (no runner-kind / failure-category filter, first page). Keeps
+     * the CLI {@code OperatorCommands} call site and 4.1 unit tests untouched while 4.2 threads the
+     * new inputs.
+     */
+    public OperatorRunFilter(List<String> stateTokens, String since, int limit) {
+      this(stateTokens, since, limit, List.of(), List.of(), null);
+    }
+  }
+
+  /**
+   * Story 4.1 (AC2) — one fleet row. Nullable reference fields ({@code failureCategory}, {@code
+   * lastTransitionAt}, {@code actorIdentity}, {@code linkedTicketRef}, {@code linkedPrRef}, {@code
+   * oldestEventAt}) are plain nullable references (repo convention — NOT {@code
+   * Optional}/{@code @Nullable}). {@code currentState} is the {@link WorkflowState} enum so
+   * transports can format either the enum or its wire string. {@code operatorSignifier} is the
+   * server-derived UPPERCASE display token ({@code ORPHANED}/{@code FAILED}/{@code
+   * TAKENOVER}/{@code STALLED}/{@code OVERRIDDEN}/else the uppercased state) the text renderer
+   * brackets — carried on the row so the renderer never re-derives (and mislabels) from {@code
+   * currentState} alone.
+   */
+  public record OperatorRunRow(
+      String runId,
+      WorkflowState currentState,
+      String failureCategory,
+      OffsetDateTime lastTransitionAt,
+      String actorIdentity,
+      String linkedTicketRef,
+      String linkedPrRef,
+      boolean escalationMarker,
+      OffsetDateTime oldestEventAt,
+      String operatorSignifier,
+      String runnerKind,
+      // Story 4.18 (AC1) — count of unresolved integration conflicts on the run. A discrete field
+      // (NOT overloaded onto operatorSignifier — a run can be FAILED AND conflicted); the FE
+      // renders
+      // the non-color "Conflict" chip when > 0. Sourced via a single batch grouped query per page.
+      int unresolvedConflictCount) {}
+
+  /**
+   * Story 4.1 (AC2) — the operator fleet summary view. {@code byState} / {@code byFailureCategory}
+   * are {@code EnumMap}s over the FULL matching set (independent of {@code --limit}); {@code
+   * byFailureCategory} is populated only when the state filter includes {@code failed}/{@code
+   * orphaned}. {@code oldestEntryAt} is {@code null} when the matched set is empty (never coalesced
+   * to a synthetic value). {@code runs} is the {@code lastTransitionAt DESC} page capped by {@code
+   * --limit}. {@code nextCursor} (story 4.2 AC5) is the opaque keyset cursor to fetch the next
+   * page, or {@code null} on the last page; the aggregate fields are stable across pages.
+   */
+  public record OperatorRunSummary(
+      int total,
+      Map<WorkflowState, Integer> byState,
+      Map<FailureCategory, Integer> byFailureCategory,
+      OffsetDateTime oldestEntryAt,
+      List<OperatorRunRow> runs,
+      String nextCursor) {}
 }

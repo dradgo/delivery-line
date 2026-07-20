@@ -23,6 +23,7 @@ set -euo pipefail
 REQUIRED_CHECKS=(
   "foundation-gate"
   "runner-contract-real-gate"
+  "recovery-integration-gate"
   "format-static-checks (ubuntu-latest)"
   "format-static-checks (windows-latest)"
   "frontend-build-tests (ubuntu-latest)"

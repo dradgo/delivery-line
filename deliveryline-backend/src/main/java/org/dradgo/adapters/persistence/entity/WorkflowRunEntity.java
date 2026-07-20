@@ -85,6 +85,23 @@ public class WorkflowRunEntity {
   @Column(name = "implementation_rejection_loop_count", nullable = false)
   private int implementationRejectionLoopCount = 0;
 
+  // Story 3m-2 (AC6, ADR 0036) — the run INSTANCE cursor (V48). workflow_definition_id is the
+  // snapshotted definition (set ONCE at run start, then read-only); current_step_index is the walk
+  // position. Both nullable ⇒ a null-definition run never reads the cursor and is byte-identical to
+  // pre-3m. DORMANT in 3m-2 (always null); the write path (the run-start snapshot + the
+  // EXECUTING->EXECUTING advance) is 3m-3.
+  //
+  // ⚠️ 3m-3 clobber note ([[token-usage-clobbered-by-terminal-transition]]): this entity does
+  // full-row UPDATEs (no @DynamicUpdate). Advancing current_step_index IN-BAND with the state
+  // transition (same entity/tx, as here) is safe; if 3m-3 ever writes the cursor from a separate
+  // REQUIRES_NEW path, a stale full-row UPDATE would null it — add @DynamicUpdate or a dedicated
+  // JDBC cursor port then (the V44 failure-classification precedent).
+  @Column(name = "workflow_definition_id")
+  private Long workflowDefinitionId;
+
+  @Column(name = "current_step_index")
+  private Integer currentStepIndex;
+
   public Long getId() {
     return id;
   }
@@ -155,5 +172,13 @@ public class WorkflowRunEntity {
 
   void setImplementationRejectionLoopCount(int implementationRejectionLoopCount) {
     this.implementationRejectionLoopCount = implementationRejectionLoopCount;
+  }
+
+  public Long getWorkflowDefinitionId() {
+    return workflowDefinitionId;
+  }
+
+  public Integer getCurrentStepIndex() {
+    return currentStepIndex;
   }
 }

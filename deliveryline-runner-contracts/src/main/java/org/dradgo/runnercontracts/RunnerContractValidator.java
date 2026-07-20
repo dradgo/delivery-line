@@ -179,9 +179,20 @@ public final class RunnerContractValidator {
     if (node.isObject()) {
       node.fields()
           .forEachRemaining(
-              entry ->
-                  inspectArtifactReferencePaths(
-                      entry.getValue(), path + "/" + entry.getKey(), errors));
+              entry -> {
+                // An implementationPlan's `steps[]` is free-text plan prose (natural language, code
+                // snippets, servlet context paths like `/finance-monitor-web`, example file paths,
+                // `../relative` and `C:\` paths). The backend only stores and RENDERS it — it is
+                // never resolved as a filesystem path — so the traversal/absolute-path guard must
+                // not reject a plan merely for mentioning such a path. The guard still covers every
+                // real reference-pointer field the backend DOES resolve (contentReference,
+                // diffReference, prReference, contextReferences), since those are not exempt here.
+                if ("steps".equals(entry.getKey())) {
+                  return;
+                }
+                inspectArtifactReferencePaths(
+                    entry.getValue(), path + "/" + entry.getKey(), errors);
+              });
       return;
     }
     if (node.isArray()) {

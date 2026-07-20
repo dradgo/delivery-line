@@ -75,6 +75,22 @@ public class GitHubMockScenarioRegistry {
   public static final String REF_PR_CONFLICT = "PR-conflict";
 
   /**
+   * Story 3h-5 (AC1) — the deterministic commit-SHA sentinel that makes {@link
+   * GitHubMockAdapter#readCheckRuns} return a red CI verdict (one failing check with one fixture
+   * failure annotation). Any other ref returns a green {@code SUCCESS}. Tests seed a run with this
+   * as {@code ci_head_sha} to exercise the red path without touching the Behaviour enum.
+   */
+  public static final String CI_RED_HEAD_SHA = "ci-red";
+
+  /**
+   * Story 3h-5 (AC5) — a red-CI sentinel whose failing check-run body carries a planted secret (a
+   * GitHub PAT). Tests seed a run with this {@code ci_head_sha} to assert that the composed CI
+   * failure log is redaction-policed on the way into the persisted CI {@code runner_executions} raw
+   * output ({@code [REDACTED_GITHUB_TOKEN]}, never the token). [redaction-fixture-two-gates]
+   */
+  public static final String CI_RED_WITH_SECRET_HEAD_SHA = "ci-red-secret";
+
+  /**
    * The repository a {@link GitHubMockScenario.Behaviour#CONFLICT} PR deliberately points at — it
    * differs from any seeded happy repo so callers detect a {@code PR_REF_CONTEXT_MISMATCH} (AC4).
    */
@@ -145,6 +161,27 @@ public class GitHubMockScenarioRegistry {
     scenarios.put(scenario.ref(), scenario);
   }
 
+  /**
+   * Test-only: seed (or replace) a PR at a specific external ref with a caller-controlled lifecycle
+   * state / merged flag / source branch. Story 4.17 uses this to inject the conflict-detection
+   * scenarios the built-in happy fixtures can't express — a PR merged-while-open (→
+   * external_state_advanced), reopened-after-closed (→ external_state_reverted), or with a drifted
+   * source branch (→ metadata_drift). The deleted/removed case is {@link #removePullRequest} (fresh
+   * fetch → {@code Optional.empty()}); the link-broken case is a {@code PERMISSION_DENIED} scenario
+   * registered via {@link #register}. Purged by {@link #clearTestScenarios} when the prRef begins
+   * with {@code TEST-}.
+   */
+  public void seedPullRequest(PullRequest pullRequest) {
+    Objects.requireNonNull(pullRequest, "pullRequest");
+    pullRequestsByRef.put(pullRequest.prRef().value(), pullRequest);
+  }
+
+  /** Test-only: remove a seeded PR so a fresh {@code getPullRequestByRef} resolves to empty. */
+  public void removePullRequest(String prRef) {
+    Objects.requireNonNull(prRef, "prRef");
+    pullRequestsByRef.remove(prRef);
+  }
+
   public Optional<GitHubMockScenario> find(String ref) {
     return Optional.ofNullable(scenarios.get(ref));
   }
@@ -197,6 +234,11 @@ public class GitHubMockScenarioRegistry {
   public void clearTestScenarios() {
     int before = scenarios.size();
     scenarios.entrySet().removeIf(entry -> entry.getKey().startsWith(TEST_REF_PREFIX));
+    // Also purge any test-seeded PRs (story 4.17 conflict-injection) keyed under the TEST- prefix
+    // so
+    // built-in fixtures (PR-101/102/103) survive but per-test PR state never leaks across
+    // scenarios.
+    pullRequestsByRef.keySet().removeIf(prRef -> prRef.startsWith(TEST_REF_PREFIX));
     int removed = before - scenarios.size();
     if (removed > 0) {
       log.debug("github_mock cleared {} test scenarios", removed);

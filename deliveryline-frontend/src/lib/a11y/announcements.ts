@@ -37,6 +37,51 @@ export function queueLoaded(count: number): string {
   return `Review queue loaded: ${count} ${count === 1 ? 'run' : 'runs'} available`;
 }
 
+// ---- Operator queue (story 4.2) ------------------------------------------------
+
+/**
+ * Announced after the operator queue re-runs on a filter change (AC8) — the resolved run count and
+ * a human summary of the active filter (e.g. "state failed, stalled"), announced off the settled
+ * result count. Parameterized ⇒ a function (the vocabulary-node-test convention).
+ */
+export function operatorFilteredToRuns(count: number, filterSummary: string): string {
+  const runs = `${count} ${count === 1 ? 'run' : 'runs'}`;
+  return filterSummary.trim() === ''
+    ? `Operator queue filtered to ${runs}`
+    : `Operator queue filtered to ${runs} — ${filterSummary}`;
+}
+
+// ---- Ticket intake browse (story 3i-2) -----------------------------------------
+
+/**
+ * Announced after the intake browse re-runs on a filter change (AC6) — the resolved candidate count
+ * and a human summary of the active filter (e.g. "assignee acct-1, components billing"), announced
+ * off the settled result count. Parameterized ⇒ a function (the vocabulary-node-test convention).
+ *
+ * When `total` exceeds `count` the page was truncated, and the announcement says so: a screen-reader
+ * user must learn they are not hearing the whole backlog, exactly as a sighted user reads it.
+ */
+export function intakeFilteredToTickets(
+  count: number,
+  filterSummary: string,
+  total?: number,
+): string {
+  const tickets = `${count} ${count === 1 ? 'ticket' : 'tickets'}`;
+  const shown = total !== undefined && total > count ? `${tickets} of ${total}` : tickets;
+  return filterSummary.trim() === ''
+    ? `Ticket intake filtered to ${shown}`
+    : `Ticket intake filtered to ${shown} — ${filterSummary}`;
+}
+
+/** Announced when the selected project's connector cannot be browsed (TICKET_QUERY_NOT_SUPPORTED). */
+export const intakeNotSupported =
+  'This project’s ticket source does not support browsing candidate tickets';
+
+/** Announced when a candidate ticket has been submitted as a governed run. */
+export function intakeRunStarted(ticketRef: string): string {
+  return `Started a governed run for ${ticketRef}`;
+}
+
 // ---- Clarifications (story 2.18) -----------------------------------------------
 
 /** A single clarification advanced to a new lifecycle state (`label` is its signifier label). */
@@ -87,6 +132,53 @@ export const failureEntered = 'This run has failed. Review the failure and recov
 export const retryInitiated = 'Retrying the failed step.';
 /** Announced once a retry is recorded (success), mirroring the inline outcome (never a toast). */
 export const retryRecorded = 'Retry recorded. The previous failure is preserved in the timeline.';
+
+// ---- Recovery operator full activation (story 4.22) ----------------------------
+
+/** Announced while a resume submission is in flight. */
+export const recoveryResumeInitiated = 'Resuming the run.';
+/** Announced once a resume is recorded (success), mirroring the inline outcome. */
+export const recoveryResumeRecorded = 'Run resumed. Decision recorded.';
+/** Announced while a rerun-from-step submission is in flight. */
+export const recoveryRerunInitiated = 'Rerunning the run from the selected step.';
+/** Announced once a rerun-from-step is recorded (success), mirroring the inline outcome. */
+export const recoveryRerunRecorded = 'Rerun recorded. Decision recorded.';
+/** Announced while a pause submission is in flight. */
+export const recoveryPauseInitiated = 'Pausing the run.';
+/** Announced once a pause is recorded (success), mirroring the inline outcome. */
+export const recoveryPauseRecorded = 'Run paused. Decision recorded.';
+
+// ---- Reconciliation dialog (story 4.23) ----------------------------------------
+
+/** Announced while a reconcile submission is in flight. */
+export const recoveryReconcileInitiated = 'Recording your reconciliation decision.';
+/** Announced once a reconcile is recorded (success), mirroring the inline outcome (never a toast). */
+export const recoveryReconcileRecorded = 'Reconciliation recorded. The conflict has been resolved.';
+
+// ---- Compare Mode (story 4.20) -------------------------------------------------
+
+/** Announced once a revision delta loads, stating how many changed regions there are. */
+export function compareLoaded(changedRegionCount: number): string {
+  const regions = `${changedRegionCount} ${changedRegionCount === 1 ? 'region' : 'regions'}`;
+  return `Comparison loaded: ${regions} changed`;
+}
+/** Announced when the two revisions are identical (`noMeaningfulDiff`). */
+export const compareNoMeaningfulDiff = 'These revisions are identical — no meaningful differences.';
+/** Announced when focus jumps to a changed region via the J/K (or arrow) jump controls. */
+export function compareJumpedToRegion(index: number, total: number): string {
+  return `Changed region ${index} of ${total}`;
+}
+/** Announced when Compare Mode is exited back to the originating review context. */
+export const compareExited = 'Exited compare mode.';
+/** Announced when a revision delta could not be loaded (any error sub-state). */
+export const compareLoadFailed = 'The revision comparison could not be loaded.';
+
+// ---- Compare Mode mobile (story 4.21) ------------------------------------------
+
+/** Announced on the mobile before/after toggle when the prior (before) revision is shown. */
+export const compareShowingBefore = 'Showing the before revision.';
+/** Announced on the mobile before/after toggle when the current (after) revision is shown. */
+export const compareShowingAfter = 'Showing the after revision.';
 
 // ---- Implementation review (story 3.28) ----------------------------------------
 
@@ -162,3 +254,11 @@ export function connectionTestResult(
 /** Announced when a connectivity test could not run (project not found / unsupported kind). */
 export const connectionTestFailed =
   'The connection test could not run. Review the error and retry.';
+
+// ---- Failure classification (story 4.24) ---------------------------------------
+
+/**
+ * Announced once a failure classification is applied (AC10). The dialog closes itself on success, so
+ * this is spoken via the document-level `announce()` (see `liveAnnouncer.ts`), not an in-dialog region.
+ */
+export const failureClassificationApplied = 'Failure classification applied.';

@@ -70,5 +70,43 @@ class WorkflowCommandTypeTest {
         "TakeoverWorkflowCommand",
         new TakeoverWorkflowCommand("run_x", "alex", ActorType.HUMAN, "k", null, null)
             .commandType());
+    assertEquals(
+        "ResumeWorkflowCommand",
+        new ResumeWorkflowCommand(
+                "run_x",
+                "alex",
+                ActorType.HUMAN,
+                "k",
+                null,
+                null,
+                org.dradgo.domain.registry.WorkflowState.EXECUTING)
+            .commandType());
+    assertEquals(
+        "ReconcileWorkflowCommand",
+        new ReconcileWorkflowCommand(
+                "run_x",
+                "alex",
+                ActorType.HUMAN,
+                "k",
+                null,
+                "icf_x",
+                org.dradgo.domain.registry.ReconciliationDecision.ACCEPT_INTERNAL_STATE,
+                "reason")
+            .commandType());
+    assertEquals(
+        "RerunFromStepWorkflowCommand",
+        new RerunFromStepWorkflowCommand(
+                "run_x",
+                "alex",
+                ActorType.HUMAN,
+                "k",
+                null,
+                "reason",
+                org.dradgo.domain.registry.WorkflowState.INVESTIGATING)
+            .commandType());
+    assertEquals(
+        "PauseWorkflowCommand",
+        new PauseWorkflowCommand("run_x", "alex", ActorType.HUMAN, "k", null, "reason")
+            .commandType());
   }
 }

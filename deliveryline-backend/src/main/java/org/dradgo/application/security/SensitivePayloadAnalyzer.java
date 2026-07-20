@@ -265,13 +265,31 @@ final class SensitivePayloadAnalyzer {
   }
 
   SensitiveAnalysis analyzeStructured(Object payload, String claimedClassificationValue) {
+    return analyzeStructured(payload, claimedClassificationValue, Set.of());
+  }
+
+  /**
+   * Structural (JSON-tree) analysis with a caller-nominated set of categories suppressed at the
+   * VALUE level. A category in {@code valueLevelSuppressed} that a string VALUE would trip is
+   * dropped before it counts as a finding — so security-conscious PROSE inside a JSON string
+   * ("…without password:", "password=&lt;invalid&gt;") is no longer misread by the fuzzy
+   * YAML/env/SECRET_FIELD heuristics as a credential (the {@code RunnerSecretScanService}
+   * false-positive fix). The suppression is scoped to string VALUES only: the secret-named-KEY
+   * check below still fires (a real {@code "password":"…"} field remains a leak), and precise
+   * credential shapes (tokens, PEM/SSH keys, auth headers) are never placed in the suppressed set
+   * by the caller, so they stay leak-worthy in any context.
+   */
+  SensitiveAnalysis analyzeStructured(
+      Object payload,
+      String claimedClassificationValue,
+      Set<RedactionCategory> valueLevelSuppressed) {
     try {
       JsonNode node =
           payload instanceof JsonNode jsonNode ? jsonNode : OBJECT_MAPPER.valueToTree(payload);
       DataClassification claimedClassification =
           parseClaimedClassification(claimedClassificationValue);
       Set<RedactionCategory> detected = EnumSet.noneOf(RedactionCategory.class);
-      JsonNode sanitizedJson = sanitizeJsonNode(node, null, detected);
+      JsonNode sanitizedJson = sanitizeJsonNode(node, null, detected, valueLevelSuppressed);
       String sanitizedText = OBJECT_MAPPER.writeValueAsString(sanitizedJson);
       DataClassification effectiveClassification =
           determineEffectiveClassification(claimedClassification, detected.isEmpty());
@@ -392,7 +410,10 @@ final class SensitivePayloadAnalyzer {
   }
 
   private JsonNode sanitizeJsonNode(
-      JsonNode node, String fieldName, Set<RedactionCategory> detected) {
+      JsonNode node,
+      String fieldName,
+      Set<RedactionCategory> detected,
+      Set<RedactionCategory> valueLevelSuppressed) {
     if (node.isObject()) {
       ObjectNode objectNode = OBJECT_MAPPER.createObjectNode();
       node.fields()
@@ -400,13 +421,14 @@ final class SensitivePayloadAnalyzer {
               entry ->
                   objectNode.set(
                       entry.getKey(),
-                      sanitizeJsonNode(entry.getValue(), entry.getKey(), detected)));
+                      sanitizeJsonNode(
+                          entry.getValue(), entry.getKey(), detected, valueLevelSuppressed)));
       return objectNode;
     }
     if (node.isArray()) {
       ArrayNode arrayNode = OBJECT_MAPPER.createArrayNode();
       for (JsonNode child : node) {
-        arrayNode.add(sanitizeJsonNode(child, fieldName, detected));
+        arrayNode.add(sanitizeJsonNode(child, fieldName, detected, valueLevelSuppressed));
       }
       return arrayNode;
     }
@@ -416,8 +438,19 @@ final class SensitivePayloadAnalyzer {
 
     String value = node.textValue();
     SensitiveAnalysis analysis = analyzeText(value, null);
-    detected.addAll(analysis.detectedCategories());
-    if (!analysis.detectedCategories().isEmpty()) {
+    // Value-level suppression (see analyzeStructured): a caller may pardon the fuzzy heuristic
+    // categories on string VALUES so PROSE that merely mentions a secret field name is not treated
+    // as a leak. Precise shapes are never in the suppressed set; the secret-named-KEY check below
+    // is unaffected.
+    Set<RedactionCategory> valueCategories = analysis.detectedCategories();
+    if (!valueLevelSuppressed.isEmpty() && !valueCategories.isEmpty()) {
+      EnumSet<RedactionCategory> retained = EnumSet.noneOf(RedactionCategory.class);
+      retained.addAll(valueCategories);
+      retained.removeAll(valueLevelSuppressed);
+      valueCategories = retained;
+    }
+    if (!valueCategories.isEmpty()) {
+      detected.addAll(valueCategories);
       return TextNode.valueOf(analysis.sanitizedText());
     }
     if (fieldName != null && looksSecretLikeKey(fieldName) && !alreadyRedacted(value)) {

@@ -5,12 +5,14 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.EnumSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import org.dradgo.application.approval.ApprovalSnapshot;
 import org.dradgo.application.approval.spi.ApprovalReadPort;
 import org.dradgo.application.artifact.ActorContext;
@@ -19,6 +21,9 @@ import org.dradgo.application.artifact.spi.ArtifactRecordPort;
 import org.dradgo.application.clarification.spi.ClarificationReadPort;
 import org.dradgo.application.integration.IntegrationLink;
 import org.dradgo.application.integration.IntegrationLinkService;
+import org.dradgo.application.integration.conflict.ConflictFilter;
+import org.dradgo.application.integration.conflict.ConflictSummary;
+import org.dradgo.application.integration.conflict.IntegrationConflictService;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapter;
 import org.dradgo.application.integration.ticketsource.TicketSourceAdapterException;
 import org.dradgo.application.observability.MdcKeys;
@@ -50,6 +55,7 @@ import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.ArtifactType;
 import org.dradgo.domain.registry.DataClassification;
 import org.dradgo.domain.registry.DomainErrorCode;
+import org.dradgo.domain.registry.IntegrationConflictCategory;
 import org.dradgo.domain.registry.RunnerStage;
 import org.dradgo.domain.registry.WorkflowEventDetailKeys;
 import org.dradgo.domain.registry.WorkflowEventType;
@@ -175,6 +181,23 @@ public class WorkflowOrchestrationService {
   private final WorkflowEventWritePort workflowEventWritePort;
   private final ClarificationReadPort clarificationReadPort;
 
+  // Story 4.18 (AC6/AC9 / Reconciliation 6) — the conflict read surface backing the dispatch gate +
+  // the Linear reopen-notification suppression. Optional SETTER injection (mirroring
+  // WorkflowInspectionService's nullable integrationConflictService) so the many `new
+  // WorkflowOrchestrationService(...)` test ctors stay untouched; production Spring wires it.
+  // Absent
+  // in lean ctors → the gate + suppression are no-ops (fail-open, never NPE).
+  private IntegrationConflictService integrationConflictService;
+
+  // Story 4.18 (AC6 / OQ-4) — the FIXED high-severity conflict set that blocks a dispatch,
+  // INDEPENDENT of the auto-pause config set (so emptying auto-pause-on-categories to opt out of
+  // auto-pause does NOT also open the dispatch gate). The two state-drift categories that must not
+  // silently advance (NFR19).
+  private static final Set<IntegrationConflictCategory> HIGH_SEVERITY_CONFLICT_CATEGORIES =
+      EnumSet.of(
+          IntegrationConflictCategory.EXTERNAL_STATE_ADVANCED,
+          IntegrationConflictCategory.EXTERNAL_STATE_REVERTED);
+
   public WorkflowOrchestrationService(
       org.dradgo.application.runner.queue.RunnerExecutionQueue runnerExecutionQueue,
       org.dradgo.application.runner.ManualExecutionDispatcher manualExecutionDispatcher,
@@ -222,6 +245,13 @@ public class WorkflowOrchestrationService {
         Objects.requireNonNull(workflowEventWritePort, "workflowEventWritePort");
     this.clarificationReadPort =
         Objects.requireNonNull(clarificationReadPort, "clarificationReadPort");
+  }
+
+  // Story 4.18 (AC6/AC9) — optional injection of the conflict read surface (see field javadoc). The
+  // required=false setter keeps the lean test ctors untouched; production Spring supplies it.
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setIntegrationConflictService(IntegrationConflictService integrationConflictService) {
+    this.integrationConflictService = integrationConflictService;
   }
 
   /**
@@ -358,6 +388,10 @@ public class WorkflowOrchestrationService {
     String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
     String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
     try {
+      if (stageSuccessIgnoredWhilePaused(
+          "onSpecStageSucceeded", workflowRunId, runnerExecutionId)) {
+        return;
+      }
       String idempotencyKey = "spec-ready:" + runnerExecutionId;
       try {
         workflowTransitionService.transition(
@@ -674,6 +708,70 @@ public class WorkflowOrchestrationService {
    * keys differ by prefix AND version (the plan dispatch consumes version N, the following
    * pr-output dispatch consumes N+1) — no collision.
    */
+  /**
+   * Story 4.18 (AC6) — refuse an EXECUTION dispatch when the run has an unresolved high-severity
+   * integration conflict ({@link #HIGH_SEVERITY_CONFLICT_CATEGORIES}). Nullable-guarded: absent the
+   * conflict service (lean test contexts) this is a no-op (fail-open). Throws {@code
+   * DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT} (409, non-retryable) with structured details {@code
+   * {runId, conflictCategory, conflictId}} — mirroring {@code RecoveryService}'s typed-throw shape.
+   */
+  private void requireNoBlockingConflict(String op, String workflowRunId) {
+    if (integrationConflictService == null) {
+      return;
+    }
+    List<ConflictSummary> unresolved =
+        integrationConflictService.listUnresolvedConflicts(ConflictFilter.forRun(workflowRunId));
+    ConflictSummary blocking = null;
+    for (ConflictSummary conflict : unresolved) {
+      IntegrationConflictCategory category =
+          IntegrationConflictCategory.fromNullableValue(
+              conflict.conflictCategory(), "conflictCategory");
+      if (category != null && HIGH_SEVERITY_CONFLICT_CATEGORIES.contains(category)) {
+        blocking = conflict;
+        break;
+      }
+    }
+    if (blocking == null) {
+      return;
+    }
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("runId", workflowRunId);
+    details.put("conflictCategory", blocking.conflictCategory());
+    details.put("conflictId", blocking.conflictId());
+    log.info(
+        "{} dispatch blocked by unresolved conflict workflowRunId={} conflictId={}"
+            + " conflictCategory={} — operator must reconcile first",
+        op,
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(blocking.conflictId()),
+        blocking.conflictCategory());
+    throw new DomainException(
+        DomainErrorCode.DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT,
+        "Dispatch blocked: run "
+            + workflowRunId
+            + " has an unresolved high-severity integration conflict ("
+            + blocking.conflictCategory()
+            + "); reconcile it before dispatching.",
+        details);
+  }
+
+  /**
+   * Story 4.18 (AC8) — true when the run has any unresolved conflict on a Linear ticket link.
+   * Nullable-guarded (fail-open: no conflict service → no suppression).
+   */
+  private boolean hasUnresolvedLinearConflict(String workflowRunId) {
+    if (integrationConflictService == null) {
+      return false;
+    }
+    return integrationConflictService
+        .listUnresolvedConflicts(ConflictFilter.forRun(workflowRunId))
+        .stream()
+        .anyMatch(
+            conflict ->
+                org.dradgo.application.integration.conflict.ConflictIntegrationTypes.LINEAR.equals(
+                    conflict.integrationType()));
+  }
+
   private RunnerDispatchResult dispatchExecutionInternal(
       String op,
       String workflowRunId,
@@ -697,6 +795,12 @@ public class WorkflowOrchestrationService {
           workflowRunId,
           snapshot.currentState().value(),
           subStageLabel);
+
+      // Story 4.18 (AC6/AC9) — conflict-driven dispatch gate: refuse the EXECUTION dispatch while
+      // the run has an unresolved high-severity integration conflict so it is reconciled first
+      // (NFR19). Thrown BEFORE enqueueDispatch — and these dispatch methods never transition (Trap
+      // T1) — so the run inherently stays in its prior state (AC6 "transient").
+      requireNoBlockingConflict(op, workflowRunId);
 
       // AC6 in-flight guard (Task 2 — sub-stage-aware): an EXECUTION execution already
       // pending/running for this run AND in the SAME sub-stage is a no-op returning the existing
@@ -756,6 +860,10 @@ public class WorkflowOrchestrationService {
     String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
     String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
     try {
+      if (stageSuccessIgnoredWhilePaused(
+          "onPlanStageSucceeded", workflowRunId, runnerExecutionId)) {
+        return;
+      }
       String idempotencyKey = "plan-ready:" + runnerExecutionId;
       try {
         workflowTransitionService.transition(
@@ -1001,6 +1109,10 @@ public class WorkflowOrchestrationService {
     String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
     String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
     try {
+      if (stageSuccessIgnoredWhilePaused(
+          "onPrOutputStageSucceeded", workflowRunId, runnerExecutionId)) {
+        return;
+      }
       String idempotencyKey = "pr-output-ready:" + runnerExecutionId;
       try {
         workflowTransitionService.transition(
@@ -1090,6 +1202,40 @@ public class WorkflowOrchestrationService {
   }
 
   /**
+   * Story 3h-2 (AC5; code-review 2026-07-06) — enqueue the advisory reviewer over the (now
+   * push-enriched) pr-output artifact after an operator {@code approve_lint} dismissed the lint
+   * gate. The {@code WaitingForLintApproval -> WaitingForReview} transition is owned by {@code
+   * LintApprovalService.approveLint} (synchronous, in the command tx — a wrong-state approve 409s
+   * instead of the old deferred/swallowed posture, P2). Called by {@code
+   * RunnerBroker.resumeDeliveryTailFromGate} AFTER the (idempotent) captureAndPush + pr-output
+   * enrichment + producing-execution finalize, so the reviewer sees the pushed, enriched artifact.
+   * Enqueue-only + idempotency-keyed, so a replayed approval never double-enqueues.
+   */
+  public void enqueueReviewerAfterLintApproval(
+      String workflowRunId, String runnerExecutionId, String correlationId) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    PublicIdPrefixes.require(runnerExecutionId, PublicIdPrefixes.RUNNER_EXECUTION);
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    String priorRexMdc = MdcKeys.beginScope(MdcKeys.RUNNER_EXECUTION_ID, runnerExecutionId);
+    try {
+      // The WaitingForLintApproval -> WaitingForReview transition is owned by
+      // LintApprovalService.approveLint (SYNCHRONOUS, in the command tx, so a wrong-state approve
+      // 409s — code-review 2026-07-06 P2). By the time this runs post-commit the run is already
+      // WaitingForReview, so this ONLY enqueues the reviewer over the (now push-enriched) pr-output
+      // artifact. The enqueue is idempotency-keyed, so a replayed approval never double-enqueues.
+      log.info(
+          "enqueueReviewerAfterLintApproval workflowRunId={} runnerExecutionId={} "
+              + "(run already WaitingForReview — enqueue only)",
+          workflowRunId,
+          runnerExecutionId);
+      enqueueReviewerIfConfigured(workflowRunId, runnerExecutionId, correlationId);
+    } finally {
+      MdcKeys.endScope(MdcKeys.RUNNER_EXECUTION_ID, priorRexMdc);
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  /**
    * AC6 (Task 2 — sub-stage-aware) — return a {@link RunnerDispatchResult.Replayed} for an
    * EXECUTION-stage runner execution that is already {@code pending}/{@code running} for the run
    * AND belongs to {@code expectedSubStage}, or {@code null} if none. With both the
@@ -1138,6 +1284,45 @@ public class WorkflowOrchestrationService {
   }
 
   // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Story 4.8 review — executor-as-gate for the runner-success auto-advance seams. Pause's symmetry
+   * edges made {@code PAUSED → WaitingForSpecApproval / WaitingForReview} LEGAL (they are resume's
+   * return edges), so the transition table alone no longer rejects a stage success that lands while
+   * the run is Paused — pre-4.8 it surfaced ILLEGAL_TRANSITION and the swallow handlers absorbed
+   * it. A paused run's late success is logged + ignored (mirroring the broker's late-result guard);
+   * the operator's resume owns the next transition. The window exists because a runner row enqueued
+   * AFTER pause's cancel-scan is invisible to the flip and completes normally.
+   */
+  private boolean stageSuccessIgnoredWhilePaused(
+      String seam, String workflowRunId, String runnerExecutionId) {
+    boolean paused;
+    try {
+      paused =
+          workflowRunReadPort
+              .findByPublicId(workflowRunId)
+              .map(snapshot -> snapshot.currentState() == WorkflowState.PAUSED)
+              .orElse(false);
+    } catch (RuntimeException readError) {
+      // Best-effort: the guard must never break the success path (shared poller tx). An
+      // unreadable run proceeds to the transition, whose own guards still apply.
+      log.warn(
+          "{} paused-guard read failed workflowRunId={} errorClass={} — proceeding",
+          seam,
+          workflowRunId,
+          readError.getClass().getSimpleName());
+      return false;
+    }
+    if (paused) {
+      log.warn(
+          "{} ignored workflowRunId={} runnerExecutionId={} reason=run_paused — stage success "
+              + "arrived while the run is Paused; operator resume owns the next transition",
+          seam,
+          workflowRunId,
+          runnerExecutionId);
+    }
+    return paused;
+  }
 
   private void ensureInvestigating(
       String workflowRunId, WorkflowRunSnapshot snapshot, String correlationId) {
@@ -1483,6 +1668,144 @@ public class WorkflowOrchestrationService {
     } finally {
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
       MdcKeys.endScope(MdcKeys.CORRELATION_ID, priorCorrelationMdc);
+    }
+  }
+
+  /**
+   * Story 4.7 (AC7 / Reconciliation 6) — best-effort reverse notification posted to the run's
+   * source ticket when a rerun-from-step reopens the run. Mirrors {@link #syncCompletionToLinear}'s
+   * gating (active ticket link + resolvable adapter + {@code supportsCommentOnTicket}) and posts a
+   * governed "run reopened" comment with a DISTINCT fingerprint basis, appending {@code
+   * linear.runReopenedNotification} on success. It NEVER throws and never rolls back the
+   * already-committed rerun: a missing link / missing capability / adapter failure logs + skips.
+   * Runs in its own {@code REQUIRES_NEW} transaction (called by {@code
+   * RecoveryService.rerunFromStep} after the prep tx commits, OUTSIDE any tx).
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void notifyLinearRunReopened(
+      String workflowRunId, String targetStep, String correlationId) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    try {
+      Optional<IntegrationLink> ticketLink =
+          integrationLinkService.findActiveLinearTicketLink(workflowRunId);
+      if (ticketLink.isEmpty()) {
+        log.warn(
+            "notifyLinearRunReopened no_linear_ticket_link workflowRunId={} (nothing to post to)",
+            workflowRunId);
+        return;
+      }
+      String ticketRef = ticketLink.get().externalRef();
+      // Story 4.18 (AC8) — suppress the reopen comment while the run has an unresolved conflict on
+      // its Linear ticket link: posting "run reopened" before the operator reconciles would be a
+      // premature/misleading notification. Gate on ANY unresolved Linear-link conflict (a closed
+      // Linear ticket = external_resource_removed, NOT an auto-pause category), skip-with-log
+      // (this method never throws — best-effort). Nullable-guarded (fail-open in lean contexts).
+      if (hasUnresolvedLinearConflict(workflowRunId)) {
+        log.warn(
+            "notifyLinearRunReopened suppressed (unresolved conflict) workflowRunId={} ticketRef={}"
+                + " — skipping reopen comment until reconcile",
+            workflowRunId,
+            MdcKeys.sanitizeForLog(ticketRef));
+        return;
+      }
+      Project project;
+      Optional<TicketSourceAdapter> adapterOpt;
+      try {
+        project = projectRuntimeConfigResolver.resolveForRun(workflowRunId);
+        adapterOpt = projectConnectorResolver.findTicketSource(project);
+      } catch (DomainException error) {
+        log.warn(
+            "notifyLinearRunReopened project_resolution_failed workflowRunId={} reason={}; skipping",
+            workflowRunId,
+            error.errorCode().value());
+        return;
+      }
+      if (adapterOpt.isEmpty()) {
+        log.warn(
+            "notifyLinearRunReopened linear_adapter_unavailable workflowRunId={}; skipping",
+            workflowRunId);
+        return;
+      }
+      TicketSourceAdapter adapter = adapterOpt.get();
+      TicketSourceCapabilities capabilities;
+      try {
+        capabilities = adapter.getCapabilities();
+      } catch (RuntimeException error) {
+        log.warn(
+            "notifyLinearRunReopened capability_probe_failed workflowRunId={} errorClass={}; skipping",
+            workflowRunId,
+            error.getClass().getSimpleName());
+        return;
+      }
+      if (capabilities == null || !capabilities.supportsCommentOnTicket()) {
+        log.warn(
+            "event=linear.runReopenedSkipped reason=ticket_source_does_not_support_comments "
+                + "workflowRunId={} ticketRef={}",
+            workflowRunId,
+            MdcKeys.sanitizeForLog(ticketRef));
+        return;
+      }
+      String canonicalBody =
+          "DeliveryLine run "
+              + workflowRunId
+              + " was reopened via rerun-from-step (target step: "
+              + targetStep
+              + "). The prior stage decision has been invalidated and the run will be re-run.";
+      RedactionResult redaction =
+          redactionPolicyService.redact(canonicalBody, DataClassification.SHAREABLE_FULL.value());
+      String body = redaction.sanitizedText();
+      // Distinct fingerprint basis from the completion comment so the reopen notification is its
+      // own
+      // at-most-once post per (run, targetStep).
+      String reopenFingerprint =
+          fingerprint("rerun-reopened\nrunId=" + workflowRunId + "\ntargetStep=" + targetStep);
+      try {
+        CommentResult result =
+            adapter.postGovernedRunComment(
+                TicketRef.of(ticketRef),
+                new GovernedRunComment(
+                    workflowRunId, reopenFingerprint, body, DataClassification.SHAREABLE_FULL));
+        log.info(
+            "notifyLinearRunReopened posted workflowRunId={} ticketRef={} fingerprint={} result={}",
+            workflowRunId,
+            MdcKeys.sanitizeForLog(ticketRef),
+            reopenFingerprint,
+            result);
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put(WorkflowEventDetailKeys.LINEAR_TICKET_REFERENCE, ticketRef);
+        details.put(WorkflowEventDetailKeys.TARGET_STEP, targetStep);
+        if (correlationId != null && !correlationId.isBlank()) {
+          details.put(WorkflowEventDetailKeys.CORRELATION_ID, correlationId);
+        }
+        workflowEventWritePort.append(
+            new WorkflowEventRecord(
+                PublicIdPrefixes.WORKFLOW_EVENT.next(),
+                workflowRunId,
+                WorkflowEventType.LINEAR_RUN_REOPENED_NOTIFICATION,
+                null,
+                null,
+                ActorContext.SYSTEM.actorIdentity(),
+                ActorType.SYSTEM,
+                "linear_run_reopened_notification",
+                null,
+                false,
+                OffsetDateTime.now(java.time.ZoneOffset.UTC),
+                details));
+      } catch (RuntimeException error) {
+        log.warn(
+            "notifyLinearRunReopened post_failed workflowRunId={} ticketRef={} errorClass={}",
+            workflowRunId,
+            MdcKeys.sanitizeForLog(ticketRef),
+            error.getClass().getSimpleName());
+      }
+    } catch (RuntimeException error) {
+      log.warn(
+          "notifyLinearRunReopened unexpected_failure workflowRunId={} errorClass={}",
+          workflowRunId,
+          error.getClass().getSimpleName());
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
     }
   }
 

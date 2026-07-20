@@ -22,6 +22,10 @@ const EXPECTED_ACTIONS: readonly ConfirmationActionId[] = [
   'stopOrchestrator',
   'retryOrRecoverConsequential',
   'takeoverWorkflow',
+  // Story 4.22 — the deeper recovery_operator confirmations.
+  'resumeRun',
+  'pauseRun',
+  'rerunFromStep',
 ];
 
 describe('confirmationCatalog', () => {

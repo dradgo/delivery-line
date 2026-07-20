@@ -28,6 +28,27 @@ deliveryline:
     timeout:
       connect-ms: 5000
       read-ms: 30000
+  bitbucket:
+    # Story 3i-3 (FR82) — mirror the real application.yml non-secret bitbucket knobs so the
+    # profile-neutral BitbucketProperties binding does not shadow the defaults to surprising values
+    # in the @SpringBootTest tier (memory: validated-config-needs-test-yaml). No token here —
+    # bitbucket-real is never in a test profile group, so the bitbucketRestClient fail-fast never
+    # fires under tests.
+    token: ${BITBUCKET_TOKEN:}
+    base-url: https://api.bitbucket.org
+    timeout:
+      connect-ms: 5000
+      read-ms: 30000
+  artifact:
+    # Story 4.15 (AC1 / Trap) — mirror deliveryline.artifact.drift-detection.* (the test yaml
+    # SHADOWS, not merges with, main). Detection is DISABLED in the shared test profile so no
+    # @Scheduled trigger bean registers and no always-on sweep fires during unrelated
+    # @SpringBootTests; ArtifactDriftDetectionIT invokes detectDrift() directly (no scheduler wait).
+    drift-detection:
+      enabled: false
+      interval-ms: 900000
+      batch-limit: 100
+      min-age-minutes: 5
   complex-ticket-flow:
     # Story 3f-7 (AC5 / Trap) — mirror deliveryline.complex-ticket-flow.* so the validated
     # ComplexTicketFlowProperties binding does not shadow the default to a surprising value in the
@@ -41,6 +62,35 @@ deliveryline:
     # wait),
     # and the disabled-flag config test asserts the absence of the bean.
     rollup-sweep:
+      enabled: false
+      interval-ms: 60000
+      batch-limit: 100
+  integration:
+    # Story 4.17 (AC1 / Trap) — mirror deliveryline.integration.conflict-detection.* (the test yaml
+    # SHADOWS, not merges with, main). Detection is DISABLED in the shared test profile so no
+    # @Scheduled trigger bean registers and no always-on sweep fires during unrelated
+    # @SpringBootTests; IntegrationConflictDetectionIT invokes sweep() directly (no scheduler wait),
+    # and the disabled-flag config test asserts the absence of the trigger bean.
+    conflict-detection:
+      enabled: false
+      interval-ms: 300000
+      batch-limit: 100
+      # Story 4.18 (AC5 / Trap) — the shared test profile OPTS OUT of auto-pause (explicit empty
+      # list, which the compact ctor honors — vs an ABSENT key that would default to the two
+      # state-drift categories). Rationale: the always-direct 4.17 IntegrationConflictDetectionIT
+      # sweeps detect external_state_advanced/reverted on WaitingForReview runs; auto-pausing them
+      # would append RECOVERY_PAUSED + recovery_actions rows and surprise those detection-only tests
+      # (and complicate their FK cleanup). ConflictAutoPauseHandlerTest constructs the properties
+      # directly, and ConflictAutoPauseIT opts back in via @TestPropertySource — both exercise the
+      # production posture without imposing it on the whole @SpringBootTest tier.
+      auto-pause-on-categories: []
+  integration-conflict:
+    # Story 4.30 (AC4 / Trap) — mirror deliveryline.integration-conflict.terminal-sweep.* (the test
+    # yaml SHADOWS, not merges with, main). The terminal-run sweep is DISABLED in the shared test
+    # profile so no @Scheduled trigger bean registers and no always-on sweep fires during unrelated
+    # @SpringBootTests; IntegrationConflictTerminalRunSweepIT invokes sweep() directly (no scheduler
+    # wait), and the disabled-flag config test asserts the absence of the trigger bean.
+    terminal-sweep:
       enabled: false
       interval-ms: 60000
       batch-limit: 100
@@ -128,6 +178,16 @@ deliveryline:
       claude:
         - CLAUDE_CODE_OAUTH_TOKEN
         - ANTHROPIC_API_KEY
+    # Story: runner JDK+Maven — mirror deliveryline.runner.maven-cache-enabled (the test
+    # application.yml shadows, does not merge with, main). true matches production; the
+    # @Value default of :true would already bind this, but pin explicitly since this file
+    # already pins the other runner keys.
+    maven-cache-enabled: true
+    # Per-run DinD Testcontainers sidecar (only used when a project has testcontainers-enabled=true).
+    testcontainers:
+      dind-image: docker:27-dind
+      memory-bytes: 2147483648   # 2 GiB cap on the privileged sidecar
+      readiness-timeout: 60s
     # Story 3.1 — under tests, override the Docker runner image tags to a stable, tiny
     # image (alpine:3.20) so docker-runner ITs do not depend on the not-yet-built
     # Codex / Claude images (stories 3.3 / 3.4). The fast tier never activates the

@@ -152,6 +152,15 @@ class CodexRunnerImageConformanceIT {
         .as("self-test summary must report the vendored superpowers skills")
         .contains("superpowers:")
         .contains("skills at");
+
+    // JDK+Maven toolchain: the self-test must report both, and a missing binary would already
+    // have failed the self-test (exit != 0). Pins the summary lines in CI.
+    assertThat(selfTestOutput)
+        .as("self-test summary must report the JDK toolchain")
+        .contains("java version:");
+    assertThat(selfTestOutput)
+        .as("self-test summary must report the Maven toolchain")
+        .contains("maven version:");
   }
 
   @ParameterizedTest(name = "stage {0} -> artifactType {1}")

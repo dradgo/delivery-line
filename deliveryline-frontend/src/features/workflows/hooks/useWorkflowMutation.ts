@@ -23,6 +23,7 @@ import {
   useMutation,
   useQueryClient,
   type MutateOptions,
+  type QueryClient,
   type UseMutateFunction,
   type UseMutationResult,
 } from '@tanstack/react-query';
@@ -43,6 +44,16 @@ export interface WorkflowMutationConfig<TVariables, TData> {
    * `idempotencyKey` for THIS attempt (pass it as the `Idempotency-Key` header).
    */
   mutationFn: (args: { variables: TVariables; idempotencyKey: string }) => Promise<TData>;
+  /**
+   * Story 4.23 — OPTIONAL extra success hook, invoked AFTER the built-in `detail(id)` + `lists()`
+   * invalidation with the QueryClient, the response, and the attempt variables. Lets a command
+   * invalidate keys the factory does not know about — e.g. reconcile must refresh the
+   * `conflictId`-keyed detail (rooted at `all`, outside the `detail(runId)` cascade). Backward
+   * compatible: omit it and only the two cross-cutting invalidations run (the pre-4.23 behaviour).
+   */
+  onSuccess?:
+    | ((args: { queryClient: QueryClient; data: TData; variables: TVariables }) => void)
+    | undefined;
 }
 
 interface WorkflowMutationAttempt<TVariables> {
@@ -86,13 +97,15 @@ export function useWorkflowMutation<TVariables, TData>(
     mutationFn: ({ variables, idempotencyKey }): Promise<TData> => {
       return config.mutationFn({ variables, idempotencyKey });
     },
-    onSuccess: () => {
+    onSuccess: (data, attempt) => {
       const { workflowRunId } = config;
       // Prefix invalidation: detail(id) is a structural prefix of events(id) /
       // allowedActions(id), so one call refreshes all three for this run (AC6).
       void queryClient.invalidateQueries({ queryKey: workflowKeys.detail(workflowRunId) });
       // A spec action also moves the run within (or out of) the review queue.
       void queryClient.invalidateQueries({ queryKey: workflowKeys.lists() });
+      // Story 4.23 — the optional command-specific extra invalidation (e.g. the conflict key).
+      config.onSuccess?.({ queryClient, data, variables: attempt.variables });
     },
   });
 

@@ -38,6 +38,17 @@ import org.dradgo.domain.registry.RunnerStage;
  * adapter→application-service dependency). It defaults to {@code false} in every back-compat
  * constructor, so existing construction sites (mock + no-repo dispatch + tests) stay byte-identical
  * (no env var emitted).
+ *
+ * <p>DinD Testcontainers Task 6: {@code testcontainersEnabled} is added as a new trailing {@code
+ * boolean}, mirroring {@code openspecEnabled} exactly — resolved in {@code RunnerBroker} from the
+ * run's {@link
+ * org.dradgo.application.project.ProjectRuntimeConfigResolver#resolveTestcontainersEnabled}
+ * (default-project fallback) and threaded onto this request so {@code DockerRunnerAdapter} stays a
+ * dumb executor reading {@code request.testcontainersEnabled()} — no {@code
+ * ProjectRuntimeConfigResolver} injection into the adapter (resolve-in-broker, pass-via-request,
+ * same rationale as openspecEnabled). Defaults to {@code false} in every back-compat constructor,
+ * so existing construction sites stay byte-identical (no sidecar provisioned, no network/env
+ * change).
  */
 public record RunnerDispatchRequest(
     String runnerExecutionId,
@@ -51,7 +62,8 @@ public record RunnerDispatchRequest(
     String linearTicketRef,
     String linearTicketSummary,
     ExecutionSubStage subStage,
-    boolean openspecEnabled) {
+    boolean openspecEnabled,
+    boolean testcontainersEnabled) {
 
   public RunnerDispatchRequest {
     if (runnerExecutionId == null || runnerExecutionId.isBlank()) {
@@ -98,6 +110,7 @@ public record RunnerDispatchRequest(
         linearTicketRef,
         linearTicketSummary,
         null,
+        false,
         false);
   }
 
@@ -106,6 +119,10 @@ public record RunnerDispatchRequest(
    * ExecutionSubStage} + the per-run {@code openspecEnabled} flag resolved in {@code RunnerBroker}.
    * Distinct from the pre-3b 10-arg {@code subStage} constructor by the trailing {@code boolean}
    * (no overload ambiguity). Leaves {@code linearTicketSummary = null}, matching the broker sites.
+   *
+   * <p>DinD Testcontainers Task 6 — gained a second trailing {@code boolean}: the per-run {@code
+   * testcontainersEnabled} flag, also resolved in {@code RunnerBroker}. This is the broker's
+   * full-dispatch constructor (both call sites in {@code RunnerBroker} use it).
    */
   public RunnerDispatchRequest(
       String runnerExecutionId,
@@ -118,7 +135,8 @@ public record RunnerDispatchRequest(
       String repositoryRef,
       String linearTicketRef,
       ExecutionSubStage subStage,
-      boolean openspecEnabled) {
+      boolean openspecEnabled,
+      boolean testcontainersEnabled) {
     this(
         runnerExecutionId,
         workflowRunId,
@@ -131,7 +149,8 @@ public record RunnerDispatchRequest(
         linearTicketRef,
         null,
         subStage,
-        openspecEnabled);
+        openspecEnabled,
+        testcontainersEnabled);
   }
 
   /**
@@ -163,6 +182,7 @@ public record RunnerDispatchRequest(
         linearTicketRef,
         null,
         subStage,
+        false,
         false);
   }
 
@@ -191,6 +211,7 @@ public record RunnerDispatchRequest(
         linearTicketRef,
         null,
         null,
+        false,
         false);
   }
 
@@ -219,6 +240,7 @@ public record RunnerDispatchRequest(
         null,
         null,
         null,
+        false,
         false);
   }
 }

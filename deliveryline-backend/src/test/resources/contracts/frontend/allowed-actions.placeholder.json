@@ -24,6 +24,15 @@
     "request_split",
     "continue_as_single",
     "repropose_split",
-    "approve_split"
+    "approve_split",
+    "approve_lint",
+    "request_lint_fix",
+    "approve_delivery",
+    "resume_workflow",
+    "reconcile_conflict",
+    "rerun_from_step",
+    "pause_workflow",
+    "classify_failure",
+    "enter_compare_mode"
   ]
 }

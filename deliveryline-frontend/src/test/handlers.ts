@@ -28,6 +28,7 @@ import type { components } from '@/lib/api/schema';
 import { allEventStreams, eventStreamByRunId } from './fixtures/event-streams';
 
 type AllowedActions = components['schemas']['AllowedActions'];
+type FailureDiagnosticsResponse = components['schemas']['FailureDiagnosticsResponse'];
 
 /** Same-origin base — matches the client's `window.location.origin` in jsdom. */
 const API = 'http://localhost/api/v1/workflows';
@@ -108,9 +109,80 @@ export function detailFromStream(stream: WorkflowEventsResponse): WorkflowDetail
 const ACTIONS_BY_STATE: Record<string, string[]> = {
   WaitingForSpecApproval: ['approve_spec', 'reject_spec', 'answer_clarification'],
   WaitingForReview: ['answer_clarification'],
-  // Story 3.30 — a `Failed` run can retry (`AllowedAction.RETRY`) + view diagnostics.
-  Failed: ['retry', 'view_diagnostics'],
+  // Story 3.30 / 4.4 — a `Failed` run can retry (`AllowedAction.RETRY`) + view diagnostics +
+  // download its redacted runner log (`view_runner_logs`, offered wherever a runner execution
+  // exists).
+  Failed: ['retry', 'view_diagnostics', 'view_runner_logs'],
 };
+
+/**
+ * Story 4.4 — derive the failure-diagnostics deep-dive the `GET .../failure-diagnostics` endpoint
+ * serves. A `Failed` run gets the NFR7 fields + a redacted runner-log reference + a Linear sync
+ * status + one safety-ranked `retry` recommendation; any other state gets a benign view (empty
+ * recommendations, no runner log) so the panel self-hides.
+ */
+export function failureDiagnosticsFromStream(
+  stream: WorkflowEventsResponse,
+): FailureDiagnosticsResponse {
+  // Source the failure fields from the actual failure event (not the trailing recovery marker); a
+  // run is "failed" for diagnostics purposes whenever it carries a failure event OR ended Failed.
+  const failureEventTypes = new Set([
+    'runner.failed',
+    'runner.timeout',
+    'runner.orphaned',
+    'recovery.dispatchFailed',
+  ]);
+  const failureEvent = [...stream.events].reverse().find((e) => failureEventTypes.has(e.eventType));
+  const failed = failureEvent != null || stream.workflowRun.terminalState === 'Failed';
+  const state = failed ? 'Failed' : (stream.workflowRun.terminalState ?? 'Inbox');
+  const event = failureEvent ?? lastEvent(stream);
+  const correlationId =
+    typeof event.details.correlationId === 'string' ? event.details.correlationId : null;
+  // exactOptionalPropertyTypes: OMIT absent object-typed fields (never set them to undefined).
+  const runnerLogReference = failed
+    ? {
+        runnerExecutionId: 'rex_diag001',
+        referencePath: '/home/deliveryline/runner-logs/rex_diag001',
+        byteSize: 256,
+        classification: 'shareable-redacted',
+        redactionCount: 1,
+      }
+    : undefined;
+  const linear = failed
+    ? {
+        integrationType: 'linear',
+        externalRef: 'LIN-101',
+        syncStatus: 'synced',
+        lastSyncAt: event.createdAt,
+      }
+    : undefined;
+  return {
+    currentState: state,
+    failedStage: failed ? 'execution' : null,
+    lastSuccessfulStage: failed ? 'Executing' : null,
+    failureCategory: failed ? (event.failureCategory ?? 'runner_crash') : null,
+    failureReason: failed ? (event.reason ?? 'runner failed') : null,
+    failureTimestamp: failed ? event.createdAt : null,
+    lastActivityTimestamp: failed ? event.createdAt : null,
+    correlationId,
+    lastGoodState: failed ? 'Executing' : null,
+    currentBlockingReason: null,
+    nextSafeAction: failed ? 'retry' : 'view_only',
+    lastActorIdentity: event.actorIdentity,
+    ...(runnerLogReference ? { runnerLogReference } : {}),
+    integrationSyncStatus: linear ? { linear } : {},
+    recommendedRecoveryActions: failed
+      ? [
+          {
+            actionType: 'retry',
+            safetyLevel: 'safe',
+            reason: 'Retry from the failed stage is expected to succeed on a transient failure.',
+            precondition: 'workspace intact',
+          },
+        ]
+      : [],
+  };
+}
 
 /** Derive the allowed-actions + version stamp the `GET .../allowed-actions` endpoint serves. */
 export function allowedActionsFromStream(stream: WorkflowEventsResponse): AllowedActions {
@@ -177,6 +249,15 @@ export const defaultHandlers = [
     return stream
       ? HttpResponse.json(allowedActionsFromStream(stream))
       : runNotFound(workflowRunId, `/api/v1/workflows/${workflowRunId}/allowed-actions`);
+  }),
+
+  // Story 4.4 — GET /workflows/{id}/failure-diagnostics — the operator deep-dive.
+  http.get(`${API}/:workflowRunId/failure-diagnostics`, ({ params }) => {
+    const workflowRunId = String(params.workflowRunId);
+    const stream = eventStreamByRunId(workflowRunId);
+    return stream
+      ? HttpResponse.json(failureDiagnosticsFromStream(stream))
+      : runNotFound(workflowRunId, `/api/v1/workflows/${workflowRunId}/failure-diagnostics`);
   }),
 
   // Story 3c-9 — GET /projects (bare array, no envelope) — the single seeded project.

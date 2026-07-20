@@ -1,5 +1,6 @@
 package org.dradgo.application.project;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import org.dradgo.application.runner.RunnerProperties;
@@ -107,6 +108,102 @@ public class ProjectRuntimeConfigResolver {
    */
   public boolean resolveOpenSpecEnabled(String workflowRunId) {
     return resolveForRun(workflowRunId).openspecEnabled();
+  }
+
+  /**
+   * Story 3h-1 (AC2/AC3) — the effective build-stage opt-in for a run: the resolved project's
+   * {@code buildStageEnabled} (seeded from {@code deliveryline.runner.build-stage.enabled},
+   * per-project overridable). The {@code default} project seeds {@code false} unless the global
+   * prop is on, so a pre-3h deployment skips BUILD entirely. Read on the worker thread — {@code
+   * Project} is a detached POJO (no lazy proxy), so this is safe outside a transaction.
+   */
+  public boolean resolveBuildStageEnabled(String workflowRunId) {
+    return resolveForRun(workflowRunId).buildStageEnabled();
+  }
+
+  /**
+   * Story 3h-1 (AC2/AC3) — the effective build command for a run: the resolved project's
+   * per-project {@code buildCommand} when present, else the global default ({@link
+   * RunnerProperties#buildCommand()}), normalized so a blank value is treated as absent. Empty ⇒ no
+   * build command configured, so BUILD is skipped even when {@link #resolveBuildStageEnabled} is
+   * true (mirrors the {@code resolveRunnerKind} project-then-global merge).
+   */
+  public Optional<String> resolveBuildCommand(String workflowRunId) {
+    String projectCommand = resolveForRun(workflowRunId).buildCommand();
+    String effective =
+        (projectCommand == null || projectCommand.isBlank())
+            ? runnerProperties.buildCommand()
+            : projectCommand;
+    if (effective == null || effective.isBlank()) {
+      return Optional.empty();
+    }
+    return Optional.of(effective.trim());
+  }
+
+  /**
+   * Story 3h-2 (AC2/AC3) — the effective lint-stage opt-in for a run: the resolved project's {@code
+   * lintStageEnabled} (seeded from {@code deliveryline.runner.lint-stage.enabled}, per-project
+   * overridable). The {@code default} project seeds {@code false} unless the global prop is on, so
+   * a pre-3h-2 deployment skips LINT entirely. Read on the worker thread — {@code Project} is a
+   * detached POJO (no lazy proxy), so this is safe outside a transaction.
+   */
+  public boolean resolveLintStageEnabled(String workflowRunId) {
+    return resolveForRun(workflowRunId).lintStageEnabled();
+  }
+
+  /**
+   * Story 3h-2 (AC2/AC3) — the effective lint command list for a run: the resolved project's
+   * per-project {@code lintCommands} when non-empty, else the global default ({@link
+   * RunnerProperties#lintCommands()}), with blank entries dropped and survivors trimmed. Empty ⇒ no
+   * lint commands configured, so LINT is skipped even when {@link #resolveLintStageEnabled} is true
+   * (mirrors {@link #resolveBuildCommand}'s project-then-global merge).
+   */
+  public List<String> resolveLintCommands(String workflowRunId) {
+    List<String> projectCommands = resolveForRun(workflowRunId).lintCommands();
+    List<String> effective =
+        (projectCommands == null || projectCommands.isEmpty())
+            ? runnerProperties.lintCommands()
+            : projectCommands;
+    if (effective == null) {
+      return List.of();
+    }
+    return effective.stream()
+        .filter(command -> command != null && !command.isBlank())
+        .map(String::trim)
+        .toList();
+  }
+
+  /**
+   * Story 3h-4 (AC1) — the effective push mode for a run: the resolved project's non-null {@code
+   * pushMode} (seeded from {@code deliveryline.runner.delivery.push-mode}, per-project
+   * overridable). The {@code default} project seeds {@code AUTO} unless the global prop selects
+   * otherwise, so a pre-3h deployment pushes inline (never parks at the delivery gate). Read on the
+   * worker thread — {@code Project} is a detached POJO (no lazy proxy), so this is safe outside a
+   * transaction.
+   */
+  public org.dradgo.domain.registry.PushMode resolvePushMode(String workflowRunId) {
+    return resolveForRun(workflowRunId).pushMode();
+  }
+
+  /**
+   * Story 3h-4 (AC1/AC5) — the effective create-PR flag for a run: the resolved project's {@code
+   * autoCreatePullRequest} (seeded from {@code
+   * deliveryline.runner.delivery.auto-create-pull-request}, per-project overridable). The {@code
+   * default} project seeds {@code true} unless the global prop turns it off, so a pre-3h deployment
+   * creates a PR wherever the push fires. Read on the worker thread — {@code Project} is a detached
+   * POJO (no lazy proxy), so this is safe outside a transaction.
+   */
+  public boolean resolveAutoCreatePullRequest(String workflowRunId) {
+    return resolveForRun(workflowRunId).autoCreatePullRequest();
+  }
+
+  /**
+   * The effective Testcontainers opt-in for a run — the resolved project's {@code
+   * testcontainersEnabled} (seeded false). Read on the worker thread (detached POJO, no lazy
+   * proxy).
+   */
+  public boolean resolveTestcontainersEnabled(String workflowRunId) {
+    return resolveForRun(workflowRunId).testcontainersEnabled();
   }
 
   /**

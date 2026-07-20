@@ -137,6 +137,64 @@ export const workflowKeys = {
   stepExecutions: (workflowRunId: string) =>
     [...workflowKeys.detail(workflowRunId), 'stepExecutions'] as const,
 
+  /**
+   * A run's failure-diagnostics deep-dive (story 4.4). A PREFIX child of `detail(id)`, so a
+   * recovery mutation's `detail(id)` invalidation cascade refreshes the operator panel
+   * (recommended actions + integration sync + runner-log reference) for free as the run advances.
+   */
+  failureDiagnostics: (workflowRunId: string) =>
+    [...workflowKeys.detail(workflowRunId), 'failureDiagnostics'] as const,
+
+  /**
+   * A run's NON-MUTATING rerun-from-step preview (story 4.22). Keyed per `targetStep` so the
+   * investigating/executing previews are distinct cache entries. A structural PREFIX child of
+   * `detail(id)`, so a recovery mutation's `detail(id)` invalidation cascade refreshes it for free.
+   */
+  rerunPreview: (workflowRunId: string, targetStep: string) =>
+    [...workflowKeys.detail(workflowRunId), 'rerunPreview', targetStep] as const,
+
+  /**
+   * Story 4.23 (AC1) — a run's UNRESOLVED integration conflicts (story 4.18
+   * `GET /api/v1/integration-conflicts?workflowRunId=…&resolved=false`). Keyed under
+   * `detail(runId)` — the launch surfaces (Decision Bar seam / drift indicator) carry only a
+   * run id, so this run-scoped list resolves a concrete `conflictId` to open the dialog with.
+   * A structural PREFIX child of `detail(id)`, so a reconcile mutation's `detail(id)`
+   * invalidation cascade refreshes it for free (a reconciled conflict drops off the list).
+   */
+  integrationConflicts: (workflowRunId: string) =>
+    [...workflowKeys.detail(workflowRunId), 'integrationConflicts'] as const,
+
+  /**
+   * Story 4.24 (AC2/AC5/AC9) — a run's CURRENT + prior failure classification (story 4.9 read model,
+   * `GET /api/v1/workflows/{workflowRunId}/failure-classification`). A structural PREFIX child of
+   * `detail(id)`, so the classify mutation's `detail(id)` invalidation cascade refreshes the dialog's
+   * prior-classification section + the Run Context Strip badge for free (no extra invalidation wiring).
+   */
+  failureClassification: (workflowRunId: string) =>
+    [...workflowKeys.detail(workflowRunId), 'failureClassification'] as const,
+
   /** A single artifact by its own public id (endpoint ships in the artifact-read story). */
   artifact: (artifactId: string) => [...workflowKeys.all, 'artifact', artifactId] as const,
+
+  /**
+   * Story 4.23 (AC1) — a single integration conflict's detail (story 4.18
+   * `GET /api/v1/integration-conflicts/{conflictId}`). Keyed OFF `all` (a sibling of
+   * `artifact(id)`), NOT under `detail(runId)`: the endpoint is keyed by `conflictId`, not run
+   * id — a conflict spans an integration link, and the dialog fetches it dialog-scoped. Read-only
+   * + idempotent (no Idempotency-Key). The reconcile mutation invalidates it EXPLICITLY on success
+   * (it is not under any `detail(runId)` subtree, so the factory's cascade does not reach it).
+   */
+  integrationConflict: (conflictId: string) =>
+    [...workflowKeys.all, 'integrationConflict', conflictId] as const,
+
+  /**
+   * Story 4.20 (AC1) — a typed revision delta between two artifact versions of ONE lineage
+   * (story 4.19 `GET /api/v1/artifacts/{a}/compare/{b}`). Keyed OFF `all` (a sibling of
+   * `artifact(id)`), NOT `detail(runId)`: a compare spans an artifact lineage independent of any
+   * single run (it may cross runs), so it must not live under one run's detail-invalidation
+   * subtree. Read-only + idempotent (no Idempotency-Key). The A/B order is significant —
+   * A = baseline/prior, B = target/current — so the pair is part of the key verbatim.
+   */
+  revisionDelta: (artifactIdA: string, artifactIdB: string) =>
+    [...workflowKeys.all, 'revisionDelta', artifactIdA, artifactIdB] as const,
 } as const;

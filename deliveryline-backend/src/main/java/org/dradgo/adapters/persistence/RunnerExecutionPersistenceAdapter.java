@@ -18,6 +18,7 @@ import org.dradgo.adapters.persistence.repository.WorkflowRunRepository;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.runner.ExecutionConstraints;
 import org.dradgo.application.runner.RunnerExecutionStateMachine;
+import org.dradgo.application.runner.spi.RunnerExecutionCancellation;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort;
 import org.dradgo.application.runner.spi.RunnerExecutionRecordPort.ReviewedArtifactPin;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
@@ -648,6 +649,27 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
   @Override
   public Optional<RunnerTakeoverCancellation> markCancelledForTakeover(
       String publicId, OffsetDateTime cancelledAt) {
+    return markCancelled(publicId, RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER, cancelledAt)
+        .map(previousStatus -> new RunnerTakeoverCancellation(publicId, previousStatus));
+  }
+
+  // Story 4.8 (AC4): guarded flip {queued|pending|running} → cancelled_for_pause — the reversible
+  // pause sibling of markCancelledForTakeover (shared body below). Called inside the pause
+  // service's REQUIRES_NEW transaction.
+  @Override
+  public Optional<RunnerExecutionCancellation> markCancelledForPause(
+      String publicId, OffsetDateTime cancelledAt) {
+    return markCancelled(publicId, RunnerExecutionStatus.CANCELLED_FOR_PAUSE, cancelledAt)
+        .map(previousStatus -> new RunnerExecutionCancellation(publicId, previousStatus));
+  }
+
+  // Shared cancellation body (stories 3.22 + 4.8): lock the row, idempotently skip an
+  // already-terminal one (Optional.empty()), assert the state-machine edge, stamp the terminal
+  // status + completed_at, clear failureCategory (an operator cancellation is not a failure) and
+  // the heartbeat-stale marker. Returns the previous status for the caller's counts / post-commit
+  // docker-stop routing.
+  private Optional<RunnerExecutionStatus> markCancelled(
+      String publicId, RunnerExecutionStatus targetStatus, OffsetDateTime cancelledAt) {
     Objects.requireNonNull(cancelledAt, "cancelledAt");
     PublicIdPrefixes.require(publicId, PublicIdPrefixes.RUNNER_EXECUTION);
     RunnerExecutionEntity entity =
@@ -658,9 +680,8 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
     if (RunnerExecutionStateMachine.isTerminal(previousStatus)) {
       return Optional.empty();
     }
-    RunnerExecutionStateMachine.assertCanTransition(
-        publicId, previousStatus, RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER);
-    entity.setStatus(RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER);
+    RunnerExecutionStateMachine.assertCanTransition(publicId, previousStatus, targetStatus);
+    entity.setStatus(targetStatus);
     entity.setCompletedAt(cancelledAt.withOffsetSameInstant(ZoneOffset.UTC));
     entity.setFailureCategory(null);
     entity.setHeartbeatStaleEmittedAt(null);
@@ -669,8 +690,8 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
         "transition runnerExecutionId={} from={} to={}",
         publicId,
         previousStatus.value(),
-        RunnerExecutionStatus.CANCELLED_FOR_TAKEOVER.value());
-    return Optional.of(new RunnerTakeoverCancellation(publicId, previousStatus));
+        targetStatus.value());
+    return Optional.of(previousStatus);
   }
 
   // Story 3.2a: self-transactional (REQUIRED) — unlike the other mutators (always called inside the
@@ -789,6 +810,11 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
     }
     // Trap T16: the SQL guard restricts status to terminal values so a live row whose completed_at
     // drifted is never returned to the cleanup sweep.
+    // Story 4.8 (Reconciliation 4 / OQ-4): cancelled_for_pause is DELIBERATELY EXCLUDED from this
+    // cleanup horizon even though it is terminal for the row. Pause is designed to be resumed —
+    // enrolling the status here would let RunnerWorkspaceCleanupJob.sweepWorkspaces delete the
+    // paused run's workspace out from under a later resume. cancelled_for_takeover is included
+    // only because takeover is irreversible. Do NOT "helpfully" add cancelled_for_pause.
     List<String> rawStatuses =
         List.of(
             RunnerExecutionStatus.COMPLETED.value(),
@@ -883,6 +909,31 @@ public class RunnerExecutionPersistenceAdapter implements RunnerExecutionRecordP
         inputTokens,
         outputTokens,
         totalTokens);
+    return mapper.toSnapshot(saved);
+  }
+
+  // Story 3h-2 (AC6) — persist the lint findings jsonb (V34 column). METADATA-ONLY update mirroring
+  // recordTokenUsage: REQUIRES_NEW so the write commits in its own tx (releasing the row lock)
+  // without joining the ambient LINT-capture tx, no state-machine guard, tolerant of a
+  // still-running
+  // row (findings are written during capture before finalization). The payload is
+  // already-serialized,
+  // already-redacted JSON (ids/counts only — never raw secret bytes). Throws only when the row is
+  // missing.
+  @Override
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public RunnerExecutionSnapshot recordLintFindings(String publicId, String lintFindingsJson) {
+    PublicIdPrefixes.require(publicId, PublicIdPrefixes.RUNNER_EXECUTION);
+    RunnerExecutionEntity entity =
+        runnerExecutionRepository
+            .findByPublicIdForUpdate(publicId)
+            .orElseThrow(() -> runnerExecutionNotFound(publicId));
+    entity.setLintFindings(lintFindingsJson);
+    RunnerExecutionEntity saved = runnerExecutionRepository.saveAndFlush(entity);
+    log.info(
+        "persisting lint findings runnerExecutionId={} payloadPresent={}",
+        publicId,
+        lintFindingsJson != null);
     return mapper.toSnapshot(saved);
   }
 

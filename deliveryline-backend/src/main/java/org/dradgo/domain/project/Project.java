@@ -1,12 +1,14 @@
 package org.dradgo.domain.project;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.ProjectRunnerStep;
 import org.dradgo.domain.registry.ProjectStatus;
+import org.dradgo.domain.registry.PushMode;
 import org.dradgo.domain.registry.RunnerKind;
 
 /**
@@ -55,7 +57,157 @@ public record Project(
     // only. Defensive-copied to an unmodifiable map (null → empty) by the compact constructor; the
     // child rows live in project_runner_kinds (V26), loaded with the project by the persistence
     // adapter. NEVER null after construction.
-    Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds) {
+    Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds,
+    // Story 3h-1 (AC2, FR75) — per-project build-validation config (ADR 0030). buildCommand is a
+    // nullable opaque String (NULL / blank-cleared = "no build command", BUILD skipped) mirroring
+    // reviewerModelKind — its authoritative validation is ProjectRuntimeConfigResolver at execution
+    // time, so it carries no typed value here beyond the blank-if-set invariant below.
+    // buildStageEnabled mirrors openspecEnabled: a plain opt-in flag, default false ⇒ pre-3h parity
+    // (BUILD skipped entirely). Detached POJO fields — safe on the worker thread (no lazy proxy).
+    String buildCommand, // nullable
+    boolean buildStageEnabled,
+    // Story 3h-2 (AC2, FR76) — per-project lint-validation config (ADR 0030). lintCommands is a
+    // nullable list of CPU linter commands (null / empty = "no lint commands", LINT skipped);
+    // defensive-copied to an unmodifiable list (null → empty) by the compact constructor, NEVER
+    // null
+    // after construction. lintStageEnabled mirrors buildStageEnabled: a plain opt-in flag, default
+    // false ⇒ pre-3h-2 parity (LINT skipped entirely). Detached POJO fields — safe on the worker
+    // thread (no lazy proxy).
+    List<String> lintCommands,
+    boolean lintStageEnabled,
+    // Story 3h-4 (AC1, FR78) — per-project delivery config (ADR 0030, Decision 6). pushMode is a
+    // non-null PushMode enum {AUTO, MANUAL, APPROVE}, default AUTO ⇒ push inline exactly as pre-3h
+    // delivery (the run never parks). MANUAL/APPROVE park the run at WaitingForDelivery instead of
+    // pushing. Stored as a CHECK-constrained text column (ck_projects_push_mode), NOT free-text
+    // like
+    // reviewerModelKind — the entity getter parses it via PushMode.fromValue (fail-fast).
+    // autoCreatePullRequest is a plain boolean, default TRUE (unlike build/lint's default false) ⇒
+    // pre-3h parity (a PR is created wherever the push fires). Detached POJO fields — safe on the
+    // worker thread (no lazy proxy).
+    PushMode pushMode,
+    boolean autoCreatePullRequest,
+    // Task 4 (DinD Testcontainers sidecar) — per-project opt-in for a dockerd sidecar during a run.
+    // Plain boolean, default false ⇒ pre-task-4 parity (no sidecar). Mirrors openspecEnabled/
+    // buildStageEnabled/lintStageEnabled: a plain flag with no validation, read on the worker
+    // thread
+    // (detached POJO, no lazy proxy) by ProjectRuntimeConfigResolver.resolveTestcontainersEnabled.
+    boolean testcontainersEnabled,
+    // Story 3m-2 (AC5, ADR 0036) — the project's CONFIG: which workflow definition to run. Nullable
+    // Long FK to workflow_definitions.id (NULL = the legacy hardcoded pipeline; selecting a BMAD /
+    // custom definition is opt-in, and a null value is byte-identical to pre-3m). Read/written by
+    // 3m-3/3m-4; 3m-2 only maps it. No invariant — any positive surrogate id is valid, null is the
+    // canonical "legacy pipeline" value. DD-5: appended at the END (not the story's stale "before
+    // archivedAt") to mirror the real projects column order [added last, V48] AND keep the whole
+    // back-compat-constructor chain + every existing new Project(...) site compiling with a null
+    // default.
+    Long workflowDefinitionId) {
+
+  /**
+   * Story 3m-2 back-compat constructor for the pre-3m 21-arg shape (canonical through {@code
+   * testcontainersEnabled}) — defaults {@code workflowDefinitionId} to {@code null} ⇒ the legacy
+   * hardcoded pipeline (pre-3m parity). Keeps every existing 21-arg (and, transitively, every
+   * shorter) {@code new Project(...)} call site — the mapper, seeder, and ~16 test sites —
+   * compiling unchanged; only the create/update/persistence paths that actually carry a definition
+   * binding use the full 22-arg constructor.
+   */
+  public Project(
+      String publicId,
+      String name,
+      String slug,
+      ProjectStatus status,
+      String repositoryUrl,
+      ConnectorKind ticketSourceKind,
+      ConnectorKind repoHostKind,
+      boolean openspecEnabled,
+      String reviewerModelKind,
+      boolean reviewerGatingEnabled,
+      RunnerKind runnerKind,
+      OffsetDateTime createdAt,
+      OffsetDateTime archivedAt,
+      Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds,
+      String buildCommand,
+      boolean buildStageEnabled,
+      List<String> lintCommands,
+      boolean lintStageEnabled,
+      PushMode pushMode,
+      boolean autoCreatePullRequest,
+      boolean testcontainersEnabled) {
+    this(
+        publicId,
+        name,
+        slug,
+        status,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        reviewerModelKind,
+        reviewerGatingEnabled,
+        runnerKind,
+        createdAt,
+        archivedAt,
+        stepRunnerKinds,
+        buildCommand,
+        buildStageEnabled,
+        lintCommands,
+        lintStageEnabled,
+        pushMode,
+        autoCreatePullRequest,
+        testcontainersEnabled,
+        null);
+  }
+
+  /**
+   * Back-compat constructor for the pre-task-4 20-arg shape (canonical through {@code
+   * autoCreatePullRequest}) — defaults {@code testcontainersEnabled} to {@code false} (no sidecar,
+   * pre-task-4 parity). Keeps the existing 20-arg {@code new Project(...)} call sites (tests,
+   * resolver fixtures) compiling unchanged; only the create/update/persistence/seed paths that
+   * actually carry the testcontainers flag use the full 21-arg constructor.
+   */
+  public Project(
+      String publicId,
+      String name,
+      String slug,
+      ProjectStatus status,
+      String repositoryUrl,
+      ConnectorKind ticketSourceKind,
+      ConnectorKind repoHostKind,
+      boolean openspecEnabled,
+      String reviewerModelKind,
+      boolean reviewerGatingEnabled,
+      RunnerKind runnerKind,
+      OffsetDateTime createdAt,
+      OffsetDateTime archivedAt,
+      Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds,
+      String buildCommand,
+      boolean buildStageEnabled,
+      List<String> lintCommands,
+      boolean lintStageEnabled,
+      PushMode pushMode,
+      boolean autoCreatePullRequest) {
+    this(
+        publicId,
+        name,
+        slug,
+        status,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        reviewerModelKind,
+        reviewerGatingEnabled,
+        runnerKind,
+        createdAt,
+        archivedAt,
+        stepRunnerKinds,
+        buildCommand,
+        buildStageEnabled,
+        lintCommands,
+        lintStageEnabled,
+        pushMode,
+        autoCreatePullRequest,
+        false);
+  }
 
   /**
    * Back-compat constructor for the pre-3e-4 13-arg shape — defaults {@code stepRunnerKinds} to an
@@ -95,6 +247,141 @@ public record Project(
         Map.of());
   }
 
+  /**
+   * Story 3h-1 back-compat constructor for the pre-3h 14-arg shape (canonical through {@code
+   * stepRunnerKinds}) — defaults the two new build-stage fields to {@code (null, false)} ⇒ BUILD
+   * skipped (pre-3h parity). Keeps the many existing 14-arg {@code new Project(...)} call sites
+   * (tests, resolver fixtures) compiling unchanged; only the create/update/persistence/seed paths
+   * that actually carry build config use the full 16-arg constructor.
+   */
+  public Project(
+      String publicId,
+      String name,
+      String slug,
+      ProjectStatus status,
+      String repositoryUrl,
+      ConnectorKind ticketSourceKind,
+      ConnectorKind repoHostKind,
+      boolean openspecEnabled,
+      String reviewerModelKind,
+      boolean reviewerGatingEnabled,
+      RunnerKind runnerKind,
+      OffsetDateTime createdAt,
+      OffsetDateTime archivedAt,
+      Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds) {
+    this(
+        publicId,
+        name,
+        slug,
+        status,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        reviewerModelKind,
+        reviewerGatingEnabled,
+        runnerKind,
+        createdAt,
+        archivedAt,
+        stepRunnerKinds,
+        null,
+        false);
+  }
+
+  /**
+   * Story 3h-2 back-compat constructor for the pre-3h-2 16-arg shape (canonical through {@code
+   * buildStageEnabled}) — defaults the two new lint-stage fields to {@code (empty, false)} ⇒ LINT
+   * skipped (pre-3h-2 parity). Keeps the existing 16-arg {@code new Project(...)} call sites (build
+   * create/update/seed paths, tests, resolver fixtures) compiling unchanged; only the paths that
+   * actually carry lint config use the full 18-arg constructor.
+   */
+  public Project(
+      String publicId,
+      String name,
+      String slug,
+      ProjectStatus status,
+      String repositoryUrl,
+      ConnectorKind ticketSourceKind,
+      ConnectorKind repoHostKind,
+      boolean openspecEnabled,
+      String reviewerModelKind,
+      boolean reviewerGatingEnabled,
+      RunnerKind runnerKind,
+      OffsetDateTime createdAt,
+      OffsetDateTime archivedAt,
+      Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds,
+      String buildCommand,
+      boolean buildStageEnabled) {
+    this(
+        publicId,
+        name,
+        slug,
+        status,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        reviewerModelKind,
+        reviewerGatingEnabled,
+        runnerKind,
+        createdAt,
+        archivedAt,
+        stepRunnerKinds,
+        buildCommand,
+        buildStageEnabled,
+        List.of(),
+        false);
+  }
+
+  /**
+   * Story 3h-4 back-compat constructor for the pre-3h-4 18-arg shape (canonical through {@code
+   * lintStageEnabled}) — defaults the two new delivery fields to {@code (PushMode.AUTO, true)} ⇒
+   * push inline + create a PR (pre-3h delivery parity). Keeps the existing 18-arg {@code new
+   * Project(...)} call sites (lint create/update/seed paths, tests, resolver fixtures) compiling
+   * unchanged; only the paths that actually carry delivery config use the full 20-arg constructor.
+   */
+  public Project(
+      String publicId,
+      String name,
+      String slug,
+      ProjectStatus status,
+      String repositoryUrl,
+      ConnectorKind ticketSourceKind,
+      ConnectorKind repoHostKind,
+      boolean openspecEnabled,
+      String reviewerModelKind,
+      boolean reviewerGatingEnabled,
+      RunnerKind runnerKind,
+      OffsetDateTime createdAt,
+      OffsetDateTime archivedAt,
+      Map<ProjectRunnerStep, RunnerKind> stepRunnerKinds,
+      String buildCommand,
+      boolean buildStageEnabled,
+      List<String> lintCommands,
+      boolean lintStageEnabled) {
+    this(
+        publicId,
+        name,
+        slug,
+        status,
+        repositoryUrl,
+        ticketSourceKind,
+        repoHostKind,
+        openspecEnabled,
+        reviewerModelKind,
+        reviewerGatingEnabled,
+        runnerKind,
+        createdAt,
+        archivedAt,
+        stepRunnerKinds,
+        buildCommand,
+        buildStageEnabled,
+        lintCommands,
+        lintStageEnabled,
+        PushMode.AUTO,
+        true);
+  }
+
   public Project {
     PublicIdPrefixes.require(publicId, PublicIdPrefixes.PROJECT);
     if (name == null || name.isBlank()) {
@@ -110,9 +397,22 @@ public record Project(
     if (reviewerModelKind != null && reviewerModelKind.isBlank()) {
       throw new IllegalArgumentException("Project reviewerModelKind must be non-blank when set");
     }
+    // Story 3h-1 — a set-but-blank build command is a misconfiguration; null is the valid "no build
+    // command" value (BUILD skipped). Mirrors the reviewerModelKind blank-if-set invariant.
+    if (buildCommand != null && buildCommand.isBlank()) {
+      throw new IllegalArgumentException("Project buildCommand must be non-blank when set");
+    }
     Objects.requireNonNull(createdAt, "Project createdAt must not be null");
     // Null-safe + immutable: an empty map is the canonical "no per-step mapping" value. Map.copyOf
     // rejects null keys/values, so a malformed map fails fast at construction.
     stepRunnerKinds = stepRunnerKinds == null ? Map.of() : Map.copyOf(stepRunnerKinds);
+    // Story 3h-2 — null-safe + immutable: an empty list is the canonical "no lint commands" value.
+    // List.copyOf rejects null elements, so a malformed list fails fast at construction (mirrors
+    // stepRunnerKinds).
+    lintCommands = lintCommands == null ? List.of() : List.copyOf(lintCommands);
+    // Story 3h-4 — a null pushMode coerces to the AUTO default (push inline, never park). Mirrors
+    // the RunnerProperties.DeliveryMode null-coalesce; keeps the pre-3h delivery behavior for any
+    // caller that constructs a Project without an explicit push mode.
+    pushMode = pushMode == null ? PushMode.AUTO : pushMode;
   }
 }

@@ -259,13 +259,34 @@ describe('RunReviewQueueItem — density variants (AC4)', () => {
   });
 });
 
-describe('RunReviewQueueItem — variants (AC4/OQ-4)', () => {
-  it('renders the operator placeholder affordance (E4) and is non-navigable', () => {
-    render(<RunReviewQueueItem run={BASE_ROW} variant="operator" />);
-    expect(screen.getByTestId('queue-item-operator-placeholder')).toHaveTextContent(
-      'Operator view — available in Epic 4',
+describe('RunReviewQueueItem — operator variant (story 4.2 AC2)', () => {
+  it('renders operator metadata FROM operatorSignifier and is navigable', () => {
+    render(
+      <RunReviewQueueItem
+        run={{
+          ...BASE_ROW,
+          operatorSignifier: 'STALLED',
+          failureCategory: 'runner_timeout',
+          runnerKind: 'claude',
+          escalationMarker: true,
+          lastOperatorActionAt: '2026-05-30T12:00:00Z',
+        }}
+        variant="operator"
+      />,
     );
-    expect(screen.queryByRole('link')).toBeNull();
+    // Badge comes from the server signifier, NOT re-derived from currentState (Reconciliation 5).
+    expect(screen.getByTestId('operator-signifier')).toHaveTextContent('STALLED');
+    expect(screen.getByTestId('operator-runner-kind')).toHaveTextContent('claude');
+    expect(screen.getByTestId('operator-failure-category')).toBeInTheDocument();
+    expect(screen.getByTestId('operator-escalation')).toBeInTheDocument();
+    // The whole row is an open-run link to the run detail (unlike the 2.15 placeholder).
+    const link = screen.getByRole('link');
+    expect(link).toHaveAttribute('data-variant', 'operator');
+  });
+
+  it('falls back to the state badge when operatorSignifier is absent (never re-derives)', () => {
+    render(<RunReviewQueueItem run={BASE_ROW} variant="operator" />);
+    expect(screen.queryByTestId('operator-signifier')).toBeNull();
   });
 });
 
@@ -681,5 +702,49 @@ describe('RunReviewQueueItem - ticket title (story 3g-2)', () => {
       <RunReviewQueueItem run={{ ...BASE_ROW, ticketTitle: 'Fix flaky checkout test' }} />,
     );
     await expectNoA11yViolations(container);
+  });
+
+  // Story 4.24 (AC8a) — the operator-variant Classify launch context.
+  it('4.24 - a Failed operator row renders a Classify action that calls onClassify(runId)', async () => {
+    const onClassify = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <RunReviewQueueItem
+        run={{ ...BASE_ROW, currentState: 'Failed' }}
+        variant="operator"
+        onClassify={onClassify}
+      />,
+    );
+
+    await user.click(screen.getByTestId('operator-classify-action'));
+    expect(onClassify).toHaveBeenCalledWith('run_abc123');
+  });
+
+  it('4.24 - a non-Failed operator row renders NO Classify action', () => {
+    render(
+      <RunReviewQueueItem
+        run={{ ...BASE_ROW, currentState: 'WaitingForReview' }}
+        variant="operator"
+        onClassify={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('operator-classify-action')).toBeNull();
+  });
+
+  it('4.24 (AC9) - an operator row surfaces the applied classification chip when a label is given', () => {
+    render(
+      <RunReviewQueueItem
+        run={{ ...BASE_ROW, currentState: 'Failed' }}
+        variant="operator"
+        classificationLabel="Agent Execution Failure"
+      />,
+    );
+    const chip = screen.getByTestId('operator-classification-chip');
+    expect(chip).toHaveTextContent('Classification: Agent Execution Failure');
+  });
+
+  it('4.24 (AC9) - no classification chip when no label is given', () => {
+    render(<RunReviewQueueItem run={{ ...BASE_ROW, currentState: 'Failed' }} variant="operator" />);
+    expect(screen.queryByTestId('operator-classification-chip')).toBeNull();
   });
 });

@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import org.dradgo.domain.registry.PushMode;
 import org.dradgo.domain.registry.RunnerKind;
 import org.dradgo.domain.registry.RunnerStage;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -55,7 +56,8 @@ public record RunnerProperties(
     // Binds deliveryline.runner.implementation-stage.kind (codex | claude) + .auto-dispatch.
     // kindForExecutionSubStage(PR_OUTPUT) resolves to implementationStage.kind(); auto-dispatch
     // gates the dispatchImplementation / retryImplementation trigger (ON in prod, OFF in the shared
-    // test yaml — Trap T7). A null group falls back to the codex default so contexts that omit the
+    // test yaml — Trap T7). A null group falls back to the codex default so contexts that omit
+    // the
     // key still bind.
     ImplementationStage implementationStage,
     // Story 3a-8 (AC1) — opt-in OpenSpec authoring flag, surfaced to the container as
@@ -63,6 +65,32 @@ public record RunnerProperties(
     // nesting precedent); a null/absent group falls back to disabled (default OFF) so the shared
     // test application.yml needs no mirror entry (Trap: [[validated-config-needs-test-yaml]]).
     OpenSpec openspec,
+    // Story 3h-1 (AC2, FR75) — global default build-validation config seeded into the default
+    // project (deliveryline.runner.build-stage.{enabled,command,timeout}). OPTIONAL + UNVALIDATED
+    // nested record (mirrors the openspec() precedent); a null/absent group falls back to disabled
+    // (default OFF, no command) so the shared test application.yml needs no mirror entry (Trap:
+    // [[validated-config-needs-test-yaml]]). Per-project overrides live on the Project aggregate;
+    // this is only the seed default read by DefaultProjectSeeder.
+    BuildStage buildStage,
+    // Story 3h-2 (AC2, FR76) — global default lint-validation config seeded into the default
+    // project (deliveryline.runner.lint-stage.{enabled,commands,timeout}). OPTIONAL + UNVALIDATED
+    // nested record (mirrors the buildStage() precedent); a null/absent group falls back to
+    // disabled
+    // (default OFF, no commands) so the shared test application.yml needs no mirror entry (Trap:
+    // [[validated-config-needs-test-yaml]]). Per-project overrides live on the Project aggregate;
+    // this is only the seed default read by DefaultProjectSeeder + the global fallback command
+    // list.
+    LintStage lintStage,
+    // Story 3h-4 (AC1, FR78) — global default delivery config seeded into the default project
+    // (deliveryline.runner.delivery.{push-mode,auto-create-pull-request}). OPTIONAL + UNVALIDATED
+    // nested record (mirrors the buildStage()/lintStage() precedent); a null/absent group falls
+    // back
+    // to (AUTO, true) — the pre-3h delivery behavior (push inline + create a PR) — so the
+    // shared
+    // test application.yml needs no mirror entry (Trap: [[validated-config-needs-test-yaml]]).
+    // Per-project overrides live on the Project aggregate; this is only the seed default read by
+    // DefaultProjectSeeder + the global fallback for ProjectRuntimeConfigResolver.
+    DeliveryMode deliveryMode,
     // Story 3.17a (AC4 / AC7) — RunnerExecutionQueue backpressure cap. The maximum number of rows
     // that may sit in status='queued' at once; enqueue beyond it raises RUNNER_QUEUE_FULL and
     // writes
@@ -113,7 +141,11 @@ public record RunnerProperties(
     implementationStage =
         implementationStage == null ? ImplementationStage.defaults() : implementationStage;
     openspec = openspec == null ? OpenSpec.defaults() : openspec;
-    // Story 3.17a AC4 — clamp the backpressure cap to >=1. A cap below 1 (0, negative, or an unset
+    buildStage = buildStage == null ? BuildStage.defaults() : buildStage;
+    lintStage = lintStage == null ? LintStage.defaults() : lintStage;
+    deliveryMode = deliveryMode == null ? DeliveryMode.defaults() : deliveryMode;
+    // Story 3.17a AC4 — clamp the backpressure cap to >=1. A cap below 1 (0, negative, or an
+    // unset
     // primitive that bound to 0) would reject every enqueue; coerce to the minimum useful depth so
     // a
     // misconfiguration degrades to "depth 1" rather than a dead queue.
@@ -141,6 +173,9 @@ public record RunnerProperties(
         PlanStage.defaults(),
         ImplementationStage.defaults(),
         OpenSpec.defaults(),
+        BuildStage.defaults(),
+        LintStage.defaults(),
+        DeliveryMode.defaults(),
         100);
   }
 
@@ -170,6 +205,32 @@ public record RunnerProperties(
           throw new IllegalStateException(
               "kindForStage must not be called for RunnerStage.REVIEW; the reviewer kind is "
                   + "per-project — use ProjectRuntimeConfigResolver.resolveReviewerKind");
+      // Story 3h-1 (AC1) — BUILD runs BACKEND-SIDE via BuildCommandPort (ProcessBuilder in the
+      // materialized workspace), never through the Docker runner, so it is NEVER runner-kind
+      // dispatched. Reaching here for BUILD is a routing bug — fail loud (same posture as
+      // REVIEW).
+      case BUILD ->
+          throw new IllegalStateException(
+              "kindForStage must not be called for RunnerStage.BUILD; the build stage runs "
+                  + "backend-side via BuildCommandPort and is never runner-kind dispatched");
+      // Story 3h-2 (AC1) — LINT runs BACKEND-SIDE via BuildCommandPort (the configured CPU
+      // linters
+      // in the materialized workspace), never through the Docker runner, so it is NEVER
+      // runner-kind dispatched. Reaching here for LINT is a routing bug — fail loud (same posture
+      // as BUILD/REVIEW).
+      case LINT ->
+          throw new IllegalStateException(
+              "kindForStage must not be called for RunnerStage.LINT; the lint stage runs "
+                  + "backend-side via BuildCommandPort and is never runner-kind dispatched");
+      // Story 3h-5 (AC2, Decision 3) — CI runs BACKEND-SIDE (an HTTP read of the repository host's
+      // check-runs via RepositoryHostAdapter.readCheckRuns + the CiStatusPollingService sweep),
+      // never through the Docker runner, so it is NEVER runner-kind dispatched. Reaching here for
+      // CI is a routing bug — fail loud (same posture as REVIEW/BUILD/LINT).
+      case CI ->
+          throw new IllegalStateException(
+              "kindForStage must not be called for RunnerStage.CI; the CI stage runs "
+                  + "backend-side via RepositoryHostAdapter.readCheckRuns and is never "
+                  + "runner-kind dispatched");
     };
   }
 
@@ -238,6 +299,84 @@ public record RunnerProperties(
    */
   public boolean openSpecEnabled() {
     return openspec.enabled();
+  }
+
+  /**
+   * Story 3h-1 (AC2) — the GLOBAL default build-stage opt-in ({@code
+   * deliveryline.runner.build-stage.enabled}) that {@code DefaultProjectSeeder} seeds into the
+   * default project's per-project {@code buildStageEnabled}. Default {@code false} ⇒ pre-3h parity.
+   */
+  public boolean buildStageEnabled() {
+    return buildStage.enabled();
+  }
+
+  /**
+   * Story 3h-1 (AC2) — the GLOBAL default build command ({@code
+   * deliveryline.runner.build-stage.command}) seeded into the default project's per-project {@code
+   * buildCommand}. {@code null}/absent ⇒ no build command (BUILD skipped even if enabled).
+   */
+  public String buildCommand() {
+    return buildStage.command();
+  }
+
+  /**
+   * Story 3h-1 (AC2 / Task 3) — the bound on the backend-side build process ({@code
+   * deliveryline.runner.build-stage.timeout}); overrun kills the process → non-zero exit. Defaults
+   * to 10 minutes.
+   */
+  public Duration buildTimeout() {
+    return buildStage.timeout();
+  }
+
+  /**
+   * Story 3h-2 (AC2) — the GLOBAL default lint-stage opt-in ({@code
+   * deliveryline.runner.lint-stage.enabled}) that {@code DefaultProjectSeeder} seeds into the
+   * default project's per-project {@code lintStageEnabled}. Default {@code false} ⇒ pre-3h-2
+   * parity.
+   */
+  public boolean lintStageEnabled() {
+    return lintStage.enabled();
+  }
+
+  /**
+   * Story 3h-2 (AC2) — the GLOBAL default lint command list ({@code
+   * deliveryline.runner.lint-stage.commands}) that {@link
+   * org.dradgo.application.project.ProjectRuntimeConfigResolver#resolveLintCommands} falls back to
+   * when the resolved project binds no per-project {@code lintCommands}. Empty/absent ⇒ no lint
+   * commands (LINT skipped even if enabled).
+   */
+  public List<String> lintCommands() {
+    return lintStage.commands();
+  }
+
+  /**
+   * Story 3h-2 (AC2 / Task 3) — the bound on each backend-side lint process ({@code
+   * deliveryline.runner.lint-stage.timeout}); overrun kills the process → non-zero exit. Defaults
+   * to 5 minutes.
+   */
+  public Duration lintTimeout() {
+    return lintStage.timeout();
+  }
+
+  /**
+   * Story 3h-4 (AC1) — the GLOBAL default push mode ({@code
+   * deliveryline.runner.delivery.push-mode}) that {@code DefaultProjectSeeder} seeds into the
+   * default project's per-project {@code pushMode} and that {@link
+   * org.dradgo.application.project.ProjectRuntimeConfigResolver#resolvePushMode} falls back to.
+   * Default {@link PushMode#AUTO} ⇒ pre-3h delivery (push inline, never parks).
+   */
+  public PushMode pushMode() {
+    return deliveryMode.pushMode();
+  }
+
+  /**
+   * Story 3h-4 (AC1) — the GLOBAL default create-PR flag ({@code
+   * deliveryline.runner.delivery.auto-create-pull-request}) seeded into the default project's
+   * per-project {@code autoCreatePullRequest}. Default {@code true} ⇒ pre-3h delivery (a PR is
+   * created wherever the push fires).
+   */
+  public boolean autoCreatePullRequest() {
+    return deliveryMode.autoCreatePullRequest();
   }
 
   /**
@@ -451,6 +590,97 @@ public record RunnerProperties(
 
     public static OpenSpec defaults() {
       return new OpenSpec(false);
+    }
+  }
+
+  /**
+   * Story 3h-1 (AC2, FR75) — global default build-validation config ({@code
+   * deliveryline.runner.build-stage.{enabled,command,timeout}}). Seeds the default project's
+   * per-project build config via {@code DefaultProjectSeeder}; per-project overrides live on the
+   * {@code Project} aggregate. {@code enabled=false} (the default) ⇒ BUILD skipped entirely (pre-3h
+   * parity); {@code command} is the shell/build command run backend-side via {@code
+   * BuildCommandPort} in the materialized workspace; {@code timeout} bounds that process (kill →
+   * non-zero exit on overrun), defaulting to 10 minutes.
+   *
+   * <p><b>OPTIONAL + UNVALIDATED</b> (no bean validation, no compact-ctor guard): the shared test
+   * {@code application.yml} therefore needs no mirror entry ({@code
+   * [[validated-config-needs-test-yaml]]}). Spring binds a missing group to {@link #defaults()}; a
+   * null/zero {@code timeout} falls back to the 10-minute default.
+   */
+  public record BuildStage(boolean enabled, String command, Duration timeout) {
+
+    public BuildStage {
+      timeout =
+          (timeout == null || timeout.isZero() || timeout.isNegative()) ? DEFAULT_TIMEOUT : timeout;
+    }
+
+    private static final Duration DEFAULT_TIMEOUT = Duration.ofMinutes(10);
+
+    public static BuildStage defaults() {
+      return new BuildStage(false, null, DEFAULT_TIMEOUT);
+    }
+  }
+
+  /**
+   * Story 3h-2 (AC2, FR76) — global default lint-validation config ({@code
+   * deliveryline.runner.lint-stage.{enabled,commands,timeout}}). Seeds the default project's
+   * per-project lint config via {@code DefaultProjectSeeder} and supplies the global fallback
+   * command list; per-project overrides live on the {@code Project} aggregate. {@code
+   * enabled=false} (the default) ⇒ LINT skipped entirely (pre-3h-2 parity); {@code commands} are
+   * the CPU linter commands run backend-side (fail-fast, one per configured command) via {@code
+   * BuildCommandPort} in the materialized workspace; {@code timeout} bounds each such process (kill
+   * → non-zero exit on overrun), defaulting to 5 minutes.
+   *
+   * <p><b>OPTIONAL + UNVALIDATED</b> (no bean validation, no compact-ctor guard beyond null/blank
+   * coercion): the shared test {@code application.yml} therefore needs no mirror entry ({@code
+   * [[validated-config-needs-test-yaml]]}). Spring binds a missing group to {@link #defaults()};
+   * null/blank command entries are dropped, and a null/zero {@code timeout} falls back to the
+   * 5-minute default.
+   */
+  public record LintStage(boolean enabled, List<String> commands, Duration timeout) {
+
+    public LintStage {
+      commands =
+          (commands == null)
+              ? List.of()
+              : commands.stream().filter(c -> c != null && !c.isBlank()).map(String::trim).toList();
+      timeout =
+          (timeout == null || timeout.isZero() || timeout.isNegative()) ? DEFAULT_TIMEOUT : timeout;
+    }
+
+    private static final Duration DEFAULT_TIMEOUT = Duration.ofMinutes(5);
+
+    public static LintStage defaults() {
+      return new LintStage(false, List.of(), DEFAULT_TIMEOUT);
+    }
+  }
+
+  /**
+   * Story 3h-4 (AC1, FR78) — global default delivery config ({@code
+   * deliveryline.runner.delivery.{push-mode,auto-create-pull-request}}). Seeds the default
+   * project's per-project delivery config via {@code DefaultProjectSeeder} and supplies the global
+   * fallback for {@code ProjectRuntimeConfigResolver}; per-project overrides live on the {@code
+   * Project} aggregate. {@code pushMode=AUTO} (the default) ⇒ push inline exactly as pre-3h
+   * delivery (the run never parks); {@code MANUAL}/{@code APPROVE} park the run at {@code
+   * WaitingForDelivery}. {@code autoCreatePullRequest=true} (the default) ⇒ a PR is created
+   * wherever the push fires.
+   *
+   * <p><b>OPTIONAL + UNVALIDATED</b> (no bean validation, no compact-ctor guard beyond null
+   * coercion): the shared test {@code application.yml} therefore needs no mirror entry ({@code
+   * [[validated-config-needs-test-yaml]]}). Spring binds a missing group to {@link #defaults()}; a
+   * null {@code pushMode} falls back to {@link PushMode#AUTO}. Note the {@code
+   * autoCreatePullRequest} default is {@code true} — unlike the build/lint {@code enabled} defaults
+   * (false) — because the pre-3h behavior created a PR.
+   */
+  public record DeliveryMode(PushMode pushMode, Boolean autoCreatePullRequest) {
+
+    public DeliveryMode {
+      pushMode = pushMode == null ? PushMode.AUTO : pushMode;
+      autoCreatePullRequest = autoCreatePullRequest == null ? Boolean.TRUE : autoCreatePullRequest;
+    }
+
+    public static DeliveryMode defaults() {
+      return new DeliveryMode(PushMode.AUTO, true);
     }
   }
 

@@ -14,8 +14,16 @@ import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.dradgo.application.artifact.ActorContext;
 import org.dradgo.application.observability.MdcKeys;
+import org.dradgo.application.recovery.ClassifyFailureResult;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
+import org.dradgo.application.recovery.PauseRecoveryResult;
+import org.dradgo.application.recovery.ReconcileRecoveryResult;
+import org.dradgo.application.recovery.RecoveryService;
+import org.dradgo.application.recovery.RerunFromStepPreviewResult;
+import org.dradgo.application.recovery.RerunFromStepRecoveryResult;
+import org.dradgo.application.recovery.ResumeRecoveryResult;
 import org.dradgo.application.recovery.TakeoverResult;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
@@ -29,11 +37,14 @@ import org.dradgo.application.workflow.WorkflowInspectionService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
+import org.dradgo.application.workflow.commands.ApproveDeliveryCommand;
+import org.dradgo.application.workflow.commands.ApproveLintCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
 import org.dradgo.application.workflow.commands.ArchiveRunCommand;
 import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
+import org.dradgo.application.workflow.commands.RequestLintFixCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
@@ -94,6 +105,12 @@ public class WorkflowController {
   // endpoint (cancelled-runner counts + preserved PR ref). The pre-existing transition-only POST
   // /takeover-workflow endpoint keeps using workflowCommandService.takeoverWorkflow (R1 / R9).
   private final DeveloperTakeoverService developerTakeoverService;
+  // Story 4.10 — the RICH recovery service (story 4.5). Wired by the new POST /resume endpoint,
+  // which re-dispatches the runner, writes the recovery_actions row + recovery.resumed event, and
+  // enforces the PAUSED current-state guard. The transition-only
+  // WorkflowCommandService.resumeWorkflow
+  // is deliberately NOT wired here — see the /resume method comment (R2).
+  private final RecoveryService recoveryService;
   // Story 3d-8 — governed soft-hide / un-hide of obsolete runs (archive marker + audit event).
   private final WorkflowArchiveService workflowArchiveService;
   // Story 3d-4 — the operator manual-artifact submission path (validate → ingest → finalize →
@@ -121,6 +138,7 @@ public class WorkflowController {
       ApprovalReviewerRoleResolver approvalReviewerRoleResolver,
       LocalActorIdentityResolver localActorIdentityResolver,
       DeveloperTakeoverService developerTakeoverService,
+      RecoveryService recoveryService,
       WorkflowArchiveService workflowArchiveService,
       ManualArtifactSubmissionService manualArtifactSubmissionService,
       org.dradgo.application.workflow.RunDependencyService runDependencyService,
@@ -131,6 +149,7 @@ public class WorkflowController {
     this.approvalReviewerRoleResolver = approvalReviewerRoleResolver;
     this.localActorIdentityResolver = localActorIdentityResolver;
     this.developerTakeoverService = developerTakeoverService;
+    this.recoveryService = recoveryService;
     this.workflowArchiveService = workflowArchiveService;
     this.manualArtifactSubmissionService = manualArtifactSubmissionService;
     this.runDependencyService = runDependencyService;
@@ -606,6 +625,200 @@ public class WorkflowController {
   }
 
   /**
+   * Story 4.4 (AC4) — the failure-diagnostics deep-dive for the operator panel: the NFR7
+   * five-questions fields, per-integration sync status, an optional runner-log reference, and the
+   * safety-ranked recommended recovery actions ({@link
+   * WorkflowInspectionService#getFailureDiagnostics}). Read-only and idempotent (no
+   * Idempotency-Key/actor header). A non-Failed run returns a benign view (empty recommendations);
+   * an unknown run returns 404 {@code RUN_NOT_FOUND}.
+   */
+  @GetMapping(
+      value = "/{workflowRunId}/failure-diagnostics",
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "getFailureDiagnostics",
+      summary = "Get the failure-diagnostics deep-dive for a run")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Failure diagnostics for the run."),
+    @ApiResponse(
+        responseCode = "400",
+        description = "Malformed run id (INVALID_ID_PREFIX).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public FailureDiagnosticsResponse getFailureDiagnostics(
+      @Parameter(description = "Run public id, e.g. run_abc123.", example = "run_abc123")
+          @PathVariable
+          String workflowRunId) {
+    log.info("REST get failure-diagnostics received workflowRunId={}", workflowRunId);
+    FailureDiagnosticsResponse response =
+        FailureDiagnosticsResponse.from(
+            workflowInspectionService.getFailureDiagnostics(workflowRunId));
+    log.info(
+        "REST get failure-diagnostics success workflowRunId={} currentState={} recommendationCount={}",
+        workflowRunId,
+        response.currentState(),
+        response.recommendedRecoveryActions().size());
+    return response;
+  }
+
+  /**
+   * Story 4.24 (AC2/AC5/AC9) — the run's current operator-applied failure classification + the
+   * ordered prior classifications, projecting the {@code done} story 4.9 {@link
+   * WorkflowInspectionService#getFailureClassification} view. Read-only + idempotent (no
+   * Idempotency-Key/actor/role — copies the {@link #getFailureDiagnostics} read shape). A KNOWN but
+   * never-classified run returns 200 with {@code currentTaxonomyValue: null} + {@code
+   * priorClassifications: []}; an unknown run returns 404 {@code RUN_NOT_FOUND}; a malformed id
+   * returns 400 {@code INVALID_ID_PREFIX}.
+   */
+  @GetMapping(
+      value = "/{workflowRunId}/failure-classification",
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "getFailureClassification",
+      summary = "Get the current + prior failure classification for a run")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Current + prior classification for the run."),
+    @ApiResponse(
+        responseCode = "400",
+        description = "Malformed run id (INVALID_ID_PREFIX).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public FailureClassificationResponse getFailureClassification(
+      @Parameter(description = "Run public id, e.g. run_abc123.", example = "run_abc123")
+          @PathVariable
+          String workflowRunId) {
+    log.info("REST get failure-classification received workflowRunId={}", workflowRunId);
+    FailureClassificationResponse response =
+        FailureClassificationResponse.from(
+            workflowRunId, workflowInspectionService.getFailureClassification(workflowRunId));
+    log.info(
+        "REST get failure-classification success workflowRunId={} classified={} priorCount={}",
+        workflowRunId,
+        response.currentTaxonomyValue() != null,
+        response.priorClassifications().size());
+    return response;
+  }
+
+  /**
+   * Story 4.22 (AC5) — the <strong>non-mutating</strong> preview of a rerun-from-step: which
+   * artifacts a rerun to {@code targetStep} would supersede + which approval it would invalidate,
+   * for the Decision Bar's "Show what will be superseded" section BEFORE the operator confirms.
+   * Read-only + idempotent — copies the {@link #getFailureDiagnostics}/{@link #getAllowedActions}
+   * shape: NO {@code Idempotency-Key}, NO actor header, NO {@code role} gate.
+   *
+   * <p>{@code targetStep} is a plain {@code String} with {@code required=false} and NO
+   * {@code @NotBlank}/{@code @Pattern} — the class is {@code @Validated}, so a bean-validation
+   * constraint here would throw {@code ConstraintViolationException} and mask the typed {@code
+   * INVALID_RERUN_TARGET_STEP} the service raises (see memory {@code
+   * validated-requestparam-becomes-500-not-400}); {@code required=false} avoids {@code
+   * MissingServletRequestParameterException}. Normalized with {@code .strip()} at the boundary like
+   * {@link #getAllowedActions}; the two safe values are documented via
+   * {@code @Schema(allowableValues ...)} (doc-only). A bogus/blank step → 400 {@code
+   * INVALID_RERUN_TARGET_STEP}; a run not in Failed/WaitingForReview → 409 {@code
+   * ILLEGAL_TRANSITION} (OQ-1); an unknown run → 404 {@code RUN_NOT_FOUND}; a malformed run id →
+   * 400 {@code INVALID_ID_PREFIX}.
+   */
+  @GetMapping(
+      value = "/{workflowRunId}/preview-rerun-from-step",
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "previewRerunFromStep",
+      summary = "Preview which artifacts/approvals a rerun-from-step would supersede",
+      description =
+          "Non-mutating preview of POST .../rerun-from-step: returns the artifacts a rerun to the "
+              + "given safe step would supersede plus the approval it would invalidate, without "
+              + "writing anything. Read-only and idempotent — no Idempotency-Key/actor/role. Backs "
+              + "the Decision Bar recovery_operator rerun dialog (story 4.22).")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Preview of superseded artifacts + approvals."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "Malformed run id (INVALID_ID_PREFIX) or invalid target step "
+                + "(INVALID_RERUN_TARGET_STEP).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description =
+            "Run is not in a rerun-eligible source state (ILLEGAL_TRANSITION; allowed sources: "
+                + "Failed, WaitingForReview).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public PreviewRerunFromStepResponse previewRerunFromStep(
+      @Parameter(description = "Run public id, e.g. run_abc123.", example = "run_abc123")
+          @PathVariable
+          String workflowRunId,
+      @Parameter(
+              description =
+                  "Safe step boundary to rerun into. Recognized values are investigating and "
+                      + "executing; any other value returns 400 INVALID_RERUN_TARGET_STEP.",
+              example = "investigating",
+              schema =
+                  @Schema(
+                      type = "string",
+                      allowableValues = {"investigating", "executing"},
+                      nullable = true))
+          @RequestParam(name = "targetStep", required = false)
+          String targetStep) {
+    // Normalize at the boundary (mirror getAllowedActions) so the logged + echoed value matches
+    // what
+    // the service parses. Kept a plain String with NO bean-validation constraint so the service's
+    // resolveTargetState surfaces the typed INVALID_RERUN_TARGET_STEP instead of a masked 500.
+    String normalizedTargetStep = (targetStep == null) ? null : targetStep.strip();
+    log.info(
+        "REST preview-rerun-from-step received workflowRunId={} targetStep={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(normalizedTargetStep));
+    RerunFromStepPreviewResult result =
+        recoveryService.previewRerunFromStep(workflowRunId, normalizedTargetStep);
+    PreviewRerunFromStepResponse response =
+        PreviewRerunFromStepResponse.from(workflowRunId, normalizedTargetStep, result);
+    log.info(
+        "REST preview-rerun-from-step success workflowRunId={} targetStep={} supersededCount={}"
+            + " invalidatedApprovalCount={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(normalizedTargetStep),
+        response.supersededArtifactIds().size(),
+        response.invalidatedApprovalIds().size());
+    return response;
+  }
+
+  /**
    * Story 3a-9 (Gate 3): artifact-content read for the run-detail review surface. Returns the
    * redacted artifact body (UTF-8 markdown) plus identity/type/version/status/classification/
    * createdAt/checksum so the Artifact Review Panel (story 2.17) can render the real spec body
@@ -663,6 +876,56 @@ public class WorkflowController {
         "REST get reviewer-verdict success workflowRunId={} state={}",
         MdcKeys.sanitizeForLog(workflowRunId),
         response.state());
+    return response;
+  }
+
+  /**
+   * Story 3h-2 (AC6, FR76) — the severity-classified CPU-lint findings for the run's lint gate,
+   * backing the FE lint panel (3h-6). Read-only + advisory (mirrors reviewer-verdict): NO governed
+   * action, prefix-validated only, and never 5xx on missing findings (returns {@code
+   * state:"none"}).
+   */
+  @GetMapping(value = "/{workflowRunId}/lint-findings", produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "getLintFindings",
+      summary = "Get the CPU-lint findings for a workflow run",
+      description =
+          "Returns the severity-classified findings the backend-side CPU lint gate produced over the "
+              + "run's implementation output (story 3h-2), with a server-derived state "
+              + "(none/advisory/gated). Advisory only: the operator gate actions ride the "
+              + "allowed-actions matrix, not this read.")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Lint findings state (+ findings when present)."),
+    @ApiResponse(
+        responseCode = "400",
+        description = "Malformed run id (INVALID_ID_PREFIX).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public LintFindingsResponse getLintFindings(
+      @Parameter(description = "Run public id, e.g. run_abc123.", example = "run_abc123")
+          @PathVariable
+          String workflowRunId) {
+    log.info(
+        "REST get lint-findings received workflowRunId={}", MdcKeys.sanitizeForLog(workflowRunId));
+    LintFindingsResponse response =
+        LintFindingsResponse.from(workflowInspectionService.getLintFindings(workflowRunId));
+    log.info(
+        "REST get lint-findings success workflowRunId={} state={} findingCount={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        response.state(),
+        response.findings().size());
     return response;
   }
 
@@ -1213,6 +1476,236 @@ public class WorkflowController {
     return response;
   }
 
+  /**
+   * Story 3h-2 (AC5, FR76) — {@code approve_lint}: an operator (workflow_owner) dismisses the
+   * pre-review lint gate; the delivery tail resumes (push + WaitingForReview + reviewer enqueue).
+   * Idempotent under Idempotency-Key; workflow_owner-gated (mirrors the recovery-bar operator
+   * actions).
+   */
+  @PostMapping(
+      value = "/{workflowRunId}/approve-lint",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "approveLint",
+      summary = "Dismiss the pre-review lint gate (approve_lint)",
+      description =
+          "Operator (workflow_owner) action that dismisses a WaitingForLintApproval gate and resumes "
+              + "the delivery tail. Idempotent under Idempotency-Key.")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Gate dismissed; resulting state returned."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, or MISSING/INVALID_IDEMPOTENCY_KEY.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description = "IDEMPOTENCY_KEY_CONFLICT or ILLEGAL_TRANSITION.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public WorkflowStateChangeResponse approveLint(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody ApproveLintRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    requireWorkflowOwnerRole("approve-lint", request.role());
+    log.info(
+        "REST approve-lint received workflowRunId={} actorIdentity={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity));
+    WorkflowStateChangeResponse response =
+        WorkflowStateChangeResponse.from(
+            workflowCommandService.approveLint(
+                new ApproveLintCommand(
+                    workflowRunId,
+                    actorIdentity,
+                    ActorType.HUMAN,
+                    idempotencyKey,
+                    correlationId,
+                    request.reasonText())));
+    log.info(
+        "REST approve-lint success workflowRunId={} currentState={}",
+        workflowRunId,
+        response.currentState());
+    return response;
+  }
+
+  /**
+   * Story 3h-4 (AC4, FR78) — {@code approve_delivery}: an operator (workflow_owner) dismisses the
+   * pre-review delivery gate and advances to WaitingForReview. In {@code approve} push mode the
+   * push (+ PR per autoCreatePullRequest) fires via the resumable delivery seam; in {@code manual}
+   * mode the out-of-band delivery is recorded (no git). Idempotent under Idempotency-Key;
+   * workflow_owner-gated (mirrors approve-lint and the recovery-bar operator actions).
+   */
+  @PostMapping(
+      value = "/{workflowRunId}/approve-delivery",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "approveDelivery",
+      summary = "Dismiss the pre-review delivery gate (approve_delivery)",
+      description =
+          "Operator (workflow_owner) action that dismisses a WaitingForDelivery gate and advances to "
+              + "WaitingForReview. In approve mode it pushes (+ PR per autoCreatePullRequest); in "
+              + "manual mode it records the out-of-band delivery. Idempotent under Idempotency-Key.")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Gate dismissed; resulting state returned."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, or MISSING/INVALID_IDEMPOTENCY_KEY.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description = "IDEMPOTENCY_KEY_CONFLICT or ILLEGAL_TRANSITION.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public WorkflowStateChangeResponse approveDelivery(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody ApproveDeliveryRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    requireWorkflowOwnerRole("approve-delivery", request.role());
+    log.info(
+        "REST approve-delivery received workflowRunId={} actorIdentity={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity));
+    WorkflowStateChangeResponse response =
+        WorkflowStateChangeResponse.from(
+            workflowCommandService.approveDelivery(
+                new ApproveDeliveryCommand(
+                    workflowRunId,
+                    actorIdentity,
+                    ActorType.HUMAN,
+                    idempotencyKey,
+                    correlationId,
+                    request.reasonText())));
+    log.info(
+        "REST approve-delivery success workflowRunId={} currentState={}",
+        workflowRunId,
+        response.currentState());
+    return response;
+  }
+
+  /**
+   * Story 3h-2 (AC5, FR76) — {@code request_lint_fix}: an operator (workflow_owner) feeds the lint
+   * findings back to the implementation runner. Bumps the fix-loop counter, re-dispatches
+   * EXECUTION, and re-parks at the gate (never auto-fails). Idempotent under Idempotency-Key;
+   * workflow_owner-gated.
+   */
+  @PostMapping(
+      value = "/{workflowRunId}/request-lint-fix",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "requestLintFix",
+      summary = "Feed the lint findings back to the implementation runner (request_lint_fix)",
+      description =
+          "Operator (workflow_owner) action that re-dispatches the implementation runner with the "
+              + "lint findings as referenced feedback and re-parks the run at WaitingForLintApproval. "
+              + "Never auto-fails the run. Idempotent under Idempotency-Key.")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Fix re-dispatched; resulting state returned."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "INVALID_ID_PREFIX, INVALID_REVIEWER_ROLE_FOR_ENDPOINT, or MISSING/INVALID_IDEMPOTENCY_KEY.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "No such run (RUN_NOT_FOUND).",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description = "IDEMPOTENCY_KEY_CONFLICT or ILLEGAL_TRANSITION.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public WorkflowStateChangeResponse requestLintFix(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody RequestLintFixRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    requireWorkflowOwnerRole("request-lint-fix", request.role());
+    log.info(
+        "REST request-lint-fix received workflowRunId={} actorIdentity={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity));
+    WorkflowStateChangeResponse response =
+        WorkflowStateChangeResponse.from(
+            workflowCommandService.requestLintFix(
+                new RequestLintFixCommand(
+                    workflowRunId,
+                    actorIdentity,
+                    ActorType.HUMAN,
+                    idempotencyKey,
+                    correlationId,
+                    request.reasonText())));
+    log.info(
+        "REST request-lint-fix success workflowRunId={} currentState={}",
+        workflowRunId,
+        response.currentState());
+    return response;
+  }
+
   // Story 3d-4 (AC1) — read-only retrieval of a parked run's manual input bundle. No
   // Idempotency-Key
   // (idempotent read). Run not parked ⇒ MANUAL_EXECUTION_NOT_APPLICABLE (409); scratch evicted ⇒ a
@@ -1729,6 +2222,534 @@ public class WorkflowController {
     return response;
   }
 
+  /**
+   * Story 4.10 (AC1, AC3–AC5, AC7, AC8) — resume a paused run back to its prior executing state.
+   * Structural twin of {@link #takeover}: same header-derived actor + required {@code
+   * Idempotency-Key} convention, same {@code workflow_owner} boundary role gate as {@code
+   * approve-lint}, mapped onto the RICH {@link RecoveryService#resume} (NOT the transition-only
+   * {@code WorkflowCommandService.resumeWorkflow} — R2). The rich path single-sources the runner
+   * re-dispatch, the {@code recovery_actions} row + {@code recovery.resumed} event, and the {@code
+   * PAUSED} current-state guard that surfaces {@code RESUME_NOT_APPLICABLE} (409) for a wrong-state
+   * call. Wiring the thin service would silently skip all four (invisible to a happy-path test).
+   */
+  @PostMapping(
+      value = "/{workflowRunId}/resume",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "resume",
+      summary = "Resume a paused workflow run (story 4.10)",
+      description =
+          "Operator (workflow_owner) recovery action that resumes a Paused run back to its prior"
+              + " executing state: re-dispatches the runner, records a recovery_actions row + a"
+              + " recovery.resumed audit event, and stamps the resolved actor onto the audit trail."
+              + " Idempotent under Idempotency-Key. Resuming a run that is not Paused surfaces"
+              + " RESUME_NOT_APPLICABLE (409).")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Resume recorded; run is back at its prior executing state."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD, INVALID_REVIEWER_ROLE_FOR_ENDPOINT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description = "RESUME_NOT_APPLICABLE, IDEMPOTENCY_KEY_CONFLICT, or ILLEGAL_TRANSITION.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public ResumeResponse resume(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody ResumeWorkflowRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    // Story 4.10 — operator-governance gate: body `role` must equal `workflow_owner` verbatim,
+    // validated at the boundary then DISCARDED. RecoveryService.resume hard-codes
+    // reviewer_role='workflow_owner' on the recovery_actions insert (mirrors approve-lint).
+    // Request-
+    // shape validation only, so it stays within the thin-controller ArchUnit rule.
+    requireWorkflowOwnerRole("resume", request.role());
+    log.info(
+        "REST resume received workflowRunId={} actorIdentity={} reasonLength={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity),
+        // reasonText is OPTIONAL for resume (epic AC2) — null-guard before .length(); the free-form
+        // operator prose is never logged verbatim.
+        request.reasonText() == null ? 0 : request.reasonText().length());
+    ActorContext actor = new ActorContext(actorIdentity, ActorType.HUMAN, correlationId);
+    ResumeRecoveryResult result =
+        recoveryService.resume(workflowRunId, idempotencyKey, actor, request.reasonText());
+    ResumeResponse response = ResumeResponse.from(workflowRunId, result);
+    log.info(
+        "REST resume success workflowRunId={} currentState={} recoveryActionId={} runnerExecutionId={} replayed={}",
+        workflowRunId,
+        response.currentState(),
+        response.recoveryActionId(),
+        response.runnerExecutionId(),
+        response.replayed());
+    return response;
+  }
+
+  /**
+   * Story 4.11 (AC1, AC3–AC5, AC7, AC8) — reconcile an unresolved integration conflict on a
+   * non-terminal run. Structural twin of {@link #resume}: same header-derived actor + required
+   * {@code Idempotency-Key} convention, same {@code workflow_owner} boundary role gate, mapped onto
+   * the RICH {@link RecoveryService#reconcile} (NOT the transition-only {@code
+   * WorkflowCommandService.reconcileWorkflow} — R2). The rich path single-sources the per-run
+   * advisory lock, the last-conflict terminalization decision, the {@code recovery_actions} row +
+   * {@code recovery.reconciled} event, the {@code integration_conflicts} {@code resolveConflict}
+   * side-effect, and the accept-external/accept-internal external-sync side-effects. Wiring the
+   * thin service would silently skip all of that (invisible to a happy-path test). Differs from
+   * resume in five ways: three domain body fields, a six-arg service call, a required {@code
+   * reasonText}, a non-null {@code currentState}, and the reconcile-specific error set.
+   */
+  @PostMapping(
+      value = "/{workflowRunId}/reconcile",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "reconcile",
+      summary = "Reconcile an unresolved integration conflict (story 4.11)",
+      description =
+          "Operator (workflow_owner) recovery action that resolves an unresolved integration"
+              + " conflict on a non-terminal run per an explicit ReconciliationDecision (NFR19 — no"
+              + " silent overwrite): records a recovery_actions row + a recovery.reconciled audit"
+              + " event, closes the integration_conflicts row, applies the decision's external-sync"
+              + " side-effects, and stamps the resolved actor onto the audit trail. Idempotent under"
+              + " Idempotency-Key. Reconciling a terminal run surfaces RECONCILE_NOT_APPLICABLE"
+              + " (409).")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Reconcile recorded; the integration conflict is resolved."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD,"
+                + " INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_RECONCILIATION_DECISION,"
+                + " INVALID_RECONCILIATION_DECISION.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND, CONFLICT_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description =
+            "RECONCILE_NOT_APPLICABLE, CONFLICT_ALREADY_RESOLVED, or IDEMPOTENCY_KEY_CONFLICT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public ReconcileResponse reconcile(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody ReconcileWorkflowRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    // Story 4.11 — operator-governance gate: body `role` must equal `workflow_owner` verbatim,
+    // validated at the boundary then DISCARDED. RecoveryService.reconcile hard-codes
+    // reviewer_role='workflow_owner' on the recovery_actions insert (mirrors resume). Request-shape
+    // validation only, so it stays within the thin-controller ArchUnit rule.
+    requireWorkflowOwnerRole("reconcile", request.role());
+    log.info(
+        "REST reconcile received workflowRunId={} actorIdentity={} conflictId={} decision={} reasonLength={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity),
+        MdcKeys.sanitizeForLog(request.conflictId()),
+        // resolutionDecision is NOT yet validated here — this log runs before the service's
+        // parseDecision, and the field is a plain @Size(max=64) String (the enum constraint is
+        // OpenAPI-doc-only). Sanitize it like the other identifiers to prevent CRLF/log injection.
+        // The free-form reasonText prose is never logged (length only).
+        MdcKeys.sanitizeForLog(request.resolutionDecision()),
+        request.reasonText() == null ? 0 : request.reasonText().length());
+    ActorContext actor = new ActorContext(actorIdentity, ActorType.HUMAN, correlationId);
+    ReconcileRecoveryResult result =
+        recoveryService.reconcile(
+            workflowRunId,
+            request.conflictId(),
+            request.resolutionDecision(),
+            idempotencyKey,
+            actor,
+            request.reasonText());
+    ReconcileResponse response = ReconcileResponse.from(workflowRunId, result);
+    log.info(
+        "REST reconcile success workflowRunId={} currentState={} recoveryActionId={} resolvedConflictId={} replayed={}",
+        workflowRunId,
+        response.currentState(),
+        response.recoveryActionId(),
+        response.resolvedConflictId(),
+        response.replayed());
+    return response;
+  }
+
+  /**
+   * Story 4.12 (AC1, AC3–AC5, AC7, AC8) — rerun a run from a safe {@code SafeRerunStep} boundary
+   * ({@code investigating} / {@code executing}). Structural twin of {@link #reconcile}: same
+   * header-derived actor + required {@code Idempotency-Key} convention, same {@code workflow_owner}
+   * boundary role gate, mapped onto the RICH {@link RecoveryService#rerunFromStep} (NOT the
+   * transition-only {@code WorkflowCommandService.rerunFromStepWorkflow} — R2). The rich path
+   * single-sources the {@code RERUN_SOURCE_STATES} gate ({FAILED, WAITING_FOR_REVIEW} →
+   * ILLEGAL_TRANSITION for any other source, incl. terminal), the prior-approval invalidation, the
+   * {@code recovery_actions} row + {@code recovery.rerunFromStep} event, the runner re-enqueue, and
+   * the best-effort Linear reopen. Wiring the thin service would silently skip all of that
+   * (invisible to a happy-path test — the ADR-0034 out-of-scope disaster). Differs from reconcile
+   * in exactly: two domain body fields ({@code targetStep}, {@code reasonText}) BOTH
+   * un-{@code @NotBlank} so the service surfaces {@code INVALID_RERUN_TARGET_STEP} / {@code
+   * MISSING_REASON_TEXT} (R5/R6), a five-arg service call with {@code targetStep} SECOND (before
+   * {@code idempotencyKey}), a response carrying two never-null {@code List<String>} fields, and
+   * the error set (no {@code *_NOT_APPLICABLE} — the wrong-source-state code is {@code
+   * ILLEGAL_TRANSITION}).
+   */
+  @PostMapping(
+      value = "/{workflowRunId}/rerun-from-step",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "rerunFromStep",
+      summary = "Rerun a workflow run from a safe step boundary (story 4.12)",
+      description =
+          "Operator (workflow_owner) recovery action that reruns a Failed or WaitingForReview run"
+              + " from a SafeRerunStep boundary (investigating = re-spec, executing = re-implement):"
+              + " invalidates the prior approval at that boundary, records a recovery_actions row +"
+              + " a recovery.rerunFromStep audit event, re-enqueues the runner with a fresh"
+              + " context-bundle version, best-effort reopens the Linear issue, and stamps the"
+              + " resolved actor onto the audit trail. Idempotent under Idempotency-Key. Rerunning"
+              + " from any state outside {Failed, WaitingForReview} surfaces ILLEGAL_TRANSITION"
+              + " (409).")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Rerun recorded; run is at the requested safe step boundary."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD,"
+                + " INVALID_REVIEWER_ROLE_FOR_ENDPOINT, INVALID_RERUN_TARGET_STEP,"
+                + " MISSING_REASON_TEXT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description =
+            "ILLEGAL_TRANSITION (wrong source state, incl. terminal) or IDEMPOTENCY_KEY_CONFLICT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public RerunFromStepResponse rerunFromStep(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody RerunFromStepRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    // Story 4.12 — operator-governance gate: body `role` must equal `workflow_owner` verbatim,
+    // validated at the boundary then DISCARDED. RecoveryService.rerunFromStep hard-codes
+    // reviewer_role='workflow_owner' on the recovery_actions insert (mirrors resume/reconcile).
+    // Request-shape validation only, so it stays within the thin-controller ArchUnit rule.
+    requireWorkflowOwnerRole("rerun-from-step", request.role());
+    log.info(
+        "REST rerun-from-step received workflowRunId={} actorIdentity={} targetStep={} reasonLength={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity),
+        // targetStep is a plain @Size(max=64) String not yet validated here (this log runs before
+        // the service's resolveTargetState; the enum constraint is OpenAPI-doc-only), so sanitize
+        // it
+        // like the other identifiers to prevent CRLF/log injection. The free-form reasonText prose
+        // is
+        // never logged (length only, null-guarded).
+        MdcKeys.sanitizeForLog(request.targetStep()),
+        request.reasonText() == null ? 0 : request.reasonText().length());
+    ActorContext actor = new ActorContext(actorIdentity, ActorType.HUMAN, correlationId);
+    RerunFromStepRecoveryResult result =
+        recoveryService.rerunFromStep(
+            workflowRunId, request.targetStep(), idempotencyKey, actor, request.reasonText());
+    RerunFromStepResponse response = RerunFromStepResponse.from(workflowRunId, result);
+    log.info(
+        "REST rerun-from-step success workflowRunId={} currentState={} recoveryActionId={}"
+            + " runnerExecutionId={} supersededCount={} invalidatedApprovalCount={} replayed={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        response.currentState(),
+        response.recoveryActionId(),
+        response.runnerExecutionId(),
+        response.supersededArtifactIds().size(),
+        response.invalidatedApprovalIds().size(),
+        response.replayed());
+    return response;
+  }
+
+  /**
+   * Story 4.13 (AC1, AC3–AC5, AC7, AC8) — manually pause a run for operator intervention (NFR5:
+   * pause when uncertain). Structural twin of {@link #resume} (the CLOSEST of the later siblings):
+   * same header-derived actor + required {@code Idempotency-Key} convention, same {@code
+   * workflow_owner} boundary role gate, the SAME 4-positional-arg service-call shape {@code (runId,
+   * idempotencyKey, actor, reasonText)} with NO domain field before {@code idempotencyKey} (unlike
+   * reconcile's {@code conflictId}/{@code resolutionDecision} and rerun's {@code targetStep}).
+   * Mapped onto the RICH {@link RecoveryService#pause} (NOT the transition-only {@code
+   * WorkflowCommandService.pauseWorkflow} — R2). The rich path single-sources the {@code
+   * PAUSABLE_SOURCE_STATES} gate ({@code PAUSE_NOT_APPLICABLE} on any non-pausable / terminal /
+   * {@code Paused} / {@code TakenOver} source), the runner cancel-flip over {@code {queued,
+   * pending, running}} rows → {@code cancelled_for_pause} (the load-bearing "stop dispatch"
+   * signal), the post-commit best-effort {@code docker stop}, the {@code recovery_actions} row, and
+   * the {@code recovery.paused} event (carrying the typed {@code priorState}/{@code
+   * resultingState}). Wiring the thin service would silently skip all of that — the run would flip
+   * to {@code Paused} but its runner rows would keep getting dequeued and reaped into {@code
+   * Failed} (invisible to a happy-path test). Differs from resume in exactly: {@code reasonText}
+   * un-{@code @NotBlank} so the service surfaces {@code MISSING_REASON_TEXT} (R5); a response
+   * carrying the nullable {@code priorState} + two {@code int} cancellation counts; a non-null
+   * {@code currentState} (always {@code Paused}); and the error set ({@code PAUSE_NOT_APPLICABLE}
+   * instead of {@code RESUME_NOT_APPLICABLE}, plus {@code MISSING_REASON_TEXT}).
+   */
+  @PostMapping(
+      value = "/{workflowRunId}/pause",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "pause",
+      summary = "Manually pause a workflow run (story 4.13)",
+      description =
+          "Operator (workflow_owner) recovery action that pauses a run mid-flight without taking"
+              + " over: halts orchestrator dispatch by flipping every queued + in-flight runner"
+              + " execution to cancelled_for_pause, best-effort stops previously-running"
+              + " containers, records a recovery_actions row + a recovery.paused audit event"
+              + " (preserving the prior state resume will return to), and stamps the resolved actor"
+              + " onto the audit trail. Idempotent under Idempotency-Key. Pausing a run outside the"
+              + " pausable source states (terminal, already Paused, or TakenOver) surfaces"
+              + " PAUSE_NOT_APPLICABLE (409).")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description =
+            "Pause recorded; run is Paused with in-flight + queued runner work cancelled."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD,"
+                + " INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_REASON_TEXT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description =
+            "PAUSE_NOT_APPLICABLE (wrong/terminal source state) or IDEMPOTENCY_KEY_CONFLICT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public PauseResponse pause(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody PauseWorkflowRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    // Story 4.13 — operator-governance gate: body `role` must equal `workflow_owner` verbatim,
+    // validated at the boundary then DISCARDED. RecoveryService.pause hard-codes
+    // reviewer_role='workflow_owner' on the recovery_actions insert (mirrors resume/reconcile/
+    // rerun). Request-shape validation only, so it stays within the thin-controller ArchUnit rule.
+    requireWorkflowOwnerRole("pause", request.role());
+    log.info(
+        "REST pause received workflowRunId={} actorIdentity={} reasonLength={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity),
+        // reasonText is required-but-service-validated for pause (NOT @NotBlank — R5); null-guard
+        // before .length() so the entry log never NPEs on an absent reason (the service surfaces
+        // MISSING_REASON_TEXT downstream). The free-form operator prose is never logged verbatim.
+        request.reasonText() == null ? 0 : request.reasonText().length());
+    ActorContext actor = new ActorContext(actorIdentity, ActorType.HUMAN, correlationId);
+    PauseRecoveryResult result =
+        recoveryService.pause(workflowRunId, idempotencyKey, actor, request.reasonText());
+    PauseResponse response = PauseResponse.from(workflowRunId, result);
+    log.info(
+        "REST pause success workflowRunId={} currentState={} priorState={} recoveryActionId={}"
+            + " cancelledInFlightCount={} cancelledQueuedCount={} replayed={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        response.currentState(),
+        response.priorState(),
+        response.recoveryActionId(),
+        response.cancelledInFlightCount(),
+        response.cancelledQueuedCount(),
+        response.replayed());
+    return response;
+  }
+
+  /**
+   * Story 4.14 (AC1, AC3–AC5, AC7, AC8) — apply a governed failure-taxonomy classification to a
+   * FAILED run for cross-run pattern analysis. Mapped onto the RICH {@link
+   * RecoveryService#classifyFailure} — there is NO thin-service twin: classify performs no state
+   * transition (epic 4.9 AC10) so it never joined the {@code WorkflowCommand} family (story 4.9
+   * R8), and {@code RecoveryService.classifyFailure} is the single entry point (R2). The rich path
+   * single-sources the idempotency replay pre-check ({@code actionType='classify_failure'} guard),
+   * the taxonomy parse + deprecation write-guard, the {@code FAILED}-only state gate, the {@code
+   * applyClassification} column write (capturing {@code priorTaxonomyValue}), the {@code
+   * recovery.failureClassified} event append, and the {@code recovery_actions} row.
+   *
+   * <p>Closest structural sibling is {@link #reconcile} (a domain field — {@code taxonomyValue} —
+   * BEFORE {@code idempotencyKey}), diverging in four ways: (a) {@code reasonText} is GENUINELY
+   * OPTIONAL — NO {@code MISSING_REASON_TEXT} on this path (Reconciliation 5, the {@code
+   * ResumeWorkflowRequest} posture); (b) the response carries NO workflow-state field
+   * (Reconciliation 6 — the ODD sibling); (c) the service takes FIVE positional args ({@code
+   * taxonomyValue} SECOND, before {@code idempotencyKey}) not six; (d) the error set swaps the
+   * reconcile codes for the three taxonomy codes + {@code CLASSIFY_NOT_APPLICABLE}. {@code
+   * taxonomyValue} stays un-{@code @NotBlank} so the typed {@code
+   * MISSING_/INVALID_/DEPRECATED_TAXONOMY_VALUE} codes are reachable (Reconciliation 4). {@code
+   * ACTION_NOT_ALLOWED} does not exist — the wrong-state code is the dedicated {@code
+   * CLASSIFY_NOT_APPLICABLE} (409, {@code details.currentState}).
+   */
+  @PostMapping(
+      value = "/{workflowRunId}/classify-failure",
+      consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      operationId = "classifyFailure",
+      summary = "Classify a failed workflow run with a governed failure taxonomy (story 4.14)",
+      description =
+          "Operator (workflow_owner) recovery action that stamps a governed FailureTaxonomyValue"
+              + " onto a FAILED run for cross-run pattern analysis (WHY the run failed): writes the"
+              + " workflow_runs.failure_classification triple, records a recovery_actions row + a"
+              + " recovery.failureClassified audit event capturing any prior taxonomy value, and"
+              + " stamps the resolved actor onto the audit trail. Pure metadata — no state"
+              + " transition. Idempotent under Idempotency-Key. Classifying a run that is not in the"
+              + " Failed state surfaces CLASSIFY_NOT_APPLICABLE (409).")
+  @ApiResponses({
+    @ApiResponse(
+        responseCode = "200",
+        description = "Classification recorded (or idempotent replay)."),
+    @ApiResponse(
+        responseCode = "400",
+        description =
+            "MISSING_IDEMPOTENCY_KEY, INVALID_IDEMPOTENCY_KEY, INVALID_COMMAND_PAYLOAD,"
+                + " INVALID_REVIEWER_ROLE_FOR_ENDPOINT, MISSING_TAXONOMY_VALUE,"
+                + " INVALID_TAXONOMY_VALUE, DEPRECATED_TAXONOMY_VALUE.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "404",
+        description = "RUN_NOT_FOUND.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class))),
+    @ApiResponse(
+        responseCode = "409",
+        description =
+            "CLASSIFY_NOT_APPLICABLE (run not in the Failed state) or IDEMPOTENCY_KEY_CONFLICT.",
+        content =
+            @Content(
+                mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                schema = @Schema(implementation = ProblemDetailsResponse.class)))
+  })
+  public ClassifyFailureResponse classifyFailure(
+      @PathVariable String workflowRunId,
+      @RequestHeader(name = "Idempotency-Key") String idempotencyKey,
+      @RequestHeader(name = "X-Actor-Identity", required = false) String actorIdentityHeader,
+      HttpServletRequest httpRequest,
+      @Valid @RequestBody ClassifyFailureRequest request) {
+    rejectMultiValuedIdempotencyKeyHeader(httpRequest);
+    requireNonBlankIdempotencyKey(idempotencyKey);
+    rejectMultiValuedActorIdentityHeader(httpRequest);
+    localActorIdentityResolver.requireSafe(actorIdentityHeader);
+    String actorIdentity = localActorIdentityResolver.resolve(actorIdentityHeader);
+    String correlationId = MdcKeys.sanitizeForLog(MDC.get(MdcKeys.CORRELATION_ID));
+    // Story 4.14 — operator-governance gate: body `role` must equal `workflow_owner` verbatim,
+    // validated at the boundary then DISCARDED. RecoveryService.classifyFailure hard-codes
+    // reviewer_role='workflow_owner' on the recovery_actions insert (mirrors resume/reconcile/
+    // rerun/pause). Request-shape validation only, so it stays within the thin-controller ArchUnit
+    // rule.
+    requireWorkflowOwnerRole("classify-failure", request.role());
+    log.info(
+        "REST classifyFailure received workflowRunId={} actorIdentity={} taxonomyValue={} reasonLength={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        MdcKeys.sanitizeForLog(actorIdentity),
+        // taxonomyValue is NOT yet validated here — this log runs before the service's
+        // parseTaxonomyValue, and the field is a plain @Size(max=64) String (the enum constraint is
+        // OpenAPI-doc-only). Sanitize it like the other identifiers to prevent CRLF/log injection.
+        // The free-form reasonText prose is never logged (length only; null-guarded — reasonText is
+        // genuinely optional here so it may be absent).
+        MdcKeys.sanitizeForLog(request.taxonomyValue()),
+        request.reasonText() == null ? 0 : request.reasonText().length());
+    ActorContext actor = new ActorContext(actorIdentity, ActorType.HUMAN, correlationId);
+    ClassifyFailureResult result =
+        recoveryService.classifyFailure(
+            workflowRunId, request.taxonomyValue(), idempotencyKey, actor, request.reasonText());
+    ClassifyFailureResponse response = ClassifyFailureResponse.from(workflowRunId, result);
+    log.info(
+        "REST classifyFailure success workflowRunId={} taxonomyValue={} priorTaxonomyValue={} recoveryActionId={} replayed={}",
+        MdcKeys.sanitizeForLog(workflowRunId),
+        response.taxonomyValue(),
+        response.priorTaxonomyValue(),
+        response.recoveryActionId(),
+        response.replayed());
+    return response;
+  }
+
   @PostMapping(
       value = "/{workflowRunId}/archive",
       consumes = MediaType.APPLICATION_JSON_VALUE,
@@ -1924,6 +2945,34 @@ public class WorkflowController {
       throw new DomainException(
           DomainErrorCode.INVALID_REVIEWER_ROLE_FOR_ENDPOINT,
           "Reviewer role must be 'developer' for this endpoint",
+          details);
+    }
+    return trimmed;
+  }
+
+  /**
+   * Story 3h-2 (AC5) — the pre-review lint-gate endpoints (approve-lint / request-lint-fix) are
+   * operator-governance gates ({@code [recovery-bar-wrong-allowed-actions-role]}): the body {@code
+   * role} must equal {@code workflow_owner} verbatim; anything else — including null/blank — is
+   * rejected at the boundary as the typed {@link
+   * DomainErrorCode#INVALID_REVIEWER_ROLE_FOR_ENDPOINT} (do NOT route through a blank→default
+   * resolver, which would mask a role mismatch). Request-shape validation only (no domain
+   * decision), so it stays within the thin-controller ArchUnit rule.
+   */
+  private static String requireWorkflowOwnerRole(String action, String role) {
+    String trimmed = role == null ? null : role.trim();
+    if (!"workflow_owner".equals(trimmed)) {
+      log.warn(
+          "REST {} rejected: role must be 'workflow_owner' actualRole={}",
+          action,
+          MdcKeys.sanitizeForLog(role));
+      Map<String, Object> details = new LinkedHashMap<>();
+      details.put("field", "role");
+      details.put("expected", "workflow_owner");
+      details.put("actual", role);
+      throw new DomainException(
+          DomainErrorCode.INVALID_REVIEWER_ROLE_FOR_ENDPOINT,
+          "Role must be 'workflow_owner' for this endpoint",
           details);
     }
     return trimmed;

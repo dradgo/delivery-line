@@ -30,6 +30,10 @@ class WorkflowTransitionTableTest {
             WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
             // Story 3f-3 — run-dependency gating park state.
             WorkflowState.WAITING_FOR_DEPENDENCIES,
+            // Story 3h-2 — pre-review lint gate park state.
+            WorkflowState.WAITING_FOR_LINT_APPROVAL,
+            // Story 3h-4 — pre-review delivery gate park state.
+            WorkflowState.WAITING_FOR_DELIVERY,
             WorkflowState.SPLIT,
             WorkflowState.COMPLETED,
             WorkflowState.FAILED,
@@ -54,12 +58,15 @@ class WorkflowTransitionTableTest {
         Set.of(WorkflowState.INVESTIGATING, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED));
     // Story 3a-1: INVESTIGATING gains a FAILED edge (spec-stage runner failures, AC4/AC8).
     // Story 3d-3: INVESTIGATING gains a WAITING_FOR_MANUAL_EXECUTION edge (spec-stage manual park).
+    // Story 4.8: every PAUSABLE_SOURCE_STATES member gains a PAUSED edge, symmetric with the
+    // widened PAUSED return row below (the pause symmetry invariant).
     expectedTargets.put(
         WorkflowState.INVESTIGATING,
         Set.of(
             WorkflowState.WAITING_FOR_SPEC_APPROVAL,
             WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
             WorkflowState.FAILED,
+            WorkflowState.PAUSED,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
     expectedTargets.put(
@@ -68,15 +75,20 @@ class WorkflowTransitionTableTest {
             WorkflowState.EXECUTING,
             WorkflowState.INVESTIGATING,
             WorkflowState.SPLIT,
+            WorkflowState.PAUSED,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
     // Story 3d-3: EXECUTING gains a WAITING_FOR_MANUAL_EXECUTION edge (execution-stage manual
     // park).
+    // Story 3h-2: EXECUTING gains a WAITING_FOR_LINT_APPROVAL edge (critical lint finding park).
+    // Story 3h-4: EXECUTING gains a WAITING_FOR_DELIVERY edge (non-auto push mode park).
     expectedTargets.put(
         WorkflowState.EXECUTING,
         Set.of(
             WorkflowState.WAITING_FOR_REVIEW,
             WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+            WorkflowState.WAITING_FOR_LINT_APPROVAL,
+            WorkflowState.WAITING_FOR_DELIVERY,
             WorkflowState.FAILED,
             WorkflowState.PAUSED,
             WorkflowState.TAKEN_OVER,
@@ -87,6 +99,7 @@ class WorkflowTransitionTableTest {
             WorkflowState.COMPLETED,
             WorkflowState.EXECUTING,
             WorkflowState.SPLIT,
+            WorkflowState.PAUSED,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
     // Story 3d-3: a parked manual run leaves only on operator submission (spec → SpecApproval,
@@ -97,24 +110,62 @@ class WorkflowTransitionTableTest {
             WorkflowState.WAITING_FOR_SPEC_APPROVAL,
             WorkflowState.WAITING_FOR_REVIEW,
             WorkflowState.FAILED,
+            WorkflowState.PAUSED,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
-    expectedTargets.put(WorkflowState.SPLIT, Set.of(WorkflowState.COMPLETED));
+    expectedTargets.put(
+        WorkflowState.SPLIT, Set.of(WorkflowState.COMPLETED, WorkflowState.RECONCILED));
     // Story 3f-3: the dependency-gating park state releases onward into the spec-generation path
     // (INVESTIGATING) once the last prerequisite reaches Completed — its sole out-edge.
     expectedTargets.put(
-        WorkflowState.WAITING_FOR_DEPENDENCIES, Set.of(WorkflowState.INVESTIGATING));
+        WorkflowState.WAITING_FOR_DEPENDENCIES,
+        Set.of(WorkflowState.INVESTIGATING, WorkflowState.RECONCILED));
+    // Story 3h-2: the lint gate resumes to WaitingForReview (approve_lint) or re-dispatches to
+    // Executing (request_lint_fix), plus the recovery/safety edges. No -> Failed edge (Decision 3).
+    // Story 3h-4: the lint gate gains a WAITING_FOR_DELIVERY out-edge (Decision 3 — a lint approval
+    // on a non-auto project routes into the delivery gate).
+    expectedTargets.put(
+        WorkflowState.WAITING_FOR_LINT_APPROVAL,
+        Set.of(
+            WorkflowState.WAITING_FOR_REVIEW,
+            WorkflowState.EXECUTING,
+            WorkflowState.WAITING_FOR_DELIVERY,
+            WorkflowState.PAUSED,
+            WorkflowState.TAKEN_OVER,
+            WorkflowState.RECONCILED));
+    // Story 3h-4: the delivery gate advances to WaitingForReview (approve_delivery), plus the
+    // recovery/safety edges. No -> Failed edge (Decision 5).
+    expectedTargets.put(
+        WorkflowState.WAITING_FOR_DELIVERY,
+        Set.of(
+            WorkflowState.WAITING_FOR_REVIEW,
+            WorkflowState.PAUSED,
+            WorkflowState.TAKEN_OVER,
+            WorkflowState.RECONCILED));
     expectedTargets.put(WorkflowState.COMPLETED, Set.of());
     expectedTargets.put(
         WorkflowState.FAILED,
         Set.of(
             WorkflowState.EXECUTING,
             WorkflowState.INVESTIGATING,
+            WorkflowState.PAUSED,
             WorkflowState.TAKEN_OVER,
             WorkflowState.RECONCILED));
+    // Story 4.8: the PAUSED return row mirrors every pausable source (the symmetry invariant —
+    // resume transitions back to the recorded priorState).
     expectedTargets.put(
         WorkflowState.PAUSED,
-        Set.of(WorkflowState.EXECUTING, WorkflowState.TAKEN_OVER, WorkflowState.RECONCILED));
+        Set.of(
+            WorkflowState.EXECUTING,
+            WorkflowState.INVESTIGATING,
+            WorkflowState.WAITING_FOR_SPEC_APPROVAL,
+            WorkflowState.WAITING_FOR_REVIEW,
+            WorkflowState.WAITING_FOR_MANUAL_EXECUTION,
+            WorkflowState.WAITING_FOR_LINT_APPROVAL,
+            WorkflowState.WAITING_FOR_DELIVERY,
+            WorkflowState.FAILED,
+            WorkflowState.TAKEN_OVER,
+            WorkflowState.RECONCILED));
     expectedTargets.put(WorkflowState.TAKEN_OVER, Set.of());
     expectedTargets.put(WorkflowState.RECONCILED, Set.of());
 
@@ -227,6 +278,24 @@ class WorkflowTransitionTableTest {
         WorkflowState.FAILED,
         FailureCategory.RUNNER_TIMEOUT,
         "runner timed out");
+
+    // A post-execution secret leak fails the run like any other runner failure. Excluding it here
+    // is what left leaked-secret runs stranded in EXECUTING with no recovery path (run_009f4595…).
+    table.assertTransitionAllowed(
+        "run_demo1234",
+        WorkflowState.EXECUTING,
+        WorkflowState.FAILED,
+        FailureCategory.RUNNER_SECRET_LEAK,
+        "runner secret leak");
+
+    // A pre-dispatch testcontainers-infra failure fails the run from EXECUTING like any runner
+    // failure (the sidecar could not be provisioned for an opted-in run).
+    table.assertTransitionAllowed(
+        "run_demo1234",
+        WorkflowState.EXECUTING,
+        WorkflowState.FAILED,
+        FailureCategory.TESTCONTAINERS_INFRA_FAILED,
+        "testcontainers sidecar unavailable");
 
     DomainException missingCategory =
         assertThrows(

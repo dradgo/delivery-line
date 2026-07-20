@@ -36,6 +36,17 @@ public interface DockerHostPort {
    */
   List<DanglingContainerInfo> listContainersByLabel(String labelKey, String labelValuePrefix);
 
+  /**
+   * DinD Testcontainers Task 7 — enumerate all networks carrying {@code labelKey} (presence match).
+   * The dind sweep uses {@code labelKey="deliveryline.dind"} to find orphan per-run bridge networks
+   * ({@code deliveryline-net-rex_*}); the label value is the owning {@code runnerExecutionId}, used
+   * to correlate the network to its run row.
+   */
+  List<NetworkInfo> listNetworksByLabel(String labelKey);
+
+  /** Remove a network by name/id. Idempotent — a missing network is a no-op. */
+  void removeNetwork(String name);
+
   /** Project-owned snapshot of a Docker container surfaced by {@link #listContainersByLabel}. */
   record DanglingContainerInfo(
       String containerId, String runnerExecutionId, String status, OffsetDateTime createdAt) {
@@ -43,6 +54,18 @@ public interface DockerHostPort {
     public DanglingContainerInfo {
       Objects.requireNonNull(containerId, "containerId");
       Objects.requireNonNull(status, "status");
+    }
+  }
+
+  /**
+   * Project-owned snapshot of a Docker network surfaced by {@link #listNetworksByLabel} (no
+   * docker-java leakage). {@code labelValue} is the {@code deliveryline.dind} label value (the
+   * owning {@code runnerExecutionId}).
+   */
+  record NetworkInfo(String id, String name, String labelValue) {
+
+    public NetworkInfo {
+      Objects.requireNonNull(name, "name");
     }
   }
 }

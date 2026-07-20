@@ -1252,29 +1252,40 @@ jobs:
       pull-requests: read
     outputs:
       runner-paths-changed: ${{ steps.detect.outputs.runner-paths-changed }}
+      # Story 4.25 (AC8) — a SECOND path-trigger output for the recovery-integration
+      # tier, computed by the same github-script (its own watched prefix set) so the
+      # recovery scenario ITs run only on PRs touching recovery paths.
+      recovery-paths-changed: ${{ steps.detect.outputs.recovery-paths-changed }}
     steps:
-      - name: Detect runner-path changes
+      - name: Detect runner-path + recovery-path changes
         id: detect
         uses: actions/github-script@v7
         with:
           script: |
+            // Story 4.25 — this job now emits TWO independent path-trigger outputs
+            // (runner-paths-changed + recovery-paths-changed). The three fail-safe
+            // branches below (non-PR → true, base ≠ main → false, listFiles error →
+            // true) apply to BOTH outputs identically, so they are set together.
+            const setBoth = (v, why) => {
+              core.setOutput('runner-paths-changed', v);
+              core.setOutput('recovery-paths-changed', v);
+              core.info(`${why} → runner-paths-changed=${v}, recovery-paths-changed=${v}`);
+            };
             // push:main (and any non-PR event) → always eligible so main builds
             // always run and publish :latest + semver tags (AC4 / R3). The only
             // non-PR trigger for this workflow is `push: branches:[main]` (see
             // `on:`), so this is the main-build path.
             if (context.eventName !== 'pull_request') {
-              core.setOutput('runner-paths-changed', 'true');
-              core.info(`event=${context.eventName} — runner-image tier always eligible (push:main / AC4).`);
+              setBoth('true', `event=${context.eventName} — both tiers always eligible (push:main / AC4)`);
               return;
             }
-            // Only main-targeted PRs run the heavy tier + feed the required gate,
+            // Only main-targeted PRs run the heavy tiers + feed the required gates,
             // mirroring the foundation-gate base-ref guard (.github/workflows/ci.yml
-            // ~1152/1179). A PR onto a feature/release branch skips the tier; the
-            // gate passes on a legitimate skip (code-review P2).
+            // ~1152/1179). A PR onto a feature/release branch skips the tiers; the
+            // gates pass on a legitimate skip (code-review P2).
             const baseRef = context.payload.pull_request.base.ref;
             if (baseRef !== 'main') {
-              core.setOutput('runner-paths-changed', 'false');
-              core.info(`PR base is '${baseRef}' (not main) — runner-image tier skipped.`);
+              setBoth('false', `PR base is '${baseRef}' (not main) — both heavy tiers skipped`);
               return;
             }
             const { owner, repo } = context.repo;
@@ -1287,32 +1298,62 @@ jobs:
               );
             } catch (err) {
               // Fail SAFE, not open: if the file listing fails (API hiccup,
-              // fork-PR token scope), run the tier rather than silently skip it.
-              // The gate also independently fails on a non-success detect-changes
-              // result, so a broken detector can never wave a runner-path PR
-              // through (code-review P1).
-              core.warning(`pulls.listFiles failed (${err.message}) — running the runner-image tier to fail safe.`);
-              core.setOutput('runner-paths-changed', 'true');
+              // fork-PR token scope), run the tiers rather than silently skip them.
+              // The gates also independently fail on a non-success detect-changes
+              // result, so a broken detector can never wave a path PR through
+              // (code-review P1).
+              core.warning(`pulls.listFiles failed (${err.message}) — running both heavy tiers to fail safe.`);
+              setBoth('true', 'listFiles error — fail safe');
               return;
             }
-            // Watched path set (R9 — real module-prefixed paths). Includes the
-            // compose build-graph files (they feed the AC8 cache key + the actual
-            // build) and runners/VERSION (already under runners/). A PR touching
-            // deliveryline-runner-contracts/**/schemas/** is included here, so a
-            // schema change triggers BOTH images (AC9) with no extra job
+            // Runner-image watched path set (story 3.34 / R9 — real module-prefixed
+            // paths). Includes the compose build-graph files (they feed the AC8 cache
+            // key + the actual build) and runners/VERSION (already under runners/). A
+            // PR touching deliveryline-runner-contracts/**/schemas/** is included
+            // here, so a schema change triggers BOTH images (AC9) with no extra job
             // (code-review P3).
-            const watched = [
+            const runnerWatched = [
               'runners/',
               'deliveryline-runner-contracts/',
               'deliveryline-backend/src/main/java/org/dradgo/adapters/runner/',
               'docker-compose.yml',
               'docker-compose.ci.yml',
             ];
-            const changed = files.some(f =>
-              watched.some(p => f.filename.startsWith(p))
+            const runnerChanged = files.some(f =>
+              runnerWatched.some(p => f.filename.startsWith(p))
             );
-            core.setOutput('runner-paths-changed', changed ? 'true' : 'false');
-            core.info(`runner-paths-changed=${changed} (${files.length} files inspected).`);
+            core.setOutput('runner-paths-changed', runnerChanged ? 'true' : 'false');
+            // Story 4.25 (AC8, Reconciliation 6) — recovery-integration watched path
+            // set: the recovery/reconciliation/conflict application services + their
+            // REST controllers, the recovery-related frontend feature dir, the
+            // recovery scenario IT dirs, and the CI/build files that carry the tier
+            // itself (a change to ci.yml or the backend pom must re-run the tier that
+            // depends on them).
+            const recoveryWatched = [
+              'deliveryline-backend/src/main/java/org/dradgo/application/recovery/',
+              'deliveryline-backend/src/main/java/org/dradgo/application/artifact/reconciliation/',
+              'deliveryline-backend/src/main/java/org/dradgo/application/artifact/ArtifactReconciliationService.java',
+              'deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/',
+              'deliveryline-backend/src/main/java/org/dradgo/adapters/rest/WorkflowController.java',
+              'deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ArtifactDriftController.java',
+              // Fault-injection seams the scenario ITs drive directly (mock registries/adapters +
+              // the payload store whose files the drift scenarios delete/corrupt) — a change here
+              // alters scenario behaviour, so it must re-run the tier.
+              'deliveryline-backend/src/main/java/org/dradgo/adapters/integration/repohost/github/',
+              'deliveryline-backend/src/main/java/org/dradgo/adapters/integration/ticketsource/linear/',
+              'deliveryline-backend/src/main/java/org/dradgo/adapters/files/',
+              'deliveryline-frontend/src/features/workflows/',
+              'deliveryline-backend/src/test/java/org/dradgo/application/recovery/',
+              'deliveryline-backend/src/test/java/org/dradgo/application/artifact/reconciliation/',
+              'deliveryline-backend/src/test/java/org/dradgo/application/integration/conflict/',
+              '.github/workflows/ci.yml',
+              'deliveryline-backend/pom.xml',
+            ];
+            const recoveryChanged = files.some(f =>
+              recoveryWatched.some(p => f.filename.startsWith(p))
+            );
+            core.setOutput('recovery-paths-changed', recoveryChanged ? 'true' : 'false');
+            core.info(`runner-paths-changed=${runnerChanged}, recovery-paths-changed=${recoveryChanged} (${files.length} files inspected).`);
 
   # ---------------------------------------------------------------------------
   # runner-image-build — REAL Codex + Claude images via compose (AC1, AC4, AC8;
@@ -1741,4 +1782,218 @@ jobs:
             } else {
               await github.rest.issues.createComment({ owner, repo, issue_number, body });
               core.info('Created new runner-image-ci comment.');
+            }
+
+  # ===========================================================================
+  # Side-tier: recovery-integration — end-to-end recovery SCENARIOS with fault
+  # injection (story 4.25). A PATH-TRIGGERED tier hanging off `detect-changes`,
+  # complementary to backend-contract-tests: that tier runs the whole Failsafe
+  # suite on every PR, while THIS tier runs the heavy end-to-end recovery scenario
+  # ITs (resume / reconcile / rerun-from-step / pause-resume idempotency /
+  # classify-failure + artifact-drift + integration-conflict fault injection) —
+  # tagged `@Tag("recovery-integration")` and default-EXCLUDED from Failsafe
+  # (deliveryline-backend/pom.xml) so they run ONLY here, never double-run.
+  #
+  # Like the runner-image tier (story 3.34), this is intentionally NOT in
+  # `foundation-gate.needs` (the gate converts skip→fail → would red every
+  # recovery-untouched PR). Merge-blocking is realized by the always-runs
+  # `recovery-integration-gate` aggregator + a branch-protection required check
+  # (docs/ci-branch-protection.md).
+  #
+  # OQ-5 resolution: the PR-tier scenarios assert at the queue/state/DB level and
+  # do NOT boot a live runner container, so this job deliberately does NOT
+  # `needs: runner-image-build` — that job is path-gated on `runner-paths-changed`
+  # and would be SKIPPED on a recovery-only PR, which (a non-status `if:`) would
+  # skip-cascade THIS job and silently drop recovery coverage. Ordering on
+  # `foundation-gate` (which always runs, never skips) is safe and keeps the heavy
+  # scenarios off a branch whose foundation is already red.
+  #
+  # Linux-only (Docker-backed Testcontainers; story 1.21 AC3). Least-privilege
+  # token: read-only here; only the gate escalates `pull-requests: write`.
+  # ---------------------------------------------------------------------------
+  recovery-integration:
+    name: recovery-integration
+    needs: [detect-changes, foundation-gate]
+    if: ${{ needs.detect-changes.outputs.recovery-paths-changed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    env:
+      # Spring docker-compose autoconfig + Flyway want a Postgres password
+      # placeholder even though the scenarios use Testcontainers; mirror the
+      # foundation-gate / runner-contract-real env shape.
+      POSTGRES_PASSWORD: deliveryline-ci
+      SPRING_PROFILES_ACTIVE: test
+      # Belt-and-suspenders workspace-scoped home. Each scenario IT overrides
+      # deliveryline.home to a per-test @TempDir via @DynamicPropertySource (AC9),
+      # so this is only a fallback for the context boot; scenarios never write here.
+      DELIVERYLINE_HOME: ${{ github.workspace }}/.deliveryline-recovery
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Verify Docker daemon is reachable (env-vs-contract disambiguation)
+        # If Docker is unavailable, Testcontainers throws mid-test and the aggregate
+        # report blames a recovery-scenario regression. Surface an env-level failure
+        # here with an explicit `[env]` marker so triage is unambiguous. Mirrors the
+        # runner-contract-real / foundation-gate Docker guard.
+        run: |
+          if ! docker info >/dev/null 2>&1; then
+            echo "::error::[env] Docker daemon not reachable — recovery-integration Testcontainers scenarios cannot start. Infrastructure issue, NOT a recovery regression. Re-run; if it persists, escalate to CI ops."
+            exit 1
+          fi
+          echo "[env] Docker daemon reachable: $(docker version --format '{{.Server.Version}}')"
+
+      - name: Run recovery-integration scenarios (-Precovery-integration)
+        # AC5: NO blanket retry. Detection is driven synchronously in every scenario
+        # (the @Scheduled sweeps stay disabled in the test profile), so the epic's
+        # feared scheduled-timing flake does not exist here — no timing retry is
+        # added. If a container-pull/setup flake appears, scope a narrow retry to the
+        # pull/setup step ONLY (never wrap `verify`) with a deferred-work.md entry.
+        # -am keeps the freshest deliveryline-runner-contracts jar on the classpath
+        # (runner-contracts-schema-stale-in-m2). -Djacoco.check.skip=true: this tier
+        # runs a TAGGED subset, so the full-suite line/branch floors can never be met
+        # and would fail the build on coverage rather than on a scenario regression —
+        # the profile already sets this, passed again here for parity with the
+        # runner-contract-real job.
+        run: |
+          ./mvnw -B -ntp -Precovery-integration -pl deliveryline-backend -am verify \
+            -Djacoco.check.skip=true
+
+      - name: Assert recovery scenarios actually ran (no silent fail-open)
+        run: |
+          set -euo pipefail
+          # The -Precovery-integration profile selects <groups>recovery-integration</groups>
+          # across an `-am` reactor; deliveryline-runner-contracts has no matching test, so a
+          # future mis-scoped tag filter could pass GREEN with the scenarios never executing.
+          # For a merge-gated tier that is a fail-open — guard it by asserting at least one
+          # *ScenarioIT Failsafe report exists AND the recovery reports collectively ran >=1
+          # test. Mirrors runner-contract-real's "assert IT actually ran" step.
+          reports_dir="deliveryline-backend/target/failsafe-reports"
+          shopt -s nullglob
+          scenario_reports=("$reports_dir"/TEST-*ScenarioIT.xml)
+          if [ "${#scenario_reports[@]}" -eq 0 ]; then
+            echo "::error::No *ScenarioIT Failsafe reports under ${reports_dir} — the recovery-integration profile selected zero scenarios (broken tag/profile?). Failing rather than passing a gate where no scenario executed."
+            ls -la "$reports_dir" 2>/dev/null || true
+            exit 1
+          fi
+          # Count EXECUTED tests only: the Failsafe `tests="N"` attribute counts skipped tests too,
+          # so a suite where every scenario is skipped (assumption/@Disabled) would still report
+          # tests>=1 and pass this fail-open guard vacuously. Subtract skipped so the guard asserts
+          # at least one scenario actually ran.
+          executed=0
+          for report in "${scenario_reports[@]}"; do
+            n="$(grep -oE 'tests="[0-9]+"' "$report" | head -1 | grep -oE '[0-9]+' || true)"
+            s="$(grep -oE 'skipped="[0-9]+"' "$report" | head -1 | grep -oE '[0-9]+' || true)"
+            executed=$(( executed + ${n:-0} - ${s:-0} ))
+          done
+          if [ "$executed" -lt 1 ]; then
+            echo "::error::recovery scenario reports show ${executed} executed test(s) (skipped excluded) — the scenarios executed nothing."
+            exit 1
+          fi
+          echo "recovery-integration ran ${executed} executed scenario test(s) across ${#scenario_reports[@]} report(s)."
+
+      - name: Upload failsafe reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-integration-reports
+          path: deliveryline-backend/target/failsafe-reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # recovery-integration-gate — always-runs aggregator + PR summary comment
+  # (AC6, AC7). PASSES when the recovery tier legitimately skipped (no recovery
+  # paths changed → recovery-untouched PRs NOT blocked) OR the recovery-integration
+  # job succeeded. This is the branch-protection REQUIRED check (docs/ci-branch-
+  # protection.md), so a recovery-path PR is hard-blocked on a red recovery-scenario
+  # run while foundation-gate stays untouched (NOT widened — Reconciliation 5).
+  # ---------------------------------------------------------------------------
+  recovery-integration-gate:
+    name: recovery-integration-gate
+    needs: [detect-changes, recovery-integration]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Escalate ONLY pull-requests: write for the upsert; workflow root stays read.
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Assert recovery-integration tier outcome
+        env:
+          DETECT_RESULT: ${{ needs.detect-changes.result }}
+          RECOVERY_PATHS_CHANGED: ${{ needs.detect-changes.outputs.recovery-paths-changed }}
+          RECOVERY_RESULT: ${{ needs.recovery-integration.result }}
+        run: |
+          set -euo pipefail
+          # Fail CLOSED if the detector itself did not succeed (mirrors
+          # runner-contract-real-gate P1): otherwise a failed/skipped detect-changes
+          # leaves RECOVERY_PATHS_CHANGED empty, the "!= true" branch below would exit
+          # 0, and a recovery-path PR would merge with the scenario job skipped and
+          # never validated.
+          if [ "$DETECT_RESULT" != "success" ]; then
+            echo "::error::detect-changes did not succeed (result=${DETECT_RESULT}) — cannot determine recovery-path eligibility. Failing the gate rather than waving the PR through. Re-run; if it persists, check the detect-changes job log."
+            exit 1
+          fi
+          if [ "$RECOVERY_PATHS_CHANGED" != "true" ]; then
+            echo "No recovery paths changed — recovery-integration tier legitimately skipped. Gate PASSES (recovery-untouched PR is not blocked)."
+            exit 0
+          fi
+          if [ "$RECOVERY_RESULT" != "success" ]; then
+            echo "::error::recovery-integration did not succeed (result=${RECOVERY_RESULT}) — recovery-path PRs are blocked until the recovery-scenario tier is green. See the recovery-integration job log + the recovery-integration-reports artifact for the failing scenario."
+            exit 1
+          fi
+          echo "recovery-integration succeeded on a recovery-path PR."
+
+      - name: Upsert recovery-integration CI status comment (AC7)
+        if: ${{ github.event_name == 'pull_request' && needs.detect-changes.outputs.recovery-paths-changed == 'true' && always() }}
+        uses: actions/github-script@v7
+        env:
+          RECOVERY_RESULT: ${{ needs.recovery-integration.result }}
+        with:
+          script: |
+            // Deterministic marker (AC7) — upsert in place rather than spam.
+            const marker = '<!-- recovery-integration-status -->';
+            const icon = (r) => r === 'success' ? '✅' : (r === 'skipped' ? '⏭️' : '❌');
+            const res = process.env.RECOVERY_RESULT;
+            // The recovery scenarios run as one Failsafe job; per-scenario pass/fail
+            // detail is in the uploaded `recovery-integration-reports` artifact. The
+            // table ties each fault-injection family to the single job's result.
+            const body = [
+              marker,
+              '### Recovery-integration CI (story 4.25)',
+              '',
+              `Overall: ${icon(res)} \`${res}\``,
+              '',
+              '| Recovery scenario family | Result |',
+              '| --- | --- |',
+              `| Recovery paths (resume / reconcile / rerun-from-step / pause-resume idempotency / classify-failure) | ${icon(res)} \`${res}\` |`,
+              `| Artifact-drift fault injection (orphan / missing-payload / checksum-mismatch → detect → repair) | ${icon(res)} \`${res}\` |`,
+              `| Integration-conflict fault injection (5 categories via GitHub + Linear removed/link_broken → detect → auto-pause) | ${icon(res)} \`${res}\` |`,
+              '',
+              'Per-scenario pass/fail detail + Failsafe XML are attached as the `recovery-integration-reports` job artifact. This comment updates in place on each run.',
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number, per_page: 100 }
+            );
+            const existing = comments.find(c => c.body && c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              core.info(`Updated existing recovery-integration comment ${existing.id}.`);
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+              core.info('Created new recovery-integration comment.');
             }

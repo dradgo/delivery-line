@@ -6,6 +6,7 @@ import org.dradgo.application.integration.ConnectivityResult;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapter;
 import org.dradgo.application.integration.repohost.RepositoryHostAdapterException;
 import org.dradgo.domain.integration.repohost.Branch;
+import org.dradgo.domain.integration.repohost.CiStatus;
 import org.dradgo.domain.integration.repohost.CommentResult;
 import org.dradgo.domain.integration.repohost.PullRequest;
 import org.dradgo.domain.integration.repohost.PullRequestRef;
@@ -91,9 +92,20 @@ public class GitLabRepositoryHostStubAdapter implements RepositoryHostAdapter {
   }
 
   @Override
+  public CiStatus readCheckRuns(RepositoryRef repo, String ref) {
+    Objects.requireNonNull(repo, "repo");
+    // Story 3h-5 (AC1) — supportsCiStatusReads=false, so capability-gating callers (the sweep +
+    // the two push stamp sites) never reach here; a non-gating caller gets the typed
+    // not-implemented signal rather than a fabricated verdict.
+    throw notImplemented("readCheckRuns", repo.value());
+  }
+
+  @Override
   public RepositoryHostCapabilities getCapabilities() {
     // Deliberately degraded — all optional features unsupported (exercises AC4 degradation).
-    return new RepositoryHostCapabilities(false, false, false, false, false);
+    // The 6th component supportsCiStatusReads is false (story 3h-5): the GitLab stub has no CI
+    // read.
+    return new RepositoryHostCapabilities(false, false, false, false, false, false);
   }
 
   @Override

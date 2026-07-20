@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -168,6 +169,9 @@ class WorkflowOrchestrationServiceTest {
             new RunnerProperties.ImplementationStage(
                 org.dradgo.domain.registry.RunnerKind.CODEX, autoDispatch),
             RunnerProperties.OpenSpec.defaults(),
+            RunnerProperties.BuildStage.defaults(),
+            RunnerProperties.LintStage.defaults(),
+            RunnerProperties.DeliveryMode.defaults(),
             100);
     return new WorkflowOrchestrationService(
         runnerExecutionQueue,
@@ -398,7 +402,9 @@ class WorkflowOrchestrationServiceTest {
 
     service(false).onSpecStageSucceeded(RUN_ID, REX_ID, "corr-s");
 
-    verify(readPort).findByPublicId(RUN_ID);
+    // times(2): the 4.8-review paused-run guard reads once up front; the diagnostic re-read is
+    // the second call.
+    verify(readPort, times(2)).findByPublicId(RUN_ID);
     // The branch is observable: benign replay is logged at INFO, NOT the WARN anomaly line.
     assertLoggedAt(Level.INFO, "idempotent replay");
   }
@@ -421,7 +427,9 @@ class WorkflowOrchestrationServiceTest {
     // No exception escapes even on a probable anomaly.
     service(false).onSpecStageSucceeded(RUN_ID, REX_ID, "corr-s");
 
-    verify(readPort).findByPublicId(RUN_ID);
+    // times(2): the 4.8-review paused-run guard reads once up front; the diagnostic re-read is
+    // the second call.
+    verify(readPort, times(2)).findByPublicId(RUN_ID);
     // The branch is observable: anomaly is logged at WARN, NOT the INFO benign-replay line.
     assertLoggedAt(Level.WARN, "probable anomaly");
   }
@@ -530,6 +538,67 @@ class WorkflowOrchestrationServiceTest {
   }
 
   @Test
+  void dispatchPlanGenerationBlockedByUnresolvedHighSeverityConflict() {
+    // Story 4.18 (AC6) — an unresolved high-severity (state-drift) conflict refuses the dispatch;
+    // the run stays in its prior state (no transition) and nothing is enqueued.
+    stubRun(WorkflowState.EXECUTING, 0);
+    WorkflowOrchestrationService svc = service(true);
+    org.dradgo.application.integration.conflict.IntegrationConflictService conflicts =
+        mock(org.dradgo.application.integration.conflict.IntegrationConflictService.class);
+    when(conflicts.listUnresolvedConflicts(any()))
+        .thenReturn(
+            java.util.List.of(
+                new org.dradgo.application.integration.conflict.ConflictSummary(
+                    "icf_1",
+                    "ilk_1",
+                    RUN_ID,
+                    "external_state_advanced",
+                    "github_pr",
+                    "octo/repo#7",
+                    java.time.Instant.now())));
+    svc.setIntegrationConflictService(conflicts);
+
+    DomainException ex =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            DomainException.class, () -> svc.dispatchPlanGeneration(RUN_ID, "corr-p"));
+    org.junit.jupiter.api.Assertions.assertEquals(
+        DomainErrorCode.DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT, ex.errorCode());
+    verify(runnerExecutionQueue, never()).enqueue(any(), any(), any(), any(), anyInt());
+    verify(transitionService, never()).transition(any(), any(), any(), any(), any());
+    assertLoggedAt(Level.INFO, "dispatch blocked by unresolved conflict");
+  }
+
+  @Test
+  void dispatchPlanGenerationProceedsWhenOnlyLowSeverityConflict() {
+    // Story 4.18 (AC6 / OQ-4) — a non-high-severity conflict (metadata_drift) does NOT block the
+    // dispatch: the gate is the fixed {external_state_advanced, external_state_reverted} set only.
+    stubRun(WorkflowState.EXECUTING, 0);
+    when(recordPort.nextContextBundleVersion(RUN_ID, RunnerStage.EXECUTION)).thenReturn(1);
+    when(runnerExecutionQueue.enqueue(
+            eq(RUN_ID), eq(RunnerStage.EXECUTION), any(), any(), anyInt()))
+        .thenReturn(executionDispatched());
+    WorkflowOrchestrationService svc = service(true);
+    org.dradgo.application.integration.conflict.IntegrationConflictService conflicts =
+        mock(org.dradgo.application.integration.conflict.IntegrationConflictService.class);
+    when(conflicts.listUnresolvedConflicts(any()))
+        .thenReturn(
+            java.util.List.of(
+                new org.dradgo.application.integration.conflict.ConflictSummary(
+                    "icf_2",
+                    "ilk_2",
+                    RUN_ID,
+                    "metadata_drift",
+                    "github_pr",
+                    "octo/repo#7",
+                    java.time.Instant.now())));
+    svc.setIntegrationConflictService(conflicts);
+
+    RunnerDispatchResult result = svc.dispatchPlanGeneration(RUN_ID, "corr-p");
+
+    assertSame(RunnerExecutionStatus.QUEUED, result.handle().status());
+  }
+
+  @Test
   void retryPlanGenerationReDispatchesWithFreshBundleVersionKeyAndNeverTransitions() {
     // AC5 — a recovery retry advances the monotonic EXECUTION bundle version so the broker mints a
     // fresh runnerExecutionId; re-dispatch ONLY, never re-transition (T1/T8).
@@ -575,6 +644,33 @@ class WorkflowOrchestrationServiceTest {
     verifyNoInteractions(runnerExecutionQueue);
     verifyNoInteractions(transitionService);
     verifyNoInteractions(readPort);
+  }
+
+  @Test
+  void onPlanStageSucceededIsIgnoredWhileRunIsPaused() {
+    // Story 4.8 review — PAUSED → WaitingForReview is a LEGAL resume edge, so the transition
+    // table alone would let a late plan success silently un-pause the run (a runner row enqueued
+    // after pause's cancel-scan completes normally). The executor-as-gate guard logs + ignores.
+    stubRun(WorkflowState.PAUSED, 0);
+
+    service(true).onPlanStageSucceeded(RUN_ID, REX_ID, "corr-p");
+
+    verifyNoInteractions(transitionService);
+    verifyNoInteractions(runnerExecutionQueue);
+    assertLoggedAt(Level.WARN, "reason=run_paused");
+  }
+
+  @Test
+  void onSpecStageSucceededIsIgnoredWhileRunIsPaused() {
+    // Story 4.8 review — same guard as the plan seam: PAUSED → WaitingForSpecApproval is a legal
+    // resume edge; a late spec success must not un-pause the run.
+    stubRun(WorkflowState.PAUSED, 0);
+
+    service(true).onSpecStageSucceeded(RUN_ID, REX_ID, "corr-s");
+
+    verifyNoInteractions(transitionService);
+    verifyNoInteractions(runnerExecutionQueue);
+    assertLoggedAt(Level.WARN, "reason=run_paused");
   }
 
   @Test
@@ -656,7 +752,9 @@ class WorkflowOrchestrationServiceTest {
 
     service(false).onPlanStageSucceeded(RUN_ID, REX_ID, "corr-p");
 
-    verify(readPort).findByPublicId(RUN_ID);
+    // times(2): the 4.8-review paused-run guard reads once up front; the diagnostic re-read is
+    // the second call.
+    verify(readPort, times(2)).findByPublicId(RUN_ID);
     assertLoggedAt(Level.INFO, "idempotent replay");
   }
 
@@ -676,7 +774,9 @@ class WorkflowOrchestrationServiceTest {
 
     service(false).onPlanStageSucceeded(RUN_ID, REX_ID, "corr-p");
 
-    verify(readPort).findByPublicId(RUN_ID);
+    // times(2): the 4.8-review paused-run guard reads once up front; the diagnostic re-read is
+    // the second call.
+    verify(readPort, times(2)).findByPublicId(RUN_ID);
     assertLoggedAt(Level.WARN, "probable anomaly");
   }
 
@@ -954,7 +1054,9 @@ class WorkflowOrchestrationServiceTest {
 
     service(false).onPrOutputStageSucceeded(RUN_ID, REX_ID, "corr-i");
 
-    verify(readPort).findByPublicId(RUN_ID);
+    // times(2): the 4.8-review paused-run guard reads once up front; the diagnostic re-read is
+    // the second call.
+    verify(readPort, times(2)).findByPublicId(RUN_ID);
     assertLoggedAt(Level.INFO, "idempotent replay");
   }
 
@@ -973,7 +1075,9 @@ class WorkflowOrchestrationServiceTest {
 
     service(false).onPrOutputStageSucceeded(RUN_ID, REX_ID, "corr-i");
 
-    verify(readPort).findByPublicId(RUN_ID);
+    // times(2): the 4.8-review paused-run guard reads once up front; the diagnostic re-read is
+    // the second call.
+    verify(readPort, times(2)).findByPublicId(RUN_ID);
     assertLoggedAt(Level.WARN, "probable anomaly");
   }
 
@@ -1112,6 +1216,35 @@ class WorkflowOrchestrationServiceTest {
         org.dradgo.domain.registry.DataClassification.SHAREABLE_FULL,
         captor.getValue().classification());
     assertLoggedAt(Level.WARN, "summary_redacted");
+  }
+
+  @Test
+  void notifyLinearRunReopenedSuppressedWhenUnresolvedLinearConflict() {
+    // Story 4.18 (AC8) — an unresolved conflict on the run's Linear ticket link suppresses the
+    // premature "run reopened" comment until the operator reconciles. Never throws (best-effort).
+    when(integrationLinkService.findActiveLinearTicketLink(RUN_ID))
+        .thenReturn(Optional.of(linearLink()));
+    WorkflowOrchestrationService svc = service(false);
+    org.dradgo.application.integration.conflict.IntegrationConflictService conflicts =
+        mock(org.dradgo.application.integration.conflict.IntegrationConflictService.class);
+    when(conflicts.listUnresolvedConflicts(any()))
+        .thenReturn(
+            java.util.List.of(
+                new org.dradgo.application.integration.conflict.ConflictSummary(
+                    "icf_lin",
+                    "ilk_lin",
+                    RUN_ID,
+                    "external_resource_removed",
+                    "linear",
+                    TICKET,
+                    java.time.Instant.now())));
+    svc.setIntegrationConflictService(conflicts);
+
+    svc.notifyLinearRunReopened(RUN_ID, "execution", "corr");
+
+    verify(linearAdapter, never()).postGovernedRunComment(any(), any());
+    verify(workflowEventWritePort, never()).append(any());
+    assertLoggedAt(Level.WARN, "suppressed (unresolved conflict)");
   }
 
   @Test

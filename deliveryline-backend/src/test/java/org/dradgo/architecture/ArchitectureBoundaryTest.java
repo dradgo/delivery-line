@@ -192,9 +192,10 @@ class ArchitectureBoundaryTest {
   static final ArchRule repository_workspace_service_scope =
       ArchitectureRuleCatalog.REPOSITORY_WORKSPACE_SERVICE_SCOPE;
 
-  @ArchTest
-  static final ArchRule recovery_service_is_scope_protected =
-      ArchitectureRuleCatalog.RECOVERY_SERVICE_IS_SCOPE_PROTECTED;
+  // Story 4.28 lifted RECOVERY_SERVICE_IS_SCOPE_PROTECTED (governed by
+  // docs/adr/0033-recovery-service-scope-lift.md). Its @ArchTest registration was removed here;
+  // RecoveryServiceScopeLiftMetaTest guards that neither the rule nor this field returns. The
+  // sibling developer_takeover registration below stays (AC8).
 
   @ArchTest
   static final ArchRule developer_takeover_service_is_scope_protected =
@@ -220,6 +221,12 @@ class ArchitectureBoundaryTest {
   @ArchTest
   static final ArchRule clarification_service_lives_in_application_clarification =
       ArchitectureRuleCatalog.CLARIFICATION_SERVICE_LIVES_IN_APPLICATION_CLARIFICATION;
+
+  // Story 4.19 (AC9) — RevisionDeltaService stays in application.compare with only
+  // ArtifactService + RedactionPolicyService as collaborators.
+  @ArchTest
+  static final ArchRule revision_delta_service_lives_in_application_compare =
+      ArchitectureRuleCatalog.REVISION_DELTA_SERVICE_LIVES_IN_APPLICATION_COMPARE;
 
   // Story 3.17a (AC6) — RunnerExecutionQueue substrate stays in application.runner.queue.
   @ArchTest
@@ -250,4 +257,32 @@ class ArchitectureBoundaryTest {
   static final ArchRule runner_queue_status_views_referenced_only_by_inspection_and_transports =
       ArchitectureRuleCatalog
           .RUNNER_QUEUE_STATUS_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_TRANSPORTS;
+
+  @ArchTest
+  static final ArchRule operator_run_views_referenced_only_by_inspection_and_cli =
+      ArchitectureRuleCatalog.OPERATOR_RUN_VIEWS_REFERENCED_ONLY_BY_INSPECTION_AND_CLI;
+
+  @ArchTest
+  static final ArchRule audit_query_result_views_referenced_only_by_service_cli_rest =
+      ArchitectureRuleCatalog.AUDIT_QUERY_RESULT_VIEWS_REFERENCED_ONLY_BY_SERVICE_CLI_REST;
+
+  @ArchTest
+  static final ArchRule audit_spi_snapshots_not_imported_by_adapters =
+      ArchitectureRuleCatalog.AUDIT_SPI_SNAPSHOTS_NOT_IMPORTED_BY_ADAPTERS;
+
+  @ArchTest
+  static final ArchRule only_conflict_package_may_write_integration_conflicts =
+      ArchitectureRuleCatalog.ONLY_CONFLICT_PACKAGE_MAY_WRITE_INTEGRATION_CONFLICTS;
+
+  @ArchTest
+  static final ArchRule only_reconciliation_package_may_write_artifact_drift =
+      ArchitectureRuleCatalog.ONLY_RECONCILIATION_PACKAGE_MAY_WRITE_ARTIFACT_DRIFT;
+
+  @ArchTest
+  static final ArchRule only_reconciliation_service_may_resolve_artifact_drift =
+      ArchitectureRuleCatalog.ONLY_RECONCILIATION_SERVICE_MAY_RESOLVE_ARTIFACT_DRIFT;
+
+  @ArchTest
+  static final ArchRule only_reconciliation_service_may_reconcile_artifact_lineage =
+      ArchitectureRuleCatalog.ONLY_RECONCILIATION_SERVICE_MAY_RECONCILE_ARTIFACT_LINEAGE;
 }

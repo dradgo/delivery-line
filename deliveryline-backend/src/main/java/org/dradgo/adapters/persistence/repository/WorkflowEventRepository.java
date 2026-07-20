@@ -62,20 +62,31 @@ public interface WorkflowEventRepository extends JpaRepository<WorkflowEventEnti
     return top.isEmpty() ? Optional.empty() : Optional.of(top.get(0));
   }
 
+  // Story 4.8 review — the eventType filter is load-bearing: recovery.* audit anchors (e.g.
+  // recovery.paused) also stamp typed prior/resulting states and are appended AFTER the transition
+  // event in the same tx, so without the filter the latest-row read would return the recovery
+  // event, de-facto repointing resume's priorState derivation off workflow.stateChanged.
   @Query(
       """
 		select event from WorkflowEventEntity event
 		where event.workflowRun.publicId = :publicId
 		  and event.archivedAt is null
+		  and event.eventType = :eventType
 		  and event.resultingState = :resultingState
 		  and event.priorState is not null
 		order by event.createdAt desc, event.id desc
 		""")
   List<WorkflowEventEntity> findLatestTransitionToState(
       @Param("publicId") String publicId,
+      @Param("eventType") String eventType,
       @Param("resultingState") String resultingState,
       Pageable pageable);
 
+  // Story 4.9 review: excludes the non-transition RECOVERY_FAILURE_CLASSIFIED event
+  // (WorkflowEventType wire value 'recovery.failureClassified'). It is stamped
+  // priorState==resultingState==Failed, so without the exclusion it self-qualifies as a "failure
+  // event" and a re-classify would resolve its triggering_event_id to a prior classify event rather
+  // than the real Executing->Failed transition, corrupting audit lineage.
   @Query(
       """
 		select event from WorkflowEventEntity event
@@ -83,6 +94,7 @@ public interface WorkflowEventRepository extends JpaRepository<WorkflowEventEnti
 		  and event.archivedAt is null
 		  and event.resultingState = 'Failed'
 		  and event.priorState is not null
+		  and event.eventType <> 'recovery.failureClassified'
 		order by event.createdAt desc, event.id desc
 		""")
   List<WorkflowEventEntity> findLatestFailureEvent(
@@ -91,6 +103,35 @@ public interface WorkflowEventRepository extends JpaRepository<WorkflowEventEnti
   default Optional<WorkflowEventEntity> findFirstLatestFailureEvent(String publicId) {
     List<WorkflowEventEntity> top =
         findLatestFailureEvent(publicId, org.springframework.data.domain.PageRequest.of(0, 1));
+    return top.isEmpty() ? Optional.empty() : Optional.of(top.get(0));
+  }
+
+  // Story 4.4 review — the latest event for the run whose type is in the given set (newest-first).
+  // Backs the NFR7 "who acted" derivation, which must consider only recovery/takeover-attributing
+  // events and ignore later intervention events (audit.logDownloaded / workflow.archived /
+  // console.*)
+  // that would otherwise mask the real actor once an operator, e.g., downloads the redacted log.
+  @Query(
+      """
+		select event from WorkflowEventEntity event
+		where event.workflowRun.publicId = :publicId
+		  and event.archivedAt is null
+		  and event.eventType in :eventTypes
+		order by event.createdAt desc, event.id desc
+		""")
+  List<WorkflowEventEntity> findLatestByWorkflowRunPublicIdAndEventTypeIn(
+      @Param("publicId") String publicId,
+      @Param("eventTypes") java.util.Collection<String> eventTypes,
+      Pageable pageable);
+
+  default Optional<WorkflowEventEntity> findFirstLatestByWorkflowRunPublicIdAndEventTypeIn(
+      String publicId, java.util.Collection<String> eventTypes) {
+    if (eventTypes.isEmpty()) {
+      return Optional.empty();
+    }
+    List<WorkflowEventEntity> top =
+        findLatestByWorkflowRunPublicIdAndEventTypeIn(
+            publicId, eventTypes, org.springframework.data.domain.PageRequest.of(0, 1));
     return top.isEmpty() ? Optional.empty() : Optional.of(top.get(0));
   }
 

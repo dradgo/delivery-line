@@ -244,9 +244,13 @@ describe('resolveArtifactPanelState', () => {
 });
 
 describe('canEnableCompare / hasComparableRevision', () => {
-  it('enabled only when the compare action is present AND a comparable revision exists', () => {
-    expect(canEnableCompare(['compare'], true)).toBe(true);
-    expect(canEnableCompare(['compare'], false)).toBe(false);
+  it('enabled only when the enter_compare_mode action is present AND a comparable revision exists', () => {
+    // Story 4.20 (AC9) — the checked literal is the registered backend action
+    // `enter_compare_mode` (renamed from the story-2.17 anticipated `'compare'`).
+    expect(canEnableCompare(['enter_compare_mode'], true)).toBe(true);
+    expect(canEnableCompare(['enter_compare_mode'], false)).toBe(false);
+    // The old anticipated literal no longer enables it (guards against a silent regression).
+    expect(canEnableCompare(['compare'], true)).toBe(false);
     expect(canEnableCompare(['approveSpec'], true)).toBe(false);
     expect(canEnableCompare([], true)).toBe(false);
   });

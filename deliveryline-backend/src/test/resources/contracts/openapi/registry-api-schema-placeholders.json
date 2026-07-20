@@ -9,6 +9,8 @@
     "WaitingForReview",
     "WaitingForManualExecution",
     "WaitingForDependencies",
+    "WaitingForLintApproval",
+    "WaitingForDelivery",
     "Split",
     "Completed",
     "Failed",
@@ -26,7 +28,8 @@
     "pending",
     "available",
     "failed",
-    "late_or_stale"
+    "late_or_stale",
+    "corrupted"
   ],
   "artifactOperationStatuses": [
     "pending",
@@ -43,7 +46,8 @@
     "timed_out",
     "orphaned",
     "cancelled_for_takeover",
-    "awaiting_manual"
+    "awaiting_manual",
+    "cancelled_for_pause"
   ],
   "idempotencyRecordStatuses": [
     "reserved",
@@ -83,12 +87,40 @@
   "connectorKinds": [
     "linear",
     "github",
-    "gitlab"
+    "gitlab",
+    "jira",
+    "bitbucket"
   ],
   "reviewOutcomes": [
     "pass",
     "concern",
     "fail"
+  ],
+  "definitionKinds": [
+    "builtin",
+    "custom"
+  ],
+  "bmadStepKeys": [
+    "analyst",
+    "pm",
+    "ux",
+    "architect",
+    "epics",
+    "story",
+    "dev",
+    "review",
+    "retro"
+  ],
+  "artifactKinds": [
+    "brief",
+    "prd",
+    "ux_design",
+    "architecture",
+    "epics",
+    "story",
+    "code",
+    "review",
+    "retro"
   ],
   "publicIdPrefixes": {
     "workflowRun": "run_",
@@ -108,7 +140,12 @@
     "providerUsageSnapshot": "pul_",
     "specClarificationAcknowledgement": "sca_",
     "splitProposal": "splprop_",
-    "splitProposalFeedback": "splfb_"
+    "splitProposalFeedback": "splfb_",
+    "integrationConflict": "icf_",
+    "artifactDrift": "adr_",
+    "workflowDefinition": "wfd_",
+    "workflowDefinitionStep": "wfs_",
+    "workflowStepOverride": "wso_"
   },
   "problemTypeUris": {
     "ILLEGAL_TRANSITION": "https://deliveryline.local/problems/illegal-transition",
@@ -159,6 +196,10 @@
     "DOCTOR_RUNNER_SECRET_MISSING": "https://deliveryline.local/problems/doctor-runner-secret-missing",
     "DOCTOR_GITHUB_AUTH_FAILED": "https://deliveryline.local/problems/doctor-github-auth-failed",
     "DOCTOR_GITHUB_TOKEN_MISSING": "https://deliveryline.local/problems/doctor-github-token-missing",
+    "DOCTOR_JIRA_AUTH_FAILED": "https://deliveryline.local/problems/doctor-jira-auth-failed",
+    "DOCTOR_JIRA_TOKEN_MISSING": "https://deliveryline.local/problems/doctor-jira-token-missing",
+    "DOCTOR_BITBUCKET_AUTH_FAILED": "https://deliveryline.local/problems/doctor-bitbucket-auth-failed",
+    "DOCTOR_BITBUCKET_TOKEN_MISSING": "https://deliveryline.local/problems/doctor-bitbucket-token-missing",
     "LINEAR_GITHUB_REPO_MISMATCH": "https://deliveryline.local/problems/linear-github-repo-mismatch",
     "DOCTOR_GIT_MISSING": "https://deliveryline.local/problems/doctor-git-missing",
     "DOCTOR_GIT_BOT_IDENTITY_UNCONFIGURED": "https://deliveryline.local/problems/doctor-git-bot-identity-unconfigured",
@@ -177,12 +218,41 @@
     "PROJECT_NOT_FOUND": "https://deliveryline.local/problems/project-not-found",
     "PROJECT_SLUG_CONFLICT": "https://deliveryline.local/problems/project-slug-conflict",
     "UNSUPPORTED_CONNECTOR_KIND": "https://deliveryline.local/problems/unsupported-connector-kind",
+    "TICKET_QUERY_NOT_SUPPORTED": "https://deliveryline.local/problems/ticket-query-not-supported",
+    "TICKET_QUERY_SOURCE_UNAVAILABLE": "https://deliveryline.local/problems/ticket-query-source-unavailable",
+    "TICKET_QUERY_SOURCE_FAILED": "https://deliveryline.local/problems/ticket-query-source-failed",
     "CREDENTIAL_MASTER_KEY_UNCONFIGURED": "https://deliveryline.local/problems/credential-master-key-unconfigured",
     "DOCTOR_PROJECT_CONFIG_INCOMPLETE": "https://deliveryline.local/problems/doctor-project-config-incomplete",
     "REVIEWER_MODEL_NOT_CONFIGURED": "https://deliveryline.local/problems/reviewer-model-not-configured",
     "ARCHIVE_NOT_APPLICABLE": "https://deliveryline.local/problems/archive-not-applicable",
     "REGENERATE_NOT_APPLICABLE": "https://deliveryline.local/problems/regenerate-not-applicable",
     "RUN_DEPENDENCY_CYCLE": "https://deliveryline.local/problems/run-dependency-cycle",
-    "SPLIT_DEPTH_LIMIT_EXCEEDED": "https://deliveryline.local/problems/split-depth-limit-exceeded"
+    "SPLIT_DEPTH_LIMIT_EXCEEDED": "https://deliveryline.local/problems/split-depth-limit-exceeded",
+    "INVALID_AUDIT_FILTER": "https://deliveryline.local/problems/invalid-audit-filter",
+    "RESUME_NOT_APPLICABLE": "https://deliveryline.local/problems/resume-not-applicable",
+    "RECONCILE_NOT_APPLICABLE": "https://deliveryline.local/problems/reconcile-not-applicable",
+    "MISSING_RECONCILIATION_DECISION": "https://deliveryline.local/problems/missing-reconciliation-decision",
+    "INVALID_RECONCILIATION_DECISION": "https://deliveryline.local/problems/invalid-reconciliation-decision",
+    "CONFLICT_NOT_FOUND": "https://deliveryline.local/problems/conflict-not-found",
+    "CONFLICT_ALREADY_RESOLVED": "https://deliveryline.local/problems/conflict-already-resolved",
+    "INVALID_RERUN_TARGET_STEP": "https://deliveryline.local/problems/invalid-rerun-target-step",
+    "MISSING_REASON_TEXT": "https://deliveryline.local/problems/missing-reason-text",
+    "PAUSE_NOT_APPLICABLE": "https://deliveryline.local/problems/pause-not-applicable",
+    "CLASSIFY_NOT_APPLICABLE": "https://deliveryline.local/problems/classify-not-applicable",
+    "MISSING_TAXONOMY_VALUE": "https://deliveryline.local/problems/missing-taxonomy-value",
+    "INVALID_TAXONOMY_VALUE": "https://deliveryline.local/problems/invalid-taxonomy-value",
+    "DEPRECATED_TAXONOMY_VALUE": "https://deliveryline.local/problems/deprecated-taxonomy-value",
+    "DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT": "https://deliveryline.local/problems/dispatch-blocked-by-unresolved-conflict",
+    "DRIFT_NOT_FOUND": "https://deliveryline.local/problems/drift-not-found",
+    "DRIFT_ALREADY_RESOLVED": "https://deliveryline.local/problems/drift-already-resolved",
+    "INVALID_REPAIR_ACTION_FOR_DRIFT_CATEGORY": "https://deliveryline.local/problems/invalid-repair-action-for-drift-category",
+    "MISSING_REPAIR_REQUIRED_FIELD": "https://deliveryline.local/problems/missing-repair-required-field",
+    "REPAIR_ACTION_NOT_IMPLEMENTED": "https://deliveryline.local/problems/repair-action-not-implemented",
+    "ARTIFACT_LINEAGE_MISMATCH": "https://deliveryline.local/problems/artifact-lineage-mismatch",
+    "INVALID_LINEAGE_RECOVERY_ACTION": "https://deliveryline.local/problems/invalid-lineage-recovery-action",
+    "MISSING_LINEAGE_RECOVERY_FIELD": "https://deliveryline.local/problems/missing-lineage-recovery-field",
+    "WORKFLOW_DEFINITION_NOT_FOUND": "https://deliveryline.local/problems/workflow-definition-not-found",
+    "STEP_EXECUTOR_NOT_CONFIGURED": "https://deliveryline.local/problems/step-executor-not-configured",
+    "DEFINITION_STEP_INDEX_CONFLICT": "https://deliveryline.local/problems/definition-step-index-conflict"
   }
 }

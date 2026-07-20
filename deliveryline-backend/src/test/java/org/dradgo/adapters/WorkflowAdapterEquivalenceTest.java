@@ -14,6 +14,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import org.dradgo.adapters.cli.WorkflowCommands;
 import org.dradgo.adapters.rest.WorkflowController;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
+import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.ManualArtifactSubmissionService;
@@ -48,6 +49,9 @@ class WorkflowAdapterEquivalenceTest {
   // Story 3.25 — WorkflowController now also wires the rich DeveloperTakeoverService for POST
   // /takeover. Unused by this slice, but the bean must exist for the controller to construct.
   @MockitoBean private DeveloperTakeoverService developerTakeoverService;
+  // Story 4.10 — WorkflowController gained the recovery service; the bean must exist for this
+  // @WebMvcTest slice to construct the controller.
+  @MockitoBean private RecoveryService recoveryService;
 
   @MockitoBean private WorkflowArchiveService workflowArchiveService;
 

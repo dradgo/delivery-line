@@ -6,10 +6,17 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
+import org.dradgo.application.workflow.commands.ApproveDeliveryCommand;
+import org.dradgo.application.workflow.commands.ApproveLintCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.PauseWorkflowCommand;
+import org.dradgo.application.workflow.commands.ReconcileWorkflowCommand;
 import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
+import org.dradgo.application.workflow.commands.RequestLintFixCommand;
+import org.dradgo.application.workflow.commands.RerunFromStepWorkflowCommand;
+import org.dradgo.application.workflow.commands.ResumeWorkflowCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
@@ -115,6 +122,59 @@ public class WorkflowCommandFingerprintFactory {
         append(digest, takeover.workflowRunId());
         append(digest, normalizeOptional(takeover.reasonText()));
       }
+      case PauseWorkflowCommand pause -> {
+        // Story 4.8: canonical fingerprint fields beyond the shared envelope are workflowRunId +
+        // reasonText (mirrors RetryWorkflowCommand/TakeoverWorkflowCommand — the target state is
+        // the
+        // constant PAUSED, so there is nothing else to fingerprint). reasonText IS fingerprinted
+        // (symmetric with retry/takeover/resume): a same-key pause with a different reason is a
+        // distinct action, not a replay.
+        append(digest, pause.workflowRunId());
+        append(digest, normalizeOptional(pause.reasonText()));
+      }
+      case ResumeWorkflowCommand resume -> {
+        // Story 4.5: canonical fingerprint fields beyond the shared envelope are workflowRunId +
+        // reasonText (mirrors RetryWorkflowCommand/TakeoverWorkflowCommand). targetState is
+        // deterministically derived per run from the → Paused event, so it is NOT fingerprinted.
+        // reasonText IS fingerprinted (symmetric with retry/takeover): a same-key resume with a
+        // different reason is a distinct action, not a replay. This differs from the review
+        // commands (ApproveSpec/RejectSpec/...) which deliberately exclude reason so wording edits
+        // replay.
+        append(digest, resume.workflowRunId());
+        append(digest, normalizeOptional(resume.reasonText()));
+      }
+      case ReconcileWorkflowCommand reconcile -> {
+        append(digest, reconcile.workflowRunId());
+        append(digest, reconcile.conflictId());
+        append(digest, reconcile.decision().value());
+        append(digest, normalizeOptional(reconcile.reasonText()));
+      }
+      case RerunFromStepWorkflowCommand rerun -> {
+        // Story 4.7: canonical fingerprint fields beyond the shared envelope are workflowRunId +
+        // targetState + reasonText. Unlike resume (whose target is deterministically derived per
+        // run), a rerun's step is operator-CHOSEN, so the target step IS part of the semantic
+        // identity — a same-key rerun to a different step is a distinct action, not a replay.
+        // reasonText IS fingerprinted (symmetric with retry/takeover/resume): a same-key rerun with
+        // a different reason is a distinct action.
+        append(digest, rerun.workflowRunId());
+        append(digest, rerun.targetState().value());
+        append(digest, normalizeOptional(rerun.reasonText()));
+      }
+      // Story 3h-2 (AC5) — the lint-gate operator actions. Fingerprint the run id only: the two
+      // actions are distinguished by their distinct COMMAND_* type constants at the reservation
+      // boundary, and reasonText is intentionally NOT fingerprinted (free-form, mirrors
+      // RetryWorkflowCommand.reasonText). A same-key retry with a different reason is an idempotent
+      // replay, not a distinct action.
+      case ApproveLintCommand approveLint -> append(digest, approveLint.workflowRunId());
+      case RequestLintFixCommand requestLintFix -> append(digest, requestLintFix.workflowRunId());
+      // Story 3h-4 (AC7) — the delivery-gate operator action. Fingerprint the run id only;
+      // reasonText
+      // is intentionally NOT fingerprinted (free-form) so a same-key retry with a different reason
+      // is
+      // an idempotent replay that short-circuits to the pinned post-state (WaitingForReview), never
+      // double-pushing/double-creating the PR.
+      case ApproveDeliveryCommand approveDelivery ->
+          append(digest, approveDelivery.workflowRunId());
     }
     return HexFormat.of().formatHex(digest.digest());
   }

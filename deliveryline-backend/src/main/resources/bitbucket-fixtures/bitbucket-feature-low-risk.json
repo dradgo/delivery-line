@@ -1,0 +1,22 @@
+{
+  "repository": {
+    "repoRef": "BB-101",
+    "fullName": "deliveryline/worker-pool",
+    "defaultBranch": "main",
+    "url": "https://bitbucket.org/deliveryline/worker-pool"
+  },
+  "pullRequest": {
+    "prRef": "PR-101",
+    "repoRef": "BB-101",
+    "number": 101,
+    "sourceBranch": "feature/healthz-endpoint",
+    "state": "open",
+    "url": "https://bitbucket.org/deliveryline/worker-pool/pull-requests/101",
+    "createdAt": "2026-04-21T14:15:00Z"
+  },
+  "branch": {
+    "repoRef": "BB-101",
+    "name": "feature/healthz-endpoint",
+    "headSha": "a1b2c3d4e5f60718293a4b5c6d7e8f9001122334"
+  }
+}

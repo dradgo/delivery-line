@@ -17,6 +17,7 @@ import ch.qos.logback.core.read.ListAppender;
 import java.util.Map;
 import org.dradgo.application.observability.MdcKeys;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
+import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.recovery.TakeoverResult;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
@@ -75,6 +76,9 @@ class TakeoverEndpointContractTest {
   @MockitoBean private WorkflowInspectionService workflowInspectionService;
   @MockitoBean private LocalActorIdentityResolver localActorIdentityResolver;
   @MockitoBean private DeveloperTakeoverService developerTakeoverService;
+  // Story 4.10 — WorkflowController gained the recovery service; the bean must exist for this
+  // @WebMvcTest slice to construct the controller.
+  @MockitoBean private RecoveryService recoveryService;
   @MockitoBean private WorkflowArchiveService workflowArchiveService;
 
   // Story 3f-3 — WorkflowController gained the run-dependency declaration/inspection service; the

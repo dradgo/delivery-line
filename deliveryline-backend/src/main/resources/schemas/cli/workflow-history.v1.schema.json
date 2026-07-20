@@ -3,11 +3,20 @@
   "$id": "https://deliveryline.local/schemas/cli/workflow-history.v1",
   "title": "WorkflowHistoryViewV1",
   "type": "object",
-  "required": ["schemaVersion", "workflowRunId", "events"],
+  "required": [
+    "schemaVersion",
+    "workflowRunId",
+    "events"
+  ],
   "additionalProperties": false,
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "workflowRunId": { "type": "string", "pattern": "^run_" },
+    "schemaVersion": {
+      "const": 1
+    },
+    "workflowRunId": {
+      "type": "string",
+      "pattern": "^run_"
+    },
     "events": {
       "type": "array",
       "items": {
@@ -23,42 +32,127 @@
         ],
         "additionalProperties": false,
         "properties": {
-          "publicId": { "type": "string", "pattern": "^evt_" },
-          "eventType": { "type": "string" },
-          "priorState": { "type": ["string", "null"] },
-          "resultingState": { "type": ["string", "null"] },
-          "actorIdentity": { "type": "string" },
-          "actorType": { "type": "string" },
-          "reason": { "type": ["string", "null"] },
-          "failureCategory": { "type": ["string", "null"] },
-          "interventionMarker": { "type": "boolean" },
-          "createdAt": { "type": "string", "format": "date-time" },
+          "publicId": {
+            "type": "string",
+            "pattern": "^evt_"
+          },
+          "eventType": {
+            "type": "string"
+          },
+          "priorState": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resultingState": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "actorIdentity": {
+            "type": "string"
+          },
+          "actorType": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failureCategory": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "interventionMarker": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
           "details": {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "linearTicketReference": { "type": "string" },
-              "artifactId": { "type": "string" },
-              "artifactVersion": { "type": "integer" },
-              "contextVersion": { "type": "integer" },
-              "correlationId": { "type": "string" },
-              "failedStage": { "type": "string" },
-              "triggeringEventId": { "type": "string", "pattern": "^evt_" },
-              "reason": { "type": "string" },
-              "errorCode": { "type": "string" },
-              "errorClass": { "type": "string" },
-              "recoveryActionId": { "type": "string", "pattern": "^rcv_" },
-              "recoveryRetriedEventId": { "type": "string", "pattern": "^evt_" },
-              "compensationFailed": { "type": "boolean" },
-              "reviewerRole": { "type": "string" },
-              "taggedFeedback": { "type": "string" },
-              "specRejectionLoopCount": { "type": "integer" },
-              "escalationMarker": { "type": "boolean" },
-              "clarificationId": { "type": "string", "pattern": "^clr_" },
-              "questionId": { "type": "string" },
-              "incorporatedIntoArtifactId": { "type": "string", "pattern": "^art_" },
-              "incorporationEventId": { "type": "string", "pattern": "^evt_" },
-              "supersededByArtifactId": { "type": "string", "pattern": "^art_" },
+              "linearTicketReference": {
+                "type": "string"
+              },
+              "artifactId": {
+                "type": "string"
+              },
+              "artifactVersion": {
+                "type": "integer"
+              },
+              "contextVersion": {
+                "type": "integer"
+              },
+              "correlationId": {
+                "type": "string"
+              },
+              "failedStage": {
+                "type": "string"
+              },
+              "triggeringEventId": {
+                "type": "string",
+                "pattern": "^evt_"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "errorCode": {
+                "type": "string"
+              },
+              "errorClass": {
+                "type": "string"
+              },
+              "recoveryActionId": {
+                "type": "string",
+                "pattern": "^rcv_"
+              },
+              "recoveryRetriedEventId": {
+                "type": "string",
+                "pattern": "^evt_"
+              },
+              "compensationFailed": {
+                "type": "boolean"
+              },
+              "reviewerRole": {
+                "type": "string"
+              },
+              "taggedFeedback": {
+                "type": "string"
+              },
+              "specRejectionLoopCount": {
+                "type": "integer"
+              },
+              "escalationMarker": {
+                "type": "boolean"
+              },
+              "clarificationId": {
+                "type": "string",
+                "pattern": "^clr_"
+              },
+              "questionId": {
+                "type": "string"
+              },
+              "incorporatedIntoArtifactId": {
+                "type": "string",
+                "pattern": "^art_"
+              },
+              "incorporationEventId": {
+                "type": "string",
+                "pattern": "^evt_"
+              },
+              "supersededByArtifactId": {
+                "type": "string",
+                "pattern": "^art_"
+              },
               "noEffectReason": {
                 "type": "string",
                 "enum": [
@@ -69,35 +163,150 @@
                   "spec_runner_skipped_question"
                 ]
               },
-              "workflowRunId": { "type": "string", "pattern": "^run_" },
-              "runnerExecutionId": { "type": "string", "pattern": "^rex_" },
-              "containerId": { "type": "string" },
-              "workspaceRoot": { "type": "string" },
-              "image": { "type": "string" },
-              "runnerKind": { "type": "string" },
-              "failureCategory": { "type": "string" },
-              "lastActivityAt": { "type": "string", "format": "date-time" },
-              "timeoutAt": { "type": "string", "format": "date-time" },
-              "dispatchedAt": { "type": "string", "format": "date-time" },
-              "exitCode": { "type": "integer" },
-              "redactionCount": { "type": "integer" },
-              "rawOutputByteSize": { "type": "integer" },
-              "rawOutputClassification": { "type": "string" },
+              "workflowRunId": {
+                "type": "string",
+                "pattern": "^run_"
+              },
+              "runnerExecutionId": {
+                "type": "string",
+                "pattern": "^rex_"
+              },
+              "containerId": {
+                "type": "string"
+              },
+              "workspaceRoot": {
+                "type": "string"
+              },
+              "image": {
+                "type": "string"
+              },
+              "runnerKind": {
+                "type": "string"
+              },
+              "failureCategory": {
+                "type": "string"
+              },
+              "lastActivityAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "timeoutAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "dispatchedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "exitCode": {
+                "type": "integer"
+              },
+              "redactionCount": {
+                "type": "integer"
+              },
+              "rawOutputByteSize": {
+                "type": "integer"
+              },
+              "rawOutputClassification": {
+                "type": "string"
+              },
               "childRunIds": {
                 "type": "array",
                 "maxItems": 100,
-                "items": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]{4,}$" }
+                "items": {
+                  "type": "string",
+                  "pattern": "^run_[A-Za-z0-9_-]{4,}$"
+                }
               },
-              "viaSplitRollup": { "type": "boolean" },
-              "deepSplitOverride": { "type": "boolean" },
-              "splitDepth": { "type": "integer" },
-              "maxSplitDepth": { "type": "integer" },
-              "githubPrReference": { "type": "string" },
-              "repositoryFullName": { "type": "string" },
-              "branch": { "type": "string" },
-              "commitSha": { "type": "string" },
-              "prNumber": { "type": "integer" },
-              "prState": { "type": "string" }
+              "viaSplitRollup": {
+                "type": "boolean"
+              },
+              "deepSplitOverride": {
+                "type": "boolean"
+              },
+              "splitDepth": {
+                "type": "integer"
+              },
+              "maxSplitDepth": {
+                "type": "integer"
+              },
+              "githubPrReference": {
+                "type": "string"
+              },
+              "repositoryFullName": {
+                "type": "string"
+              },
+              "branch": {
+                "type": "string"
+              },
+              "commitSha": {
+                "type": "string"
+              },
+              "prNumber": {
+                "type": "integer"
+              },
+              "prState": {
+                "type": "string"
+              },
+              "conflictId": {
+                "type": "string",
+                "pattern": "^icf_"
+              },
+              "conflictCategory": {
+                "type": "string"
+              },
+              "reconciliationDecision": {
+                "type": "string"
+              },
+              "autoCleared": {
+                "type": "boolean"
+              },
+              "driftCategory": {
+                "type": "string"
+              },
+              "driftId": {
+                "type": "string",
+                "pattern": "^adr_"
+              },
+              "operationId": {
+                "type": "string",
+                "pattern": "^op_"
+              },
+              "targetStep": {
+                "type": "string"
+              },
+              "supersededArtifactIds": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "type": "string",
+                  "pattern": "^art_"
+                }
+              },
+              "invalidatedApprovalIds": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "type": "string",
+                  "pattern": "^apr_"
+                }
+              },
+              "taxonomyValue": {
+                "type": "string"
+              },
+              "priorTaxonomyValue": {
+                "type": "string"
+              },
+              "repairAction": {
+                "type": "string"
+              },
+              "lineageAction": {
+                "type": "string"
+              },
+              "lineageReferenceArtifactId": {
+                "type": "string",
+                "pattern": "^art_"
+              }
             }
           }
         }

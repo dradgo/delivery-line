@@ -52,6 +52,18 @@ export default defineConfig({
         // Floors sit just under measured coverage so they guard against regression
         // without redding the build on day one (OQ-4). Measured at story 2.27:
         // sanitization 88.1%, queryKeys 93.8%, features/workflows ~90%.
+        //
+        // Story 4.26 (AC11, OQ-2) — every Epic-4 FE surface (Compare Mode, operator
+        // queue/diagnostics/decision-bar/reconcile/classify + their hooks) lives under
+        // `src/features/workflows/**`, so it INHERITS the 85 floor below — Epic-4 code is NOT
+        // unfloored. Decision: keep the inherited 85 (no narrower `components/**` floor) — a
+        // day-one-red floor is an AC11 failure, not the goal (the 2.27/3.35 measure-just-under
+        // discipline). AC11's "sanitization 90%" clause reconciles to the MEASURED sanitization
+        // floor: `src/lib/sanitization/**` stays 86 (measured-just-under from 2.27; story 4.26 adds
+        // Compare/JSONB/classification sanitization fixtures that lift measured coverage but the
+        // floor is only raised toward 90 if a full `vitest run --coverage` shows headroom). The
+        // `src/test/coverageThresholdGlobs.test.ts` meta-test asserts each glob still matches ≥1
+        // instrumented file so a rename can never silently evaporate a floor.
         'src/lib/sanitization/**': { lines: 86 },
         'src/lib/queryKeys/**': { lines: 90 },
         'src/features/workflows/**': { lines: 85 },

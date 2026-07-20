@@ -1,0 +1,7 @@
+{
+  "renderedTextContains": ["Authentication flow", "The exchange now uses a short-lived code."],
+  "renderedTextDoesNotContain": ["window.__compareSpecXss = 1;"],
+  "noScriptElements": true,
+  "noIframeElements": true,
+  "noActiveElements": true
+}

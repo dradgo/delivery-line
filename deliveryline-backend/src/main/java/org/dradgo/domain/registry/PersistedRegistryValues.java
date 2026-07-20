@@ -28,6 +28,14 @@ public final class PersistedRegistryValues {
     return FailureCategory.fromNullableValue(rawValue, "workflow_events.failure_category");
   }
 
+  // Story 4.9 (AC4) — the workflow_runs.failure_classification persistence boundary. Nullable:
+  // the column is null until an operator classifies the failed run. Reads are TOTAL over the
+  // registry (NFR33 — a deprecated value parses fine and renders with a "(deprecated)" affix);
+  // only the write path rejects deprecated values (FailureTaxonomyPolicy).
+  public static FailureTaxonomyValue workflowRunFailureClassification(String rawValue) {
+    return FailureTaxonomyValue.fromNullableValue(rawValue, "workflow_runs.failure_classification");
+  }
+
   public static ArtifactType artifactType(String rawValue) {
     return ArtifactType.fromValue(rawValue, "artifacts.artifact_type");
   }
@@ -46,6 +54,13 @@ public final class PersistedRegistryValues {
 
   public static ArtifactOperationStatus artifactOperationStatus(String rawValue) {
     return ArtifactOperationStatus.fromValue(rawValue, "artifact_operations.status");
+  }
+
+  // Story 4.15 (AC2/Reconciliation 7) — the artifact_drift_detected.drift_category persistence
+  // boundary. Parsed at the drift read adapter's row mapper; a non-nullable column, so an unknown
+  // or null DB value fails fast with UNKNOWN_REGISTRY_VALUE.
+  public static DriftCategory artifactDriftCategory(String rawValue) {
+    return DriftCategory.fromValue(rawValue, "artifact_drift_detected.drift_category");
   }
 
   public static ArtifactOperationType artifactOperationType(String rawValue) {
@@ -132,5 +147,18 @@ public final class PersistedRegistryValues {
   // there is no such column; the reviewer role lives on project_credentials.connector_role.)
   public static ReviewOutcome stepReviewOutcome(String rawValue) {
     return ReviewOutcome.fromValue(rawValue, "step_reviews.outcome");
+  }
+
+  // Story 3m-2 (AC7/AC10) — the two CHECK'd configurable-workflow persistence boundaries. kind is
+  // NOT NULL (fail fast on null/unknown); produces_artifact_kind is nullable (null = "no typed
+  // artifact", a non-null unknown still fails fast). step_key / runner_kind are NOT registry-parsed
+  // boundaries (DD-1, free/opaque text). Dormant in 3m-2 — read by 3m-3.
+  public static DefinitionKind workflowDefinitionKind(String rawValue) {
+    return DefinitionKind.fromValue(rawValue, "workflow_definitions.kind");
+  }
+
+  public static ArtifactKind stepDefinitionArtifactKind(String rawValue) {
+    return ArtifactKind.fromNullableValue(
+        rawValue, "workflow_definition_steps.produces_artifact_kind");
   }
 }

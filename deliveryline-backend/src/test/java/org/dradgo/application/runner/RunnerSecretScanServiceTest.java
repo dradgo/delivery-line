@@ -232,6 +232,58 @@ class RunnerSecretScanServiceTest {
   }
 
   @Test
+  void authoredJsonArtifactSuppressesProseFuzzyHeuristics() {
+    // Real incident (run_009f4595…): the EXECUTION runner's implementationPlan result embedded
+    // security-conscious PROSE — "…without password:", "password=<invalid>" — inside JSON string
+    // VALUES of output/runner-result.v1.json. Scanned as raw text, the fuzzy YAML/ENV heuristics
+    // misread that prose as key:value / KEY=value credentials (capturing the JSON structural `","`
+    // or the literal placeholder `<invalid>` as the "secret value"), quarantining an otherwise
+    // clean run that leaked nothing. An authored JSON artifact must be analyzed STRUCTURALLY so
+    // prose inside string values is never a leak.
+    String resultJson =
+        "{\"schemaVersion\":1,\"steps\":["
+            + "\"Smoke user identifier, without password:\","
+            + "\"password=<invalid>\","
+            + "\"Do not write passwords or seed credentials into documentation.\""
+            + "]}";
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
+        .thenReturn(List.of(new WorkspaceScanFile("output/runner-result.v1.json", resultJson)));
+
+    RunnerSecretScanService.ScanOutcome outcome = scan();
+
+    assertThat(outcome.leakDetected()).isFalse();
+  }
+
+  @Test
+  void authoredJsonArtifactStillFlagsSecretNamedKeyWithRealValue() {
+    // Faithful-B keeps key-based detection: a real secret-named JSON FIELD with a real value is a
+    // leak even though prose-in-values is pardoned. This is the strength that pure fuzzy
+    // suppression (Option C) would have lost.
+    String json = "{\"password\":\"s3cr3t-value-not-a-placeholder\"}";
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
+        .thenReturn(List.of(new WorkspaceScanFile("output/runner-result.v1.json", json)));
+
+    RunnerSecretScanService.ScanOutcome outcome = scan();
+
+    assertThat(outcome.leakDetected()).isTrue();
+    assertThat(outcome.detectedCategories()).contains("SECRET_FIELD");
+  }
+
+  @Test
+  void authoredJsonArtifactStillFlagsPreciseShapeInValue() {
+    // Precise credential SHAPES (a ghp_ token) inside a JSON string value stay leak-worthy — only
+    // the fuzzy prose heuristics are suppressed on values, never the strongly-structured shapes.
+    String json = "{\"note\":\"deploy uses " + GH_TOKEN + " today\"}";
+    when(workspaceStore.readFilesForSecretScan(eq(REX_ID), anyBoolean()))
+        .thenReturn(List.of(new WorkspaceScanFile("output/runner-result.v1.json", json)));
+
+    RunnerSecretScanService.ScanOutcome outcome = scan();
+
+    assertThat(outcome.leakDetected()).isTrue();
+    assertThat(outcome.detectedCategories()).contains("GITHUB_TOKEN");
+  }
+
+  @Test
   void transcriptLogSuppressesFuzzyHeuristicCategories() {
     // The agent narrates its `cat`/`sed` of the target repo into runner.stderr, so a benign
     // committed config line (here a Spring datasource `password: password`) re-appears in the

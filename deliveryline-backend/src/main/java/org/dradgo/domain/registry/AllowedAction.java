@@ -81,7 +81,79 @@ public enum AllowedAction implements RegistryValue {
   // into the non-terminal SPLIT state. Canonical executor is SplitCommitService.commit; surfaced
   // alongside repropose_split/continue_as_single when an open proposal exists at the gate role.
   // No DB CHECK exists for allowed-actions (enum <-> frontend placeholder JSON only).
-  APPROVE_SPLIT("approve_split");
+  APPROVE_SPLIT("approve_split"),
+  // Story 3h-2 (AC5, FR76) — the CPU lint gate's two operator actions, surfaced ONLY at
+  // WAITING_FOR_LINT_APPROVAL for the workflow_owner gate role (other roles get view_only + the
+  // log/
+  // usage views). approve_lint dismisses the gate and resumes the delivery tail (capture-and-push +
+  // WaitingForReview + reviewer enqueue) via the resumable seam; request_lint_fix re-dispatches the
+  // EXECUTION runner with the lint findings as redaction-policed referenced feedback, bumps
+  // lint_fix_loop_count, and re-parks (never auto-FAILs — Decision 3). Canonical executor is
+  // LintApprovalService. No DB CHECK exists for allowed-actions (enum <-> frontend placeholder JSON
+  // only).
+  APPROVE_LINT("approve_lint"),
+  REQUEST_LINT_FIX("request_lint_fix"),
+  // Story 3h-4 (AC3, FR78) — the unified delivery gate's operator action, surfaced ONLY at
+  // WAITING_FOR_DELIVERY for the workflow_owner gate role (other roles get view_only + the
+  // log/usage views). approve_delivery dismisses the gate and advances to WaitingForReview: in
+  // approve mode it performs the push (+ PR per autoCreatePullRequest) via the resumable delivery
+  // seam; in manual mode it records the out-of-band delivery (delivery.recordedManually) WITHOUT
+  // touching git (Decision 4). Canonical executor is DeliveryApprovalService. There is NO
+  // request-fix twin: a non-auto delivery is dismissed by the single approve action. No DB CHECK
+  // exists for allowed-actions (enum <-> frontend placeholder JSON only).
+  APPROVE_DELIVERY("approve_delivery"),
+  // Story 4.5 (AC9, FR47/NFR5) — the resume affordance for a paused run, surfaced ONLY at PAUSED
+  // for
+  // the workflow_owner gate role (other roles keep the view-only + diagnostics/log set). Canonical
+  // executor is RecoveryService.resume (routing the Paused → prior-executing-state transition
+  // through WorkflowCommandService.resumeWorkflow). The REST endpoint that honors it lands in story
+  // 4.10. No DB CHECK exists for allowed-actions (enum <-> frontend placeholder JSON only); the
+  // allowed-actions REST field is an open string[] so adding a value needs NO OpenAPI regen.
+  RESUME_WORKFLOW("resume_workflow"),
+  RECONCILE_CONFLICT("reconcile_conflict"),
+  // Story 4.7 (AC10, Reconciliation 7) — the rerun-from-step affordance, surfaced for the
+  // workflow_owner gate role at the states with a legal rerun edge (FAILED, WAITING_FOR_REVIEW).
+  // Canonical executor is RecoveryService.rerunFromStep (routing the → targetStep transition
+  // through
+  // WorkflowCommandService.rerunFromStepWorkflow). This is a FLAT action — the allowed `targetStep`
+  // sub-list (SafeRerunStep enum) is served by the OpenAPI schema in story 4.12 / the Decision Bar
+  // in 4.22; the allowed-actions REST field is an open string[] so adding a value needs NO OpenAPI
+  // regen. The REST endpoint that honors it lands in story 4.12. No DB CHECK exists for
+  // allowed-actions (enum <-> frontend placeholder JSON only).
+  RERUN_FROM_STEP("rerun_from_step"),
+  // Story 4.8 (AC10, FR47/NFR5) — the manual-pause affordance, surfaced for the workflow_owner
+  // gate role at every state in RecoveryService.PAUSABLE_SOURCE_STATES (Investigating,
+  // WaitingForSpecApproval, Executing, WaitingForReview, WaitingForManualExecution,
+  // WaitingForLintApproval, WaitingForDelivery, Failed). Canonical executor is
+  // RecoveryService.pause (routing the → Paused transition through
+  // WorkflowCommandService.pauseWorkflow). The REST endpoint that honors it lands in story 4.13.
+  // No DB CHECK exists for allowed-actions (enum <-> frontend placeholder JSON only); the
+  // allowed-actions REST field is an open string[] so adding a value needs NO OpenAPI regen.
+  PAUSE_WORKFLOW("pause_workflow"),
+  // Story 4.9 (AC11, FR37/FR38) — the failure-classification affordance, surfaced ONLY at FAILED
+  // for the workflow_owner gate role (other roles keep the view-only + diagnostics/log set).
+  // Canonical executor is RecoveryService.classifyFailure — a PURE METADATA operation (no
+  // transition, no re-dispatch), always rated `safe` by RecommendationService. This is a FLAT
+  // action — the available `taxonomyValue` sub-list (FailureTaxonomyValue enum) is served by the
+  // OpenAPI schema in story 4.14 / the Decision Bar dropdown in 4.24, exactly as rerun_from_step
+  // deferred its targetStep sub-list. The REST endpoint that honors it lands in story 4.14. No DB
+  // CHECK exists for allowed-actions (enum <-> frontend placeholder JSON only); the
+  // allowed-actions REST field is an open string[] so adding a value needs NO OpenAPI regen.
+  CLASSIFY_FAILURE("classify_failure"),
+  // Story 4.20 (AC9, UX-DR13) — the Compare-Mode entry affordance. Surfaced (via a small
+  // appendCompareOverlay overlay in WorkflowInspectionService.computeActionMatrix, mirroring
+  // appendConflictOverlay) for the reviewing/inspecting roles at the artifact-review + operator
+  // states: WAITING_FOR_SPEC_APPROVAL (product_reviewer / workflow_owner), WAITING_FOR_REVIEW
+  // (developer), FAILED / PAUSED (workflow_owner — the operator failure-context compare, AC10.c).
+  // The backend action means "compare is conceptually reachable for this run+role"; the FRONTEND
+  // re-gates on the concrete artifact (canEnableCompare combines this with a per-artifact
+  // version>1 predicate) and picks the concrete A/B pair — so the matrix stays version-agnostic
+  // (no artifact read injected into the pure state×role switch). There is NO canonical backend
+  // executor: Compare Mode is a read-only FE inspection surface consuming the story-4.19
+  // GET /api/v1/artifacts/{a}/compare/{b} endpoint. No DB CHECK exists for allowed-actions (enum
+  // <-> frontend placeholder JSON only); the allowed-actions REST field is an open string[] so
+  // adding a value needs NO OpenAPI regen.
+  ENTER_COMPARE_MODE("enter_compare_mode");
 
   private static final Map<String, AllowedAction> LOOKUP = RegistryParsers.index(values());
 

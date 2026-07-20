@@ -1,0 +1,10 @@
+{
+  "renderedTextContains": [
+    "<script>window.__classExXss=1</script>",
+    "See javascript:window.__classExLink=1 for context",
+    "<a href=\"javascript:alert(1)\">click</a>"
+  ],
+  "noScriptElements": true,
+  "noActiveElements": true,
+  "noAnchorElements": true
+}

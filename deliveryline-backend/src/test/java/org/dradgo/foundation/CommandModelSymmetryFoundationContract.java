@@ -17,6 +17,7 @@ import java.util.Set;
 import org.dradgo.adapters.cli.WorkflowCommands;
 import org.dradgo.adapters.rest.WorkflowController;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
+import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.ManualArtifactSubmissionService;
@@ -26,10 +27,17 @@ import org.dradgo.application.workflow.WorkflowCommandService;
 import org.dradgo.application.workflow.WorkflowStateChangeResult;
 import org.dradgo.application.workflow.commands.AcceptClarificationCommand;
 import org.dradgo.application.workflow.commands.AcceptImplementationCommand;
+import org.dradgo.application.workflow.commands.ApproveDeliveryCommand;
+import org.dradgo.application.workflow.commands.ApproveLintCommand;
 import org.dradgo.application.workflow.commands.ApproveSpecCommand;
+import org.dradgo.application.workflow.commands.PauseWorkflowCommand;
+import org.dradgo.application.workflow.commands.ReconcileWorkflowCommand;
 import org.dradgo.application.workflow.commands.RegenerateSpecCommand;
 import org.dradgo.application.workflow.commands.RejectImplementationCommand;
 import org.dradgo.application.workflow.commands.RejectSpecCommand;
+import org.dradgo.application.workflow.commands.RequestLintFixCommand;
+import org.dradgo.application.workflow.commands.RerunFromStepWorkflowCommand;
+import org.dradgo.application.workflow.commands.ResumeWorkflowCommand;
 import org.dradgo.application.workflow.commands.RetryWorkflowCommand;
 import org.dradgo.application.workflow.commands.SubmitClarificationCommand;
 import org.dradgo.application.workflow.commands.SubmitWorkflowCommand;
@@ -79,6 +87,11 @@ class CommandModelSymmetryFoundationContract {
   // REST) and RegenerateSpecCommand (regenerate-spec REST) to the sealed permit set. They are
   // recorded here as known permits to keep the set explicit; their REST round-trip captures follow
   // the RejectImplementationCommand precedent (permit recorded without a mandatory capture block).
+  //
+  // Story 3h-2 (FR76 CPU linter gate) added ApproveLintCommand (approve-lint REST) and
+  // RequestLintFixCommand (request-lint-fix REST) to the sealed permit set. Recorded here as known
+  // permits to keep the set explicit; they follow the same "permit recorded without a mandatory
+  // capture block" precedent.
   private static final Set<Class<?>> EXPECTED_PERMITS =
       Set.of(
           SubmitWorkflowCommand.class,
@@ -89,8 +102,27 @@ class CommandModelSymmetryFoundationContract {
           SubmitClarificationCommand.class,
           RetryWorkflowCommand.class,
           TakeoverWorkflowCommand.class,
+          ResumeWorkflowCommand.class,
+          ReconcileWorkflowCommand.class,
+          // Story 4.7 (rerun-from-step) added RerunFromStepWorkflowCommand (service-only surface
+          // via
+          // WorkflowCommandService.rerunFromStepWorkflow); recorded here as a known permit to keep
+          // the set explicit. Its REST round-trip capture is deferred to story 4.12 (the
+          // rerun-from-step endpoint + OpenAPI), following the RejectImplementationCommand
+          // precedent.
+          RerunFromStepWorkflowCommand.class,
+          // Story 4.8 (pause) added PauseWorkflowCommand (service-only surface via
+          // WorkflowCommandService.pauseWorkflow); recorded here as a known permit to keep the set
+          // explicit. Its REST round-trip capture is deferred to story 4.13 (the pause endpoint +
+          // OpenAPI), following the RejectImplementationCommand precedent.
+          PauseWorkflowCommand.class,
           AcceptClarificationCommand.class,
-          RegenerateSpecCommand.class);
+          RegenerateSpecCommand.class,
+          ApproveLintCommand.class,
+          RequestLintFixCommand.class,
+          // Story 3h-4 (FR78 delivery gate) added ApproveDeliveryCommand (approve-delivery REST);
+          // recorded here as a known permit to keep the set explicit.
+          ApproveDeliveryCommand.class);
 
   @Autowired private MockMvc mockMvc;
   @MockitoBean private WorkflowCommandService workflowCommandService;
@@ -110,6 +142,9 @@ class CommandModelSymmetryFoundationContract {
   // bean must exist for this slice to construct the controller; the existing captureTakeover
   // round-trip still exercises the transition-only /takeover-workflow path (R9 — unchanged).
   @MockitoBean private DeveloperTakeoverService developerTakeoverService;
+  // Story 4.10 — WorkflowController gained the recovery service; the bean must exist for this
+  // @WebMvcTest slice to construct the controller.
+  @MockitoBean private RecoveryService recoveryService;
 
   @MockitoBean private WorkflowArchiveService workflowArchiveService;
 

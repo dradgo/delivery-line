@@ -12,8 +12,13 @@ import java.util.Objects;
  * <p>{@code prRef} is the stable external reference; {@code repoRef} ties the PR back to its {@link
  * Repository}; {@code number} is the generic PR/MR number (Bitbucket/GitLab also number them — not
  * GitHub-specific); {@code sourceBranch} is the head branch the PR proposes to merge; {@code state}
- * is the lifecycle state (e.g. {@code "open"}); {@code createdAt} is a host-provided /
- * deterministically-synthesized instant — never a wall-clock read inside the mock.
+ * is the raw host lifecycle state (GitHub REST {@code "open"}/{@code "closed"}); {@code merged}
+ * disambiguates a PR that was <em>merged</em> from one merely <em>closed</em> — GitHub's REST
+ * {@code state} collapses both to {@code "closed"} and carries the distinction in a separate {@code
+ * merged} boolean, which story 4.17's conflict detection needs to tell {@code
+ * external_state_advanced} (merged externally) from {@code external_state_reverted}. {@code
+ * createdAt} is a host-provided / deterministically-synthesized instant — never a wall-clock read
+ * inside the mock.
  */
 public record PullRequest(
     PullRequestRef prRef,
@@ -21,6 +26,7 @@ public record PullRequest(
     int number,
     String sourceBranch,
     String state,
+    boolean merged,
     String url,
     Instant createdAt) {
 

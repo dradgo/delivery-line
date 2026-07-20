@@ -97,8 +97,11 @@ public class RunnerLogStreamController {
               + "live redaction is best-effort only (ADR 0025). Served only over the localhost-only "
               + "binding to the single local operator; gated by the view_runner_logs allowed-action. "
               + "Persists nothing and never mutates runner_executions (ADR 0025 D4). Epic 4 story 4.4 "
-              + "consumes this same viewer (no separate redacted-log download surface). Events: "
-              + "log {stream,line,seq}, status {phase,rex}, end {reason}, error {reason}.")
+              + "ADDED a separate redacted-log ATTACHMENT download (GET "
+              + "/api/v1/runner-executions/{rexId}/logs/download, downloadRunnerLog) — this reverses "
+              + "the earlier 'no separate download surface' note; this SSE viewer remains the live "
+              + "follow. Events: log {stream,line,seq}, status {phase,rex}, end {reason}, error "
+              + "{reason}.")
   @ApiResponses({
     @ApiResponse(
         responseCode = "200",

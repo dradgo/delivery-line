@@ -55,6 +55,24 @@ class ProjectRuntimeConfigResolverTest {
   }
 
   @Test
+  void resolveTestcontainersEnabledReadsTheResolvedProjectFlag() {
+    when(projectStore.findProjectIdForRun(RUN_ID)).thenReturn(Optional.empty());
+    when(projectStore.findBySlug(DefaultProjectSeeder.DEFAULT_PROJECT_SLUG))
+        .thenReturn(Optional.of(projectWithTestcontainersEnabled(true)));
+
+    assertThat(resolver.resolveTestcontainersEnabled(RUN_ID)).isTrue();
+  }
+
+  @Test
+  void resolveTestcontainersEnabledDefaultsFalse() {
+    when(projectStore.findProjectIdForRun(RUN_ID)).thenReturn(Optional.empty());
+    when(projectStore.findBySlug(DefaultProjectSeeder.DEFAULT_PROJECT_SLUG))
+        .thenReturn(Optional.of(projectWithTestcontainersEnabled(false)));
+
+    assertThat(resolver.resolveTestcontainersEnabled(RUN_ID)).isFalse();
+  }
+
+  @Test
   void runBoundToDefaultResolvesTheSameConfig() {
     when(projectStore.findProjectIdForRun(RUN_ID))
         .thenReturn(Optional.of(DefaultProjectSeeder.DEFAULT_PROJECT_PUBLIC_ID));
@@ -356,6 +374,31 @@ class ProjectRuntimeConfigResolverTest {
         runnerKind,
         OffsetDateTime.parse("2026-06-20T00:00:00Z"),
         null);
+  }
+
+  private static Project projectWithTestcontainersEnabled(boolean testcontainersEnabled) {
+    return new Project(
+        DefaultProjectSeeder.DEFAULT_PROJECT_PUBLIC_ID,
+        DefaultProjectSeeder.DEFAULT_PROJECT_NAME,
+        DefaultProjectSeeder.DEFAULT_PROJECT_SLUG,
+        ProjectStatus.ACTIVE,
+        "octo/hello",
+        ConnectorKind.LINEAR,
+        ConnectorKind.GITHUB,
+        false,
+        null,
+        false,
+        null,
+        OffsetDateTime.parse("2026-06-20T00:00:00Z"),
+        null,
+        Map.of(),
+        null,
+        false,
+        java.util.List.of(),
+        false,
+        org.dradgo.domain.registry.PushMode.AUTO,
+        true,
+        testcontainersEnabled);
   }
 
   private static Project defaultProject(String repositoryUrl, boolean openspecEnabled) {

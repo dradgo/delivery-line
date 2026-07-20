@@ -138,6 +138,119 @@ const IMPL_PR_ARTIFACT_ID = 'art_impl_pr_0001';
 const IMPL_PLAN_ARTIFACT_ID = 'art_impl_plan_0001';
 const SYNTH_NOW = '2026-06-19T12:00:00.000Z';
 
+// ---------------------------------------------------------------------------
+// Story 4.26 (AC7, Task 2) — Epic-4 operator/reviewer journey fixtures. The
+// three keyboard-only journeys drive: (A) a Failed operator run → classify; (B)
+// a Paused run with an integration conflict → reconcile → resume; (C) a v2 spec
+// artifact → Compare Mode. Modelled as first-class synthetic runs + dedicated
+// endpoint handlers so the spec-stage streams stay byte-for-byte intact and the
+// `unmodelled()` 501 tripwire still guards any still-unmodelled path.
+// ---------------------------------------------------------------------------
+/** Story 4.2/4.24 — a Failed run surfaced in the operator queue; classify target (Journey A). */
+export const OPERATOR_FAILED_RUN_ID = 'run_opfailed00001';
+/** Story 4.18/4.23 — a Paused run carrying an unresolved integration conflict (Journey B). */
+export const PAUSED_CONFLICT_RUN_ID = 'run_pausedconf0001';
+/** Story 4.19/4.20 — a run whose current spec artifact is v2 (has a comparable prior) (Journey C). */
+export const COMPARE_RUN_ID = 'run_compare000001';
+/** The prior (v1) + current (v2) spec artifacts the Compare journey diffs. */
+const COMPARE_ARTIFACT_A = 'art_cmp_prior0001';
+const COMPARE_ARTIFACT_B = 'art_cmp_current01';
+/** The unresolved conflict the reconcile journey resolves. */
+const JOURNEY_CONFLICT_ID = 'icf_journey000001';
+
+/** Story 4.24 — the failure-taxonomy registry (`GET /registries/failure-taxonomy`). */
+const FAILURE_TAXONOMY = {
+  values: [
+    {
+      value: 'agent_execution_failure',
+      humanReadableName: 'Agent Execution Failure',
+      description: 'The agent failed to produce a valid result.',
+      examples: ['The runner produced malformed output.'],
+      deprecated: false,
+    },
+    {
+      value: 'context_gap',
+      humanReadableName: 'Context Gap',
+      description: 'The agent lacked repository context.',
+      examples: ['A convention was not surfaced.'],
+      deprecated: false,
+    },
+  ],
+};
+
+/** Story 4.23 — the conflict detail the reconcile dialog renders (snapshots + safe-first suggestions). */
+const JOURNEY_CONFLICT_DETAIL = {
+  conflictId: JOURNEY_CONFLICT_ID,
+  workflowRunId: PAUSED_CONFLICT_RUN_ID,
+  integrationLinkId: 'ilk_journey00001',
+  integrationType: 'github_pr',
+  conflictCategory: 'external_state_advanced',
+  externalRef: 'octo/repo#7',
+  resolvedAt: null,
+  internalStateSnapshot: '{"state":"open","branch":"feat/x"}',
+  externalStateSnapshot: '{"state":"merged","commitSha":"abc123"}',
+  suggestedDecisions: [
+    { decision: 'accept_external_state', safety: 'safe' },
+    { decision: 'accept_internal_state', safety: 'risky' },
+  ],
+};
+
+/** Story 4.19 — the revision delta the Compare journey renders (≥2 changed regions for J/K). */
+function compareDelta() {
+  return {
+    artifactType: 'spec',
+    revisionA: {
+      version: 1,
+      createdAt: SYNTH_NOW,
+      producedByActor: 'codex-runner',
+      checksum: null,
+    },
+    revisionB: {
+      version: 2,
+      createdAt: SYNTH_NOW,
+      producedByActor: 'codex-runner',
+      checksum: null,
+    },
+    summary: { changedRegionCount: 2, addedCount: 1, removedCount: 0, modifiedCount: 1 },
+    noMeaningfulDiff: false,
+    changes: [
+      {
+        blockType: 'markdown',
+        changeKind: 'modified',
+        sectionPath: 'Overview',
+        priorText: 'Original overview.',
+        currentText: 'Rewritten overview.',
+      },
+      {
+        blockType: 'markdown',
+        changeKind: 'added',
+        sectionPath: 'New section',
+        priorText: null,
+        currentText: 'A newly added section.',
+      },
+    ],
+    linkedDiffReferences: null,
+  };
+}
+
+/** A v1/v2 spec ArtifactDetail for the Compare journey — v2 carries the `parentArtifactId` baseline. */
+function compareArtifactDetail(artifactId: string) {
+  const isCurrent = artifactId === COMPARE_ARTIFACT_B;
+  return {
+    artifactId,
+    artifactType: 'spec',
+    status: 'available',
+    version: isCurrent ? 2 : 1,
+    classification: 'shareable-redacted',
+    checksum: 'SHA-256:9f86d081884c',
+    createdAt: SYNTH_NOW,
+    title: 'Specification',
+    // The current (v2) artifact resolves its prior revision → enables Compare (hasComparableRevision).
+    parentArtifactId: isCurrent ? COMPARE_ARTIFACT_A : null,
+    body: `# Specification\n\nSpec body v${isCurrent ? 2 : 1} for the Compare journey.\n`,
+  };
+}
+
 /** A minimal markdown-bodied ArtifactDetail (satisfies the frontend `isArtifactView` guard). */
 function syntheticArtifactDetail(artifactId: string, artifactType: string, version: number) {
   return {
@@ -359,6 +472,138 @@ const SYNTHETIC_RUNS = {
       },
     }),
     artifact: (artifactId) => syntheticArtifactDetail(artifactId, 'spec', 1),
+  },
+  // Story 4.26 Journey A — a Failed operator run (classify target).
+  [OPERATOR_FAILED_RUN_ID]: {
+    summary: () => ({
+      workflowRunId: OPERATOR_FAILED_RUN_ID,
+      currentState: 'Failed',
+      lastEventAt: SYNTH_NOW,
+      lastEventType: 'runner.failed',
+      specRejectionLoopCount: 0,
+      escalationMarker: false,
+    }),
+    detail: () => ({
+      workflowRunId: OPERATOR_FAILED_RUN_ID,
+      currentState: 'Failed',
+      lastEventAt: SYNTH_NOW,
+      lastEventType: 'runner.failed',
+      specRejectionLoopCount: 0,
+      escalationMarker: false,
+      currentActorIdentity: 'codex-runner',
+      failureCategory: 'runner_timeout',
+      failedStage: 'execution',
+      latestArtifacts: [],
+    }),
+    events: () => ({
+      workflowRun: {
+        publicId: OPERATOR_FAILED_RUN_ID,
+        ticketRef: 'LIN-940',
+        createdAt: SYNTH_NOW,
+        terminalState: 'Failed',
+      },
+      events: [{ publicId: 'evt_opfailed_1', eventType: 'runner.failed', createdAt: SYNTH_NOW }],
+    }),
+    allowedActions: (actorRole) => ({
+      actions:
+        actorRole === 'workflow_owner'
+          ? ['view_only', 'classify_failure', 'retry', 'view_runner_logs']
+          : ['view_only'],
+      versionStamp: {
+        workflowState: 'Failed',
+        lastEventId: 'evt_opfailed_1',
+        currentSpecArtifactVersion: 1,
+        currentContextBundleVersion: 1,
+      },
+    }),
+    artifact: (artifactId) => syntheticArtifactDetail(artifactId, 'spec', 1),
+  },
+  // Story 4.26 Journey B — a Paused run with an unresolved integration conflict (reconcile + resume).
+  [PAUSED_CONFLICT_RUN_ID]: {
+    summary: () => ({
+      workflowRunId: PAUSED_CONFLICT_RUN_ID,
+      currentState: 'Paused',
+      lastEventAt: SYNTH_NOW,
+      lastEventType: 'workflow.paused',
+      specRejectionLoopCount: 0,
+      escalationMarker: false,
+    }),
+    detail: () => ({
+      workflowRunId: PAUSED_CONFLICT_RUN_ID,
+      currentState: 'Paused',
+      lastEventAt: SYNTH_NOW,
+      lastEventType: 'workflow.paused',
+      specRejectionLoopCount: 0,
+      escalationMarker: false,
+      currentActorIdentity: 'system',
+      latestArtifacts: [],
+    }),
+    events: () => ({
+      workflowRun: {
+        publicId: PAUSED_CONFLICT_RUN_ID,
+        ticketRef: 'LIN-941',
+        createdAt: SYNTH_NOW,
+        terminalState: 'Paused',
+      },
+      events: [{ publicId: 'evt_paused_1', eventType: 'workflow.paused', createdAt: SYNTH_NOW }],
+    }),
+    allowedActions: (actorRole) => ({
+      actions:
+        actorRole === 'workflow_owner'
+          ? ['view_only', 'resume_workflow', 'reconcile_conflict']
+          : ['view_only'],
+      versionStamp: {
+        workflowState: 'Paused',
+        lastEventId: 'evt_paused_1',
+        currentSpecArtifactVersion: 1,
+        currentContextBundleVersion: 1,
+      },
+    }),
+    artifact: (artifactId) => syntheticArtifactDetail(artifactId, 'spec', 1),
+  },
+  // Story 4.26 Journey C — a run whose current spec artifact is v2 (has a comparable prior revision).
+  [COMPARE_RUN_ID]: {
+    summary: () => ({
+      workflowRunId: COMPARE_RUN_ID,
+      currentState: 'WaitingForSpecApproval',
+      lastEventAt: SYNTH_NOW,
+      lastEventType: 'artifact.ingested',
+      specRejectionLoopCount: 0,
+      escalationMarker: false,
+    }),
+    detail: () => ({
+      workflowRunId: COMPARE_RUN_ID,
+      currentState: 'WaitingForSpecApproval',
+      lastEventAt: SYNTH_NOW,
+      lastEventType: 'artifact.ingested',
+      specRejectionLoopCount: 0,
+      escalationMarker: false,
+      currentActorIdentity: 'codex-runner',
+      latestArtifacts: [
+        { artifactId: COMPARE_ARTIFACT_B, artifactType: 'spec', status: 'available', version: 2 },
+      ],
+    }),
+    events: () => ({
+      workflowRun: {
+        publicId: COMPARE_RUN_ID,
+        ticketRef: 'LIN-942',
+        createdAt: SYNTH_NOW,
+        terminalState: 'WaitingForSpecApproval',
+      },
+      events: [{ publicId: 'evt_compare_1', eventType: 'artifact.ingested', createdAt: SYNTH_NOW }],
+    }),
+    // Compare entry needs the `enter_compare_mode` action; offer it regardless of actorRole so the
+    // artifact viewer's ARP renders the ENABLED Compare control (it reads allowed-actions default-role).
+    allowedActions: () => ({
+      actions: ['view_only', 'enter_compare_mode', 'approve_spec', 'reject_spec'],
+      versionStamp: {
+        workflowState: 'WaitingForSpecApproval',
+        lastEventId: 'evt_compare_1',
+        currentSpecArtifactVersion: 2,
+        currentContextBundleVersion: 1,
+      },
+    }),
+    artifact: (artifactId) => compareArtifactDetail(artifactId),
   },
 };
 
@@ -603,6 +848,80 @@ export async function mockBackend(page: Page): Promise<void> {
       return unmodelled(route, method, path);
     }
 
+    // Story 4.26 (AC7) — top-level Epic-4 read endpoints (operator queue, taxonomy registry,
+    // integration conflicts, revision-delta compare). Handled before the workflow matchers + the
+    // loud-501 tripwire. Still GET-only; any Epic-4 POST is handled in the mutation section below.
+    if (method === 'GET' && path === '/api/v1/operator/runs') {
+      return json(route, {
+        runs: [
+          {
+            runId: OPERATOR_FAILED_RUN_ID,
+            currentState: 'Failed',
+            operatorSignifier: 'FAILED',
+            failureCategory: 'runner_timeout',
+            lastTransitionAt: SYNTH_NOW,
+            oldestEventAt: SYNTH_NOW,
+            escalationMarker: false,
+            actorIdentity: 'codex-runner',
+            linkedPrRef: null,
+            linkedTicketRef: 'LIN-940',
+            runnerKind: 'codex',
+            unresolvedConflictCount: 0,
+          },
+        ],
+        total: 1,
+        nextCursor: null,
+        oldestEntryAt: SYNTH_NOW,
+        byState: { Failed: 1 },
+        byFailureCategory: { runner_timeout: 1 },
+      });
+    }
+
+    if (method === 'GET' && path === '/api/v1/registries/failure-taxonomy') {
+      return json(route, FAILURE_TAXONOMY);
+    }
+
+    // Conflict detail BEFORE the list (the detail path carries a trailing id segment).
+    const conflictDetailMatch = /\/api\/v1\/integration-conflicts\/([^/]+)$/.exec(path);
+    if (method === 'GET' && conflictDetailMatch) {
+      return conflictDetailMatch[1] === JOURNEY_CONFLICT_ID
+        ? json(route, JOURNEY_CONFLICT_DETAIL)
+        : unmodelled(route, method, path);
+    }
+    if (method === 'GET' && path === '/api/v1/integration-conflicts') {
+      // Honor the run-scoping filter the real endpoint applies: a workflowRunId
+      // that doesn't match the seeded conflict's run returns an empty list, so a
+      // reused fixture can't mask a run-scoping regression by returning it globally.
+      const scopedRun = url.searchParams.get('workflowRunId');
+      const matchesRun = scopedRun === null || scopedRun === PAUSED_CONFLICT_RUN_ID;
+      const conflicts = matchesRun
+        ? [
+            {
+              conflictId: JOURNEY_CONFLICT_ID,
+              integrationLinkId: 'ilk_journey00001',
+              workflowRunId: PAUSED_CONFLICT_RUN_ID,
+              conflictCategory: 'external_state_advanced',
+              integrationType: 'github_pr',
+              externalRef: 'octo/repo#7',
+              detectedAt: SYNTH_NOW,
+            },
+          ]
+        : [];
+      return json(route, {
+        conflicts,
+        totalUnresolved: conflicts.length,
+        totalResolved: 0,
+        totalUnresolvedByCategory: matchesRun ? { external_state_advanced: 1 } : {},
+        totalUnresolvedByIntegration: matchesRun ? { github: 1 } : {},
+        nextCursor: null,
+      });
+    }
+
+    // Revision-delta compare (`GET /api/v1/artifacts/{a}/compare/{b}`).
+    if (method === 'GET' && /\/api\/v1\/artifacts\/[^/]+\/compare\/[^/]+$/.test(path)) {
+      return json(route, compareDelta());
+    }
+
     // Mutations — a benign success for the MODELLED workflow commands; the journeys
     // assert reachability, the commit semantics are covered by the Vitest
     // mutation-hook suite (AC6). An UNMODELLED non-GET falls through to the loud 501
@@ -620,6 +939,40 @@ export async function mockBackend(page: Page): Promise<void> {
         const runId = /\/api\/v1\/workflows\/([^/]+)\//.exec(path)?.[1] ?? DEV_REVIEW_RUN_ID;
         return json(route, developerMutationResponse(path, runId));
       }
+      // Story 4.26 (AC7) — the Epic-4 recovery mutations (classify / reconcile / resume). Each
+      // returns its real response shape; an UNMODELLED non-GET still falls through to the loud 501.
+      const epic4Mutation =
+        /\/api\/v1\/workflows\/([^/]+)\/(classify-failure|reconcile|resume)$/.exec(path);
+      if (epic4Mutation) {
+        const runId = epic4Mutation[1]!;
+        const action = epic4Mutation[2]!;
+        if (action === 'resume') {
+          return json(route, {
+            workflowRunId: runId,
+            currentState: 'Executing',
+            recoveryActionId: 'rcv_e2e_resume',
+            replayed: false,
+            correlationId: 'corr_e2e_resume',
+          });
+        }
+        if (action === 'reconcile') {
+          return json(route, {
+            workflowRunId: runId,
+            currentState: 'Paused',
+            recoveryActionId: 'rcv_e2e_reconcile',
+            replayed: false,
+            correlationId: 'corr_e2e_reconcile',
+          });
+        }
+        // classify-failure
+        return json(route, {
+          workflowRunId: runId,
+          taxonomyValue: 'agent_execution_failure',
+          recoveryActionId: 'rcv_e2e_classify',
+          replayed: false,
+        });
+      }
+
       // Story 3d-4 — manual-artifact submission re-enters the spec-approval flow.
       const manualSubmit = /\/api\/v1\/workflows\/([^/]+)\/manual-artifact$/.exec(path);
       if (manualSubmit) {
@@ -680,6 +1033,41 @@ export async function mockBackend(page: Page): Promise<void> {
       if (synth) return json(route, synth.allowedActions(url.searchParams.get('actorRole')));
       const stream = streamByRunId(runId);
       return stream ? json(route, allowedActions(stream)) : notFound(route, runId, path);
+    }
+
+    // Story 4.26 (AC7) — the run-scoped failure diagnostics deep-dive + prior classification reads
+    // the classify dialog + diagnostics surface consume. Modelled before the bare detail matcher.
+    const diagnosticsMatch = /\/api\/v1\/workflows\/([^/]+)\/failure-diagnostics$/.exec(path);
+    if (diagnosticsMatch) {
+      const runId = diagnosticsMatch[1]!;
+      // Complete FailureDiagnosticsResponse shape (schema): `lastActorIdentity` is REQUIRED, and
+      // `integrationSyncStatus` is an IntegrationSyncStatusPair whose `linear`/`github` keys are
+      // OMITTED when absent — never set to null (the deep-dive's sync renderer reads `.syncStatus`
+      // on a present entry, so a null entry throws into the error boundary).
+      return json(route, {
+        workflowRunId: runId,
+        currentState: runId === PAUSED_CONFLICT_RUN_ID ? 'Paused' : 'Failed',
+        failedStage: 'execution',
+        failureCategory: 'runner_timeout',
+        failureReason: 'container exited with a non-zero status',
+        failureTimestamp: SYNTH_NOW,
+        lastActivityTimestamp: SYNTH_NOW,
+        lastActorIdentity: 'codex-runner',
+        correlationId: 'corr_opfailed_e2e',
+        lastGoodState: 'Executing',
+        currentBlockingReason: null,
+        nextSafeAction: 'retry',
+        integrationSyncStatus: {},
+        recommendedRecoveryActions: [],
+      });
+    }
+    const classificationMatch = /\/api\/v1\/workflows\/([^/]+)\/failure-classification$/.exec(path);
+    if (classificationMatch) {
+      return json(route, {
+        workflowRunId: classificationMatch[1]!,
+        deprecated: false,
+        priorClassifications: [],
+      });
     }
 
     // Story 3d-4 — the run-scoped manual input bundle read (GET, no Idempotency-Key).

@@ -13,6 +13,7 @@ blocked until the foundation gate is green.
 | --- | --- | --- |
 | `foundation-gate` | **required** | Aggregate Epic-1 contract verification (story 1.23). MUST be a required status check on `main`. |
 | `runner-contract-real-gate` | **required** | Real-runner image tier gate (story 3.34). Always runs; PASSES on a docs-only / unrelated PR (the heavy `runner-image-build`/`runner-image-self-test`/`runner-contract-real` jobs legitimately skip) and on a runner-path PR only when all three are green. MUST be a required status check on `main` so a runner-path change cannot merge with a red real-runner contract run. NOT folded into `foundation-gate` (a path-skipped job there would red every docs-only PR). |
+| `recovery-integration-gate` | **required** | Recovery-scenario + fault-injection tier gate (story 4.25). Always runs; PASSES on a recovery-untouched PR (the heavy `recovery-integration` job legitimately skips) and on a recovery-path PR only when it is green. MUST be a required status check on `main` so a recovery-path change cannot merge with a red recovery-scenario run. NOT folded into `foundation-gate` (a path-skipped job there would red every unrelated PR). |
 | `format-static-checks (ubuntu-latest)` | recommended | Implicit via `foundation-gate` `needs:`. Listing explicitly improves PR-page UI signal. |
 | `format-static-checks (windows-latest)` | recommended | Same — explicit listing surfaces the per-OS pass in the PR UI. |
 | `frontend-build-tests (ubuntu-latest)` | recommended | Implicit dependency after story 2.1. Listing explicitly surfaces the Linux leg of the frontend matrix. |
@@ -80,6 +81,7 @@ gh api \
   -F required_status_checks[strict]=true \
   -F 'required_status_checks[contexts][]=foundation-gate' \
   -F 'required_status_checks[contexts][]=runner-contract-real-gate' \
+  -F 'required_status_checks[contexts][]=recovery-integration-gate' \
   -F 'required_status_checks[contexts][]=format-static-checks (ubuntu-latest)' \
   -F 'required_status_checks[contexts][]=format-static-checks (windows-latest)' \
   -F 'required_status_checks[contexts][]=frontend-build-tests (ubuntu-latest)' \
@@ -142,6 +144,36 @@ Register `runner-contract-real-gate` as a required status check exactly like `fo
 `scripts/ci/configure-branch-protection.{sh,ps1}`, so the helper scripts wire it automatically).
 `foundation-gate` is left unchanged, and `RealRunnerContractIT` is deliberately NOT added to
 `FoundationGateVerificationTest`.
+
+## The `recovery-integration-gate` required check (story 4.25)
+
+Story 4.25 adds a **path-triggered** recovery-scenario tier (`recovery-integration`) that runs the
+heavy end-to-end recovery ITs with deliberate fault injection — resume / reconcile / rerun-from-step
+/ pause-resume idempotency / classify-failure, plus artifact-drift (orphan / missing-payload /
+checksum-mismatch) and integration-conflict (all five categories via the GitHub mock, plus Linear
+removed / link_broken) detect → repair / auto-pause round-trips. Those scenarios are tagged
+`@Tag("recovery-integration")` and default-excluded from the every-PR Failsafe tier, so they run only
+in this job (via the `recovery-integration` Maven profile) and never double-run. The job runs only
+when a PR touches recovery paths (`application.recovery/**`, `application.artifact.reconciliation/**`,
+`application.integration.conflict/**`, `WorkflowController`/`ArtifactDriftController`, the recovery
+frontend feature dir, the recovery scenario IT dirs, `ci.yml`, or the backend `pom.xml`) — or on
+`push: main`.
+
+Exactly like the runner-image tier, `recovery-integration` is **not** added to `foundation-gate`'s
+`needs:` (the gate converts a `skipped` dependency into a hard fail, which would red every
+recovery-untouched PR). Instead, an always-runs aggregator job — **`recovery-integration-gate`** —
+encodes the merge rule:
+
+- On a **recovery-untouched PR** (no recovery paths changed) the scenario job legitimately skips and
+  the gate **passes** — unrelated PRs are never blocked.
+- On a **recovery-path PR** the gate **passes only when** `recovery-integration` is green — a red
+  recovery-scenario run hard-blocks the merge.
+
+Register `recovery-integration-gate` as a required status check exactly like `foundation-gate` (it is
+already in the `REQUIRED_CHECKS` source-of-truth array in
+`scripts/ci/configure-branch-protection.{sh,ps1}`, so the helper scripts wire it automatically;
+`RecoveryIntegrationGateBranchProtectionSmokeContractTest` asserts it cannot be silently removed).
+`foundation-gate` is left unchanged.
 
 ## Related
 

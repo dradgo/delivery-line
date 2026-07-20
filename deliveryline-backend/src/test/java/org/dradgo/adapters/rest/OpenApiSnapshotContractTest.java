@@ -99,6 +99,18 @@ class OpenApiSnapshotContractTest {
         .contains("getWorkflow")
         .contains("getWorkflowEvents");
     assertThat(canonical)
+        .as("OpenAPI must expose the story 4.2 operator fleet-view read operation")
+        .contains("listOperatorRuns");
+    assertThat(canonical)
+        .as("OpenAPI must expose the story 4.3 audit-query read operations")
+        .contains("queryAuditByTicket")
+        .contains("queryAuditByRun");
+    assertThat(canonical)
+        .as(
+            "OpenAPI must expose the story 4.4 failure-diagnostics + runner-log download operations")
+        .contains("getFailureDiagnostics")
+        .contains("downloadRunnerLog");
+    assertThat(canonical)
         .as("OpenAPI must expose the story 3c-8 project operations")
         .contains("listProjects")
         .contains("createProject")
@@ -108,6 +120,26 @@ class OpenApiSnapshotContractTest {
         .contains("enableProject")
         .contains("setProjectCredential")
         .contains("testProjectConnection");
+    assertThat(canonical)
+        .as("OpenAPI must expose the story 3i-2 filtered ticket-intake browse operation")
+        .contains("queryProjectTickets");
+    assertThat(canonical)
+        .as("OpenAPI must expose the story 4.18 integration-conflict inspection operations")
+        .contains("listIntegrationConflicts")
+        .contains("getIntegrationConflict");
+    assertThat(canonical)
+        .as("OpenAPI must expose the story 4.16 artifact-drift repair command operation")
+        .contains("repairArtifactDrift");
+    assertThat(canonical)
+        .as("OpenAPI must expose the story 4.16a artifact-lineage reconcile command operation")
+        .contains("reconcileArtifactLineage");
+    assertThat(canonical)
+        .as("OpenAPI must expose the story 4.19 compare-mode revision-delta read operation")
+        .contains("compareArtifacts");
+    assertThat(canonical)
+        .as(
+            "OpenAPI must expose the story 4.22 non-mutating rerun-from-step preview read operation")
+        .contains("previewRerunFromStep");
 
     JsonNode document = MAPPER.readTree(canonical);
     assertThat(document.at(pointer("servers")).isArray()).isTrue();

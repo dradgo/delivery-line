@@ -133,11 +133,21 @@ describe('SpecArtifactRenderer', () => {
     expect(compare).toHaveAttribute('title', 'Available in next release');
   });
 
-  it('AC9 — the Compare control enables when the panel reports compareEnabled', () => {
+  it('AC9 / 4.20 — the Compare control enables when the panel reports compareEnabled', () => {
     render(<SpecArtifactRenderer artifact={specArtifactView} compareEnabled />);
     const compare = screen.getByTestId('artifact-compare-entry');
     expect(compare).toBeEnabled();
-    expect(compare).not.toHaveAttribute('title');
+    // Story 4.20 — the enabled control now carries an actionable tooltip (was reserved/no-title).
+    expect(compare).toHaveAttribute('title', 'Compare with the previous revision');
+  });
+
+  it('4.20 AC9 — clicking the enabled Compare control invokes onCompare (opens the overlay)', async () => {
+    const onCompare = vi.fn();
+    render(
+      <SpecArtifactRenderer artifact={specArtifactView} compareEnabled onCompare={onCompare} />,
+    );
+    await userEvent.click(screen.getByTestId('artifact-compare-entry'));
+    expect(onCompare).toHaveBeenCalledTimes(1);
   });
 });
 

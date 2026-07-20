@@ -133,6 +133,8 @@ class DoctorServiceTest {
     when(probes.probeLinearCompletionSync())
         .thenReturn(ProbeResult.pass("completion-sync enabled"));
     when(probes.probeProjects()).thenReturn(ProbeResult.pass("projects configured"));
+    when(probes.probeJiraAuth()).thenReturn(ProbeResult.pass("jira-real inactive"));
+    when(probes.probeBitbucket()).thenReturn(ProbeResult.pass("bitbucket-real inactive"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -185,6 +187,8 @@ class DoctorServiceTest {
     when(probes.probeLinearCompletionSync())
         .thenReturn(ProbeResult.pass("completion-sync enabled"));
     when(probes.probeProjects()).thenReturn(ProbeResult.pass("projects configured"));
+    when(probes.probeJiraAuth()).thenReturn(ProbeResult.pass("jira-real inactive"));
+    when(probes.probeBitbucket()).thenReturn(ProbeResult.pass("bitbucket-real inactive"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -296,6 +300,8 @@ class DoctorServiceTest {
     when(probes.probeLinearCompletionSync())
         .thenReturn(ProbeResult.pass("completion-sync enabled"));
     when(probes.probeProjects()).thenReturn(ProbeResult.pass("projects configured"));
+    when(probes.probeJiraAuth()).thenReturn(ProbeResult.pass("jira-real inactive"));
+    when(probes.probeBitbucket()).thenReturn(ProbeResult.pass("bitbucket-real inactive"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -324,6 +330,8 @@ class DoctorServiceTest {
     when(probes.probeLinearCompletionSync())
         .thenReturn(ProbeResult.pass("completion-sync enabled"));
     when(probes.probeProjects()).thenReturn(ProbeResult.pass("projects configured"));
+    when(probes.probeJiraAuth()).thenReturn(ProbeResult.pass("jira-real inactive"));
+    when(probes.probeBitbucket()).thenReturn(ProbeResult.pass("bitbucket-real inactive"));
 
     DiagnosticsReport report = service.runDiagnostics(DoctorRunRequest.all());
 
@@ -375,6 +383,12 @@ class DoctorServiceTest {
         .thenReturn(ProbeResult.pass("completion-sync enabled"));
     when(probes.probeProjects())
         .thenReturn(ProbeResult.pass("All 1 active project(s) configured (1 total)"));
+    when(probes.probeJiraAuth())
+        .thenReturn(ProbeResult.pass("jira-real profile inactive; JIRA auth check not applicable"));
+    when(probes.probeBitbucket())
+        .thenReturn(
+            ProbeResult.pass(
+                "bitbucket-real profile inactive; Bitbucket auth check not applicable"));
   }
 
   private DiagnosticsCheck findCheck(DiagnosticsReport report, String name) {

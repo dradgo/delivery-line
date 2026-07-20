@@ -1,9 +1,11 @@
 package org.dradgo.adapters.persistence.repository;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.dradgo.adapters.persistence.entity.ApprovalEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -31,12 +33,36 @@ public interface ApprovalRepository extends JpaRepository<ApprovalEntity, Long> 
         and a.artifact.artifactType = :artifactType
         and a.decision = 'approved'
         and a.archivedAt is null
+        and a.invalidatedAt is null
         and a.artifact.archivedAt is null
       order by a.artifactVersion desc, a.decidedAt desc, a.id desc
       """)
   List<ApprovalEntity> findLatestApprovedForArtifactLineage(
       @Param("workflowRunPublicId") String workflowRunPublicId,
       @Param("artifactType") String artifactType);
+
+  /**
+   * Story 4.16a [Review D3] — latest currently-valid approved row for ONE specific artifact
+   * (identified by its {@code art_…} public id, which pins exactly one version — the composite FK
+   * {@code (artifact_id, artifact_version)}). Unlike {@link #findLatestApprovedForArtifactLineage},
+   * which returns the highest-version approval across the whole {@code (run, type)} lineage, this
+   * is version-specific: terminating an ambiguous version must never invalidate a healthy sibling
+   * version's approval. Same {@code archived_at IS NULL} + {@code invalidated_at IS NULL} filters.
+   */
+  @Query(
+      """
+      select a from ApprovalEntity a
+        join fetch a.workflowRun
+        join fetch a.artifact
+      where a.artifact.publicId = :artifactPublicId
+        and a.decision = 'approved'
+        and a.archivedAt is null
+        and a.invalidatedAt is null
+        and a.artifact.archivedAt is null
+      order by a.decidedAt desc, a.id desc
+      """)
+  List<ApprovalEntity> findLatestApprovedForArtifact(
+      @Param("artifactPublicId") String artifactPublicId);
 
   /**
    * All non-archived decisions for the run + artifact-type filter, chronological ascending with an
@@ -81,4 +107,41 @@ public interface ApprovalRepository extends JpaRepository<ApprovalEntity, Long> 
       @Param("artifactType") String artifactType);
 
   Optional<ApprovalEntity> findByPublicId(String publicId);
+
+  /**
+   * Story 4.7 (AC7 / Reconciliation 2) — invalidate a currently-valid approval row by public id.
+   * Guards {@code invalidated_at is null} so a second rerun cannot re-stamp an already-invalidated
+   * approval (idempotent at the DB level). Returns the number of rows affected (1 on the first
+   * invalidation, 0 if already invalidated / not found).
+   */
+  @Modifying(clearAutomatically = true)
+  @Query(
+      """
+      update ApprovalEntity a
+        set a.invalidatedAt = :invalidatedAt, a.invalidatedReason = :invalidatedReason
+      where a.publicId = :publicId
+        and a.invalidatedAt is null
+      """)
+  int markInvalidated(
+      @Param("publicId") String publicId,
+      @Param("invalidatedReason") String invalidatedReason,
+      @Param("invalidatedAt") OffsetDateTime invalidatedAt);
+
+  /**
+   * Story 4.7 [Review D1] — restore (un-invalidate) an approval by public id. Compensates a
+   * rerun-from-step whose post-commit runner re-enqueue failed: the prep tx already invalidated the
+   * prior stage approval, so the dispatch failure would otherwise strand the run with a destroyed
+   * approval. Guards {@code invalidated_at is not null} so it only ever clears a row this rerun
+   * actually invalidated. Returns rows affected (1 on the first restore, 0 if already valid / not
+   * found).
+   */
+  @Modifying(clearAutomatically = true)
+  @Query(
+      """
+      update ApprovalEntity a
+        set a.invalidatedAt = null, a.invalidatedReason = null
+      where a.publicId = :publicId
+        and a.invalidatedAt is not null
+      """)
+  int clearInvalidation(@Param("publicId") String publicId);
 }

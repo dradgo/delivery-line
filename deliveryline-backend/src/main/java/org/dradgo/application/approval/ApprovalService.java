@@ -5,6 +5,8 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
+import org.dradgo.application.approval.spi.ApprovalReadPort;
 import org.dradgo.application.approval.spi.ApprovalWritePort;
 import org.dradgo.application.approval.spi.ApprovalWritePort.NewApproval;
 import org.dradgo.application.artifact.ArtifactRecordSnapshot;
@@ -64,6 +66,8 @@ public class ApprovalService {
   private final ArtifactRecordPort artifactRecordPort;
   private final ArtifactService artifactService;
   private final ApprovalWritePort approvalWritePort;
+  // Story 4.7 (Reconciliation 2) — resolve the current approved apr before invalidating it.
+  private final ApprovalReadPort approvalReadPort;
   private final WorkflowEventWritePort workflowEventWritePort;
   private final WorkflowTransitionService workflowTransitionService;
   private final ApprovalVersionBinder approvalVersionBinder;
@@ -80,6 +84,7 @@ public class ApprovalService {
       ArtifactRecordPort artifactRecordPort,
       ArtifactService artifactService,
       ApprovalWritePort approvalWritePort,
+      ApprovalReadPort approvalReadPort,
       WorkflowEventWritePort workflowEventWritePort,
       WorkflowTransitionService workflowTransitionService,
       ApprovalVersionBinder approvalVersionBinder,
@@ -90,6 +95,7 @@ public class ApprovalService {
         artifactRecordPort,
         artifactService,
         approvalWritePort,
+        approvalReadPort,
         workflowEventWritePort,
         workflowTransitionService,
         approvalVersionBinder,
@@ -105,6 +111,7 @@ public class ApprovalService {
       ArtifactRecordPort artifactRecordPort,
       ArtifactService artifactService,
       ApprovalWritePort approvalWritePort,
+      ApprovalReadPort approvalReadPort,
       WorkflowEventWritePort workflowEventWritePort,
       WorkflowTransitionService workflowTransitionService,
       ApprovalVersionBinder approvalVersionBinder,
@@ -115,6 +122,7 @@ public class ApprovalService {
     this.artifactRecordPort = artifactRecordPort;
     this.artifactService = artifactService;
     this.approvalWritePort = approvalWritePort;
+    this.approvalReadPort = approvalReadPort;
     this.workflowEventWritePort = workflowEventWritePort;
     this.workflowTransitionService = workflowTransitionService;
     this.approvalVersionBinder = approvalVersionBinder;
@@ -517,6 +525,147 @@ public class ApprovalService {
     } finally {
       MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactId);
       MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+    }
+  }
+
+  /**
+   * Story 4.7 (AC7 / Reconciliation 2) — invalidate the run's current approved artifact of the
+   * given type (rerun-from-step supersession). Reads the current approved apr via {@link
+   * ApprovalReadPort#findLatestApprovedForArtifactLineage} and, when present, flips its {@code
+   * invalidated_at}/{@code invalidated_reason} so {@code getCurrentApprovedSpec} returns null until
+   * the re-run stage produces a new artifact version that is re-approved. Keeps the approval WRITE
+   * inside the approval package (write-boundary spirit, mirror 4.6's IntegrationConflictService).
+   *
+   * <p>{@code Propagation.MANDATORY} joins the caller's {@code RecoveryService.rerunFromStep} prep
+   * transaction so the invalidation commits (or rolls back) atomically with the transition + the
+   * recovery event + the recovery_actions row.
+   *
+   * @return the invalidated apr public id, or {@code Optional.empty()} when the run has no current
+   *     approved artifact of that type (nothing to invalidate — the run was never approved at that
+   *     stage)
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<String> invalidateCurrentApproval(
+      String workflowRunId, String artifactType, String reason) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    String priorRunId = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunId);
+    try {
+      Optional<ApprovalSnapshot> current =
+          approvalReadPort.findLatestApprovedForArtifactLineage(workflowRunId, artifactType);
+      if (current.isEmpty()) {
+        log.info(
+            "approval invalidateCurrentApproval no-op workflowRunId={} artifactType={} reason=no_current_approval",
+            workflowRunId,
+            artifactType);
+        return Optional.empty();
+      }
+      String approvalPublicId = current.get().publicId();
+      boolean flipped =
+          approvalWritePort.markInvalidated(
+              approvalPublicId, reason, OffsetDateTime.now(clock).toInstant());
+      log.info(
+          "approval invalidateCurrentApproval workflowRunId={} artifactType={} approvalId={} reason={} flipped={}",
+          workflowRunId,
+          artifactType,
+          approvalPublicId,
+          reason,
+          flipped);
+      return flipped ? Optional.of(approvalPublicId) : Optional.empty();
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunId);
+    }
+  }
+
+  /**
+   * Story 4.16a [Review D3] — invalidate the currently-valid approval of ONE specific artifact
+   * version (identified by its {@code art_…} public id). Version-specific counterpart of {@link
+   * #invalidateCurrentApproval}: terminating an ambiguous lineage version must invalidate only that
+   * version's approval, never a healthy sibling version's (which the run+type keyed {@link
+   * #invalidateCurrentApproval} — resolving the highest approved version — could wrongly hit).
+   * Propagation.MANDATORY — joins the caller's prep tx so the invalidation commits (or rolls back)
+   * atomically with the lineage termination + the recovery event + the recovery_actions row.
+   *
+   * @param artifactPublicId the abandoned artifact's public id ({@code art_…})
+   * @param reason controlled reason token (e.g. {@code superseded_by_lineage_termination})
+   * @return the invalidated {@code apr_…} id, or {@code Optional.empty()} when the artifact has no
+   *     current approval (nothing to invalidate)
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<String> invalidateApprovalForArtifact(String artifactPublicId, String reason) {
+    PublicIdPrefixes.require(artifactPublicId, PublicIdPrefixes.ARTIFACT);
+    String priorArtifactId = MdcKeys.beginScope(MdcKeys.ARTIFACT_ID, artifactPublicId);
+    try {
+      Optional<ApprovalSnapshot> current =
+          approvalReadPort.findLatestApprovedForArtifact(artifactPublicId);
+      if (current.isEmpty()) {
+        log.info(
+            "approval invalidateApprovalForArtifact no-op artifactId={} reason=no_current_approval",
+            artifactPublicId);
+        return Optional.empty();
+      }
+      ApprovalSnapshot snapshot = current.get();
+      String approvalPublicId = snapshot.publicId();
+      boolean flipped =
+          approvalWritePort.markInvalidated(
+              approvalPublicId, reason, OffsetDateTime.now(clock).toInstant());
+      log.info(
+          "approval invalidateApprovalForArtifact artifactId={} artifactVersion={} approvalId={} reason={} flipped={}",
+          artifactPublicId,
+          snapshot.artifactVersion(),
+          approvalPublicId,
+          reason,
+          flipped);
+      return flipped ? Optional.of(approvalPublicId) : Optional.empty();
+    } finally {
+      MdcKeys.endScope(MdcKeys.ARTIFACT_ID, priorArtifactId);
+    }
+  }
+
+  /**
+   * Story 4.22 (AC5) — the READ HALF of {@link #invalidateCurrentApproval}: resolve the public id
+   * of the run's current approved artifact of the given type WITHOUT flipping it. Backs the
+   * non-mutating rerun-from-step preview ({@code RecoveryService.previewRerunFromStep}) so the
+   * Decision Bar can show which approval a rerun WOULD invalidate before the operator confirms.
+   * Keeps the approval read inside the approval package (no {@code ApprovalReadPort} leak into
+   * {@code RecoveryService}, mirroring the write-boundary discipline). Pure read — no
+   * {@code @Transactional} (single {@link ApprovalReadPort} query; adding a nested boundary would
+   * violate trap T4's no-annotation rule for this service).
+   *
+   * @return the {@code apr_…} id of the current approved artifact of that type, or {@code
+   *     Optional.empty()} when the run has no current approval at that stage (nothing would be
+   *     invalidated)
+   */
+  public Optional<String> findCurrentApprovalId(String workflowRunId, String artifactType) {
+    PublicIdPrefixes.require(workflowRunId, PublicIdPrefixes.WORKFLOW_RUN);
+    return approvalReadPort
+        .findLatestApprovedForArtifactLineage(workflowRunId, artifactType)
+        .map(ApprovalSnapshot::publicId);
+  }
+
+  /**
+   * Story 4.7 [Review D1] — restore (un-invalidate) an approval that a rerun-from-step invalidated,
+   * compensating a post-commit runner re-enqueue failure so the run is not stranded with a
+   * destroyed approval. Keeps the approval WRITE inside the approval package (write-boundary
+   * spirit, mirror {@link #invalidateCurrentApproval}). Idempotent at the DB level ({@code
+   * invalidated_at IS NOT NULL} guard).
+   *
+   * @param approvalPublicId {@code apr_…} of the approval to restore (from the rerun's {@code
+   *     invalidatedApprovalIds})
+   * @return {@code true} when a row was restored; {@code false} when it was already valid / not
+   *     found
+   */
+  @Transactional(propagation = Propagation.REQUIRED)
+  public boolean restoreInvalidatedApproval(String approvalPublicId) {
+    String priorApprovalId = MdcKeys.beginScope(MdcKeys.APPROVAL_ID, approvalPublicId);
+    try {
+      boolean cleared = approvalWritePort.clearInvalidation(approvalPublicId);
+      log.info(
+          "approval restoreInvalidatedApproval approvalId={} cleared={}",
+          approvalPublicId,
+          cleared);
+      return cleared;
+    } finally {
+      MdcKeys.endScope(MdcKeys.APPROVAL_ID, priorApprovalId);
     }
   }
 

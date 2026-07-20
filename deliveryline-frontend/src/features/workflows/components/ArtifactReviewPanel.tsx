@@ -59,6 +59,12 @@ export interface ArtifactReviewPanelProps {
   actions?: readonly string[] | undefined;
   /** AC4 — the error-state Retry handler. */
   onRetry?: (() => void) | undefined;
+  /**
+   * Story 4.20 (AC8/AC9) — opens Compare Mode for the current artifact (in-context overlay,
+   * NO navigation). Threaded to every variant renderer's Compare control; `undefined` leaves the
+   * control inert even when `compareEnabled`.
+   */
+  onEnterCompare?: (() => void) | undefined;
 }
 
 /** The unknown-discriminant safe fallback (AC3) — never crashes on a future type. */
@@ -78,19 +84,37 @@ function renderVariant(
   artifact: ArtifactView,
   compareEnabled: boolean,
   actions: readonly string[] | undefined,
+  onEnterCompare: (() => void) | undefined,
 ): ReactNode {
   switch (artifact.artifactType) {
     case 'spec':
-      return <SpecArtifactRenderer artifact={artifact} compareEnabled={compareEnabled} />;
+      return (
+        <SpecArtifactRenderer
+          artifact={artifact}
+          compareEnabled={compareEnabled}
+          onCompare={onEnterCompare}
+        />
+      );
     case 'implementationPlan':
       return (
-        <ImplementationPlanArtifactRenderer artifact={artifact} compareEnabled={compareEnabled} />
+        <ImplementationPlanArtifactRenderer
+          artifact={artifact}
+          compareEnabled={compareEnabled}
+          onCompare={onEnterCompare}
+        />
       );
     case 'prOutput':
       // Story 3.27 AC7 — thread the backend-reported allowed actions to the prOutput
       // renderer (parallel to how `spec` gets `compareEnabled`); the renderer gates its
-      // variant-specific controls strictly on them, never on frontend inference.
-      return <PrOutputArtifactRenderer artifact={artifact} actions={actions} />;
+      // variant-specific controls strictly on them, never on frontend inference. Story 4.20 —
+      // the Compare control's onClick opens the overlay (AC8/AC9).
+      return (
+        <PrOutputArtifactRenderer
+          artifact={artifact}
+          actions={actions}
+          onCompare={onEnterCompare}
+        />
+      );
     default:
       // A discriminant value this build doesn't know (a future type). The union is
       // closed in TS, but the runtime guard is the artifact-level twin of the route's
@@ -162,6 +186,7 @@ export function ArtifactReviewPanel({
   compareEnabled = false,
   actions,
   onRetry,
+  onEnterCompare,
 }: ArtifactReviewPanelProps) {
   return (
     <section
@@ -229,7 +254,7 @@ export function ArtifactReviewPanel({
               message="This artifact’s content is partial (truncated). Some sections may be missing."
             />
           ) : null}
-          {renderVariant(artifact, compareEnabled, actions)}
+          {renderVariant(artifact, compareEnabled, actions, onEnterCompare)}
         </>
       ) : null}
     </section>
@@ -239,6 +264,12 @@ export function ArtifactReviewPanel({
 export interface ArtifactReviewPanelContainerProps {
   workflowRunId: string;
   artifactId: string;
+  /**
+   * Story 4.20 (AC8/AC9) — opens Compare Mode for the current artifact. The route owns the overlay
+   * state + mount (in-context, NO new route); the container forwards this to the panel's Compare
+   * control. `undefined` keeps the control inert.
+   */
+  onEnterCompare?: (() => void) | undefined;
 }
 
 /**
@@ -255,6 +286,7 @@ export interface ArtifactReviewPanelContainerProps {
 export function ArtifactReviewPanelContainer({
   workflowRunId,
   artifactId,
+  onEnterCompare,
 }: ArtifactReviewPanelContainerProps) {
   const artifactQuery = useArtifact(workflowRunId, artifactId);
   const allowedActionsQuery = useAllowedActions(workflowRunId);
@@ -311,6 +343,7 @@ export function ArtifactReviewPanelContainer({
       compareEnabled={compareEnabled}
       actions={actions}
       onRetry={handleRetry}
+      onEnterCompare={onEnterCompare}
     />
   );
 }

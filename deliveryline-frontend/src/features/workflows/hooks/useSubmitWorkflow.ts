@@ -45,6 +45,12 @@ export interface SubmitRunVariables {
   actorType: ActorType;
   /** Optional, ≤128 — caller-supplied correlation id; omitted from the body when blank. */
   correlationId?: string | undefined;
+  /**
+   * Optional — the project the run is governed under. Story 3i-2: the intake browse is
+   * project-scoped, so a run started from a candidate ticket carries that project. Omitted by the
+   * free-form submit form, which lets the backend resolve the default project.
+   */
+  projectReference?: string | undefined;
 }
 
 /** One submit attempt — the caller's variables plus the stable key for THIS attempt. */
@@ -87,6 +93,9 @@ export function useSubmitWorkflow(): UseSubmitWorkflowResult {
         // Optional-field spread (mirror `useApproveSpec`): omit when absent/blank.
         ...(variables.correlationId !== undefined && variables.correlationId !== ''
           ? { correlationId: variables.correlationId }
+          : {}),
+        ...(variables.projectReference !== undefined && variables.projectReference !== ''
+          ? { projectReference: variables.projectReference }
           : {}),
       };
       return unwrap(

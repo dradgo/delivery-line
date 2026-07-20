@@ -65,4 +65,25 @@ describe('workflowKeys', () => {
   it('keys artifact() by artifact id, distinct from run detail', () => {
     expect(workflowKeys.artifact('art_abcd')).toEqual(['workflows', 'artifact', 'art_abcd']);
   });
+
+  it('keys integrationConflict() by conflict id off `all`, distinct from any run detail (story 4.23)', () => {
+    expect(workflowKeys.integrationConflict('icf_abcd')).toEqual([
+      'workflows',
+      'integrationConflict',
+      'icf_abcd',
+    ]);
+    // NOT under detail(runId) — the endpoint is keyed by conflictId, not run id.
+    const detail = workflowKeys.detail('run_abcd');
+    expect(workflowKeys.integrationConflict('icf_abcd').slice(0, detail.length)).not.toEqual([
+      ...detail,
+    ]);
+  });
+
+  it('makes integrationConflicts(runId) a run-scoped PREFIX child of detail(id) (story 4.23)', () => {
+    const id = 'run_abcd';
+    const detail = workflowKeys.detail(id);
+    const list = workflowKeys.integrationConflicts(id);
+    expect(list.slice(0, detail.length)).toEqual([...detail]);
+    expect(list.length).toBeGreaterThan(detail.length);
+  });
 });

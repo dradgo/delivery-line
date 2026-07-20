@@ -193,6 +193,24 @@
       "placeholder": "[REDACTED_SECRET_FIELD]",
       "minimumClassification": "shareable-redacted",
       "forbiddenSnippets": ["FAKE-OPAQUE-CREDENTIAL-DO-NOT-USE-Zk9wQ2pLmN7xR4tBvH"]
+    },
+    {
+      "file": "project-credential-jira-token.json",
+      "placeholder": "[REDACTED_SECRET_FIELD]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["ATATT3xFfGF0-FAKEDONOTUSE-aaaaaaaaaaaaaaaaaaaaaaaa"]
+    },
+    {
+      "file": "bitbucket-app-password.txt",
+      "placeholder": "[REDACTED_AUTHORIZATION_HEADER]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["YWNtZS13b3Jrc3BhY2U6RkFLRS1CSVRCVUNLRVQtQVBQLVBBU1NXT1JELURPLU5PVC1VU0U="]
+    },
+    {
+      "file": "project-credential-bitbucket-token.json",
+      "placeholder": "[REDACTED_SECRET_FIELD]",
+      "minimumClassification": "shareable-redacted",
+      "forbiddenSnippets": ["FAKE-BITBUCKET-TOKEN-DO-NOT-USE-Zk9wQ2pLmN7xR4tBvH"]
     }
   ]
 }

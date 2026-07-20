@@ -177,6 +177,32 @@ public class ArtifactOperationPersistenceAdapter implements ArtifactOperationPor
 
   @Override
   @Transactional(readOnly = true)
+  public List<ArtifactOperationSnapshot> findPendingOlderThan(
+      Duration threshold,
+      int batchLimit,
+      java.time.OffsetDateTime afterCreatedAt,
+      String afterPublicId) {
+    if (batchLimit <= 0) {
+      throw new IllegalArgumentException("batchLimit must be positive but was: " + batchLimit);
+    }
+    long seconds = threshold == null ? 0L : Math.max(threshold.getSeconds(), 0L);
+    // Both cursor components must be present to page; a half-set cursor starts from the oldest.
+    java.time.OffsetDateTime cursorCreatedAt = afterPublicId == null ? null : afterCreatedAt;
+    String cursorPublicId = afterCreatedAt == null ? null : afterPublicId;
+    return artifactOperationRepository
+        .findPendingOlderThanKeyset(
+            ArtifactOperationStatus.PENDING.value(),
+            seconds,
+            batchLimit,
+            cursorCreatedAt,
+            cursorPublicId)
+        .stream()
+        .map(artifactOperationEntityMapper::toSnapshot)
+        .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
   public boolean hasFailedOrFailedOrphanForRun(String workflowRunPublicId) {
     return artifactOperationRepository.existsFailedOrFailedOrphanByWorkflowRunPublicId(
         workflowRunPublicId);

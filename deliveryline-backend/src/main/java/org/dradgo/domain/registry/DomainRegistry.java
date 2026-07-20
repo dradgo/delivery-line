@@ -30,8 +30,16 @@ public final class DomainRegistry {
   private static final Set<String> ARTIFACT_TYPES = valuesOf(ArtifactType.values());
   private static final Set<String> DATA_CLASSIFICATIONS = valuesOf(DataClassification.values());
   private static final Set<String> FAILURE_CATEGORIES = valuesOf(FailureCategory.values());
+  private static final Set<String> FAILURE_TAXONOMY_VALUES =
+      valuesOf(FailureTaxonomyValue.values());
   private static final Set<String> INTEGRATION_FAILURE_CATEGORIES =
       valuesOf(IntegrationFailureCategory.values());
+  private static final Set<String> INTEGRATION_CONFLICT_CATEGORIES =
+      valuesOf(IntegrationConflictCategory.values());
+  private static final Set<String> DRIFT_CATEGORIES = valuesOf(DriftCategory.values());
+  private static final Set<String> RECONCILIATION_DECISIONS =
+      valuesOf(ReconciliationDecision.values());
+  private static final Set<String> SAFE_RERUN_STEPS = valuesOf(SafeRerunStep.values());
   private static final Set<String> INTEGRATION_SYNC_STATUSES =
       valuesOf(IntegrationSyncStatus.values());
   private static final Set<String> RUNNER_SCHEMA_VERSIONS = valuesOf(RunnerSchemaVersion.values());
@@ -42,6 +50,10 @@ public final class DomainRegistry {
   private static final Set<String> PROJECT_RUNNER_STEPS = valuesOf(ProjectRunnerStep.values());
   private static final Set<String> CONNECTOR_KINDS = valuesOf(ConnectorKind.values());
   private static final Set<String> REVIEW_OUTCOMES = valuesOf(ReviewOutcome.values());
+  // Story 3m-2 (AC7) — configurable-workflow value sets.
+  private static final Set<String> DEFINITION_KINDS = valuesOf(DefinitionKind.values());
+  private static final Set<String> BMAD_STEP_KEYS = valuesOf(BmadStepKey.values());
+  private static final Set<String> ARTIFACT_KINDS = valuesOf(ArtifactKind.values());
   private static final Map<String, String> PUBLIC_ID_PREFIXES = PublicIdPrefixes.prefixMap();
 
   private DomainRegistry() {}
@@ -94,8 +106,28 @@ public final class DomainRegistry {
     return FAILURE_CATEGORIES;
   }
 
+  public static Set<String> failureTaxonomyValues() {
+    return FAILURE_TAXONOMY_VALUES;
+  }
+
   public static Set<String> integrationFailureCategories() {
     return INTEGRATION_FAILURE_CATEGORIES;
+  }
+
+  public static Set<String> integrationConflictCategories() {
+    return INTEGRATION_CONFLICT_CATEGORIES;
+  }
+
+  public static Set<String> driftCategories() {
+    return DRIFT_CATEGORIES;
+  }
+
+  public static Set<String> reconciliationDecisions() {
+    return RECONCILIATION_DECISIONS;
+  }
+
+  public static Set<String> safeRerunSteps() {
+    return SAFE_RERUN_STEPS;
   }
 
   public static Set<String> integrationSyncStatuses() {
@@ -132,6 +164,18 @@ public final class DomainRegistry {
 
   public static Set<String> reviewOutcomes() {
     return REVIEW_OUTCOMES;
+  }
+
+  public static Set<String> definitionKinds() {
+    return DEFINITION_KINDS;
+  }
+
+  public static Set<String> bmadStepKeys() {
+    return BMAD_STEP_KEYS;
+  }
+
+  public static Set<String> artifactKinds() {
+    return ARTIFACT_KINDS;
   }
 
   public static Map<String, String> publicIdPrefixes() {

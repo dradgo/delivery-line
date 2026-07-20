@@ -1,0 +1,353 @@
+# Story 4.18: Integration Conflict — Operator Action Surfacing + Conflict-Driven Workflow Pause
+
+Status: done
+
+<!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
+
+## Story
+
+As a Workflow Owner needing detected conflicts (from story 4.17) to surface in the right places + the workflow to pause when state-conflict severity warrants it,
+I want backend orchestration that (a) surfaces unresolved conflicts in the operator queue with a distinct attention indicator, (b) exposes them via REST inspection endpoints, (c) auto-pauses the run on `external_state_advanced` / `external_state_reverted` conflicts, and (d) blocks new orchestration dispatches against runs with unresolved high-severity conflicts,
+so that conflicts never silently advance state (NFR19) and operators have an explicit reconcile decision (story 4.6 / 4.11) to make before the workflow can continue.
+
+## Context & Central Reconciliation (READ FIRST)
+
+**This is the HANDLING half of Epic 4's integration-conflict pair. The DETECTION half — story [[4-17]] (`done`) — is a PURE PRODUCER** that already ships: the `integration_conflicts` table (Flyway **V36**), the `IntegrationConflictCategory` registry enum, per-conflict `integration.conflictDetected` events, Prometheus metrics, and the read-only `IntegrationConflictService.listUnresolvedConflicts` / `findConflictForResolution` surface + `IntegrationConflictReadPort`. **4.18 builds NO table, NO detection sweep, NO reconcile mutation** (reconcile is story 4.6 `RecoveryService.reconcile`, `done`). 4.18 is **five thin wirings over existing services**:
+
+1. **REST read** — a NEW thin `IntegrationConflictController` (`/api/v1/integration-conflicts` list + `/{conflictId}` detail) over the existing `IntegrationConflictService`.
+2. **Auto-pause** — a hook in the 4.17 detection sweep's first-insert branch that calls the existing `RecoveryService.pause` (`done`, story 4.8) for high-severity categories.
+3. **Dispatch gate** — a precondition check inside the existing `WorkflowOrchestrationService` dispatch path.
+4. **Operator-queue indicator** — a per-run unresolved-conflict count on the existing operator-queue row (story 4.2).
+5. **Linear suppression** — an early-return guard on the existing reopen-notification path (story 4.7).
+
+**Verify sibling state at dev time:** `sprint-status.yaml` shows 4.17 `done`, 4.6 `done` (reconcile), 4.8 `done` (pause), 4.11 `done` (REST reconcile). The `RecoveryService.pause`, `RecoveryService.reconcile`, `IntegrationConflictService`, and `integration_conflicts` symbols are all LIVE in the working tree. If any is missing, STOP and rebase.
+
+### HEADLINE RECONCILIATIONS (epic AC text drifts from live code — these bindings win)
+
+1. **NO Flyway migration, NO new table, NO new registry value.** Everything 4.18 needs already exists: `integration_conflicts` (V36), `IntegrationConflictCategory`, `recovery_actions` (V1), `RECOVERY_PAUSED` event, `RECONCILE_CONFLICT` AllowedAction. The ONLY governed addition is one **new `DomainErrorCode`** (`DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT`) — a "three-sites" fan-out (Reconciliation 7). Do NOT author a migration. [Source: 4-17 story shipped V36; DomainErrorCode.java PAUSE_NOT_APPLICABLE three-sites precedent]
+
+2. **THE CONFIG-NAMESPACE TRAP — AC5's key `deliveryline.integration.conflict.auto-pause-on-categories` does NOT match the shipped namespace.** Story 4.17's properties bind the prefix **`deliveryline.integration.conflict-detection`** (`IntegrationConflictDetectionProperties`, `@ConfigurationProperties("deliveryline.integration.conflict-detection")`). There is NO bare `deliveryline.integration.conflict` props class (grep for `auto-pause` = zero files). **BINDING: add the new `autoPauseOnCategories` field to the EXISTING `IntegrationConflictDetectionProperties` record** (key `deliveryline.integration.conflict-detection.auto-pause-on-categories`) rather than minting a second props class + second `@EnableConfigurationProperties`. Correct AC5's key to the `conflict-detection` namespace in the docs you write. Keep the record's **non-`@Validated`, normalize-never-throw** posture ([[validated-config-needs-test-yaml]]). See OQ-1 if Alex prefers a separate `conflict` namespace. [Source: IntegrationConflictDetectionProperties.java:30-48; IntegrationConflictConfiguration.java:17-19]
+
+3. **THE PAUSE-REVIEWERROLE TRAP — `RecoveryService.pause` HARDCODES `reviewer_role='workflow_owner'`; AC4's `reviewerRole=system` is a REAL code change, not just a caller change.** `pause`'s prep inserts the `recovery_actions` row with the literal `REVIEWER_ROLE_WORKFLOW_OWNER` constant (`RecoveryService.java:1420`) regardless of the actor. Passing `ActorContext.SYSTEM` correctly stamps `actor_identity='system'` + `actor_type=SYSTEM` on the event + action, but the `reviewer_role` column will STILL read `workflow_owner` — the audit trail cannot distinguish auto-pause. **BINDING: change the pause prep to derive `reviewerRole` from the actor** — add `REVIEWER_ROLE_SYSTEM = "system"` and stamp it when `actor.actorType() == ActorType.SYSTEM`, else keep `workflow_owner`. **No migration + no registry change needed** — `recovery_actions.reviewer_role` is free `text not null` with NO CHECK constraint (verified V1:176). Update the pause logging-contract + pause unit test to cover the system-reviewer-role branch. [Source: RecoveryService.java:1409-1420,193; V1__create_workflow_core_tables.sql:176]
+
+4. **`RecoveryService.pause` signature is `(workflowRunId, idempotencyKey, actor, reasonText)` — `idempotencyKey` is 2nd, `actor` 3rd.** Do NOT guess the order. The auto-pause `idempotencyKey` MUST be **deterministic from the conflict** (e.g. `"autopause-conflict-" + conflictPublicId`) so a re-invocation replays idempotently instead of double-pausing. Actor = `ActorContext.SYSTEM` (`application.artifact.ActorContext.SYSTEM`, identity `"system"`, type `SYSTEM`) — or `WorkflowOrchestrationService.systemActor(correlationId)` if you carry the sweep correlationId. `reasonText = "auto_paused_on_state_conflict"` (AC4). [Source: RecoveryService.java:1121; ActorContext.java:5,16; WorkflowOrchestrationService.java:1916]
+
+5. **Auto-pause is a NEW collaborator, invoked from the 4.17 sweep's first-insert branch — there is NO ArchUnit block on `application.integration.conflict → application.recovery`.** `RecoveryService` scope-protection was lifted by story 4.28 (ADR 0033); the only conflict-package ArchUnit rule is a WRITE-scoping rule (`ONLY_CONFLICT_PACKAGE_MAY_WRITE_INTEGRATION_CONFLICTS`), not a dependency-direction rule. **BINDING: introduce `application/integration/conflict/ConflictAutoPauseHandler.java`** that injects `ObjectProvider<RecoveryService>` (lazy — RecoveryService is a 21-arg bean; lazy avoids init-order surprises) + `IntegrationConflictDetectionProperties`. Invoke it from `IntegrationConflictDetectionService.recordConflict` in the **post-insert `wrote == true` branch only** (dedup guarantees exactly-once per new `(link, category)` — no per-tick spam). It is **best-effort**: swallow `DomainException(PAUSE_NOT_APPLICABLE)` + WARN (a terminal/already-Paused/TakenOver run is not pausable — AC4's non-terminal/non-Paused/non-TakenOver precondition is enforced BY `pause`'s own `PAUSABLE_SOURCE_STATES` gate, so you do NOT re-check state before calling). No cycle: detection → handler → recovery → conflictService(read). [Source: IntegrationConflictDetectionService.java:442-496; RecoveryService.java scope-lift javadoc:83-88; ArchitectureRuleCatalog.java:511,827-831]
+
+6. **The dispatch gate lives in the EXISTING `WorkflowOrchestrationService.dispatchExecutionInternal` — no new service (AC9).** Both `dispatchPlanGeneration(runId, correlationId)` (`:525`) and `dispatchImplementation(runId, correlationId)` (`:602`) delegate to the shared private `dispatchExecutionInternal(...)` (`:681`). Insert the conflict gate **right after `requireRun` (`:697`) and before `enqueueDispatch` (`:728`)**. These dispatch methods never transition the run (javadoc Trap T1, `:720-721`), so **throwing before enqueue inherently leaves the run in its prior state** — that IS AC6's "transient orchestration failure — workflow remains in its prior state". Throw `DomainException(DomainErrorCode.DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT, ...)` (mirror the `RETRY_NOT_APPLICABLE` throw shape at `RecoveryService.java:546-559`). Wire `IntegrationConflictService` into `WorkflowOrchestrationService` as a **nullable/`ObjectProvider` dep** (mirror how `WorkflowInspectionService` nullable-injects it) to minimize the ctor-fan-out blast on test construction sites. [Source: WorkflowOrchestrationService.java:508-612,681-736,691-694; WorkflowInspectionService.java:1640-1648]
+
+7. **New `DomainErrorCode.DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT` = THREE SITES** ([[new-domainerrorcode-three-sites]], `-Pfoundation-gate` reds if you miss one): (i) the enum constant in `DomainErrorCode.java` (mirror `PAUSE_NOT_APPLICABLE:286`); (ii) a `register(...)` call in `ProblemDetailsCatalog.java` (`HttpStatus.CONFLICT` / 409, retryable `false` — mirror `PAUSE_NOT_APPLICABLE:650-655`); (iii) the `problemTypeUris` entry `"DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT": "https://deliveryline.local/problems/dispatch-blocked-by-unresolved-conflict"` in `src/test/resources/contracts/openapi/registry-api-schema-placeholders.json` (`:119+`). This is required even though the code is thrown inside orchestration (not a direct REST endpoint) — the contract tests pin that every `DomainErrorCode` has a ProblemDetails mapping + placeholder. [Source: DomainErrorCode.java:278-287; ProblemDetailsCatalog.java:650-655; registry-api-schema-placeholders.json:119,209]
+
+8. **The read endpoints are NEW pagination surface — `listUnresolvedConflicts` today returns an UNBOUNDED `List` with NO cursor/limit and hardcodes `resolved_at IS NULL`.** For AC2's `?limit=&cursor=&resolved=true|false`, you MUST extend the read path: widen `ConflictFilter` (add `Boolean resolved`, `Integer limit`, `String cursor`), add a keyset-paginated read-port method (mirror `AuditQueryService` keyset), and add adapter SQL that conditionally drops the `resolved_at IS NULL` predicate when `resolved != false`. `findByPublicId` already returns resolved rows (it does NOT filter `resolved_at`), so the `/{conflictId}` detail path needs no change beyond mapping. Counts: reuse `IntegrationConflictReadPort.countUnresolvedByCategoryAndIntegration()` for `totalUnresolvedByCategory`/`ByIntegration` + `totalUnresolved`; add a `totalResolved` count method. [Source: IntegrationConflictService.java:48-65; ConflictFilter.java:14-19; IntegrationConflictReadPort.java:18-26; AuditController.java:61-124 cursor template]
+
+9. **The operator queue has NO badge/indicator field today — you are adding the FIRST one (AC1).** Story 4.15's "drift entries" badge does NOT exist in the backend (grep = zero). `OperatorRunRow` carries only `operatorSignifier` (a single UPPERCASE token: `FAILED`/`STALLED`/…) + `escalationMarker` (boolean). A run can be both `FAILED` AND have a conflict, so **do NOT overload `operatorSignifier`** — **add a discrete `int unresolvedConflictCount` field** to `OperatorRunRow` + `OperatorRunRowResponse` (FE renders the non-color "Conflict" chip when `> 0`). Source it via a NEW **batch** read-port method `Map<String,Integer> unresolvedCountByRun(Collection<String> runIds)` (one grouped query, NOT per-row `listUnresolvedConflicts` — that N+1s the hot queue path). Adding a field to these records trips the exact-field contract tests ([[workflow-summary-exact-field-contract-test]]) — update them. [Source: WorkflowInspectionService.java:4493-4521; OperatorRunRowResponse.java:20-78; IntegrationConflictReadPort.java:26]
+
+10. **AC7 is ALREADY MOSTLY SATISFIED by story 4.6 — do NOT widen the allowed-actions contract.** `AllowedAction.RECONCILE_CONFLICT` is appended for `ROLE_WORKFLOW_OWNER` on runs with an unresolved conflict via `WorkflowInspectionService.appendConflictOverlay` (`:1633-1638`). But `AllowedActionsView`/`AllowedActionsResponse` is a flat `List<String>` with **no per-action metadata** — there is nowhere to "attach" a `conflictId` + suggested decision without a contract-widening blast. **BINDING: the conflictId + suggested decision are surfaced via the NEW `GET /api/v1/integration-conflicts?workflowRunId={run}` list + `/{conflictId}` detail** (which the story 4.23 dialog consumes — epic line 501 wires `useIntegrationConflict(conflictId)` to this detail endpoint). So AC7 = **verify `reconcile_conflict` still surfaces** (regression) + the new run-filtered list makes the conflictId reachable; do NOT touch `AllowedActionsResponse`. See OQ-2. [Source: WorkflowInspectionService.java:1479,1547-1560,1603-1648; AllowedActionsResponse.java:21-41; epic-04-recovery.md:501]
+
+11. **AC8 Linear suppression — implement the guard, but its trigger is PROVISIONAL and its category premise conflicts with AC4.** The reopen-notification path is `RecoveryService.bestEffortLinearReopenNotification` (`:2500`) → `WorkflowOrchestrationService.notifyLinearRunReopened` (`:1585`); it is the story-4.7 rerun-reopen comment, `@Transactional(REQUIRES_NEW)`, **never throws** (best-effort). Add an early-return skip-with-log guard (mirror the `linear-completion-sync.enabled=false` early-return at `:1437-1438`): **if the run has an unresolved conflict on its Linear ticket link, skip the reopen comment until reconcile.** TWO caveats to flag: (a) a Linear ticket "closed externally" is category `external_resource_removed`, which is **NOT in the default auto-pause set** (`external_state_advanced`/`_reverted`) — so gate the suppression on **ANY unresolved conflict on the run's Linear link**, not on "auto-pause fired"; (b) story 4.17 currently emits **no Linear state-drift conflict** (only removed/broken — OQ-1 there), so this guard rarely fires today. Implement it correctly and pin it with a test that seeds a Linear conflict; note the provisional reach in Dev Notes. See OQ-3. [Source: RecoveryService.java:2091,2500-2514; WorkflowOrchestrationService.java:1434-1438,1585-1672; docs/integrations/conflict-detection.md Linear-provisional note]
+
+12. **AC3 safety-ranked suggestions — `ReconciliationDecision` has FOUR values.** `{ACCEPT_EXTERNAL_STATE("accept_external_state"), ACCEPT_INTERNAL_STATE("accept_internal_state"), MARK_COMPLETED_EXTERNALLY("mark_completed_externally"), MARK_FAILED_EXTERNALLY("mark_failed_externally")}`. The `/{conflictId}` detail must return per-category **ranked** suggestions with a `safety` label (e.g. `safe` / `risky`). Implement a small pure ranking helper (e.g. `ConflictReconciliationSuggester` or a private method) keyed on `IntegrationConflictCategory`: `external_state_advanced` (PR merged externally) → `accept_external_state`=**safe**, `accept_internal_state`=**risky** (re-opening the PR); `external_state_reverted` → mirror; `external_resource_removed` → `mark_failed_externally`/`accept_external_state`=safe; etc. Keep the ranking deterministic + unit-tested. [Source: ReconciliationDecision.java:5-9; RecoveryService.java:2863-2882 accept_external/internal semantics]
+
+## Scope Boundary — what 4.18 BUILDS vs REUSES vs DEFERS
+
+| Concern | 4.18 | Note |
+|---|---|---|
+| `IntegrationConflictController` (`GET /api/v1/integration-conflicts` list + `/{conflictId}` detail) + response DTOs | **BUILD** | AC2/AC3 — thin, mirror `AuditController`; Reconciliation 8 |
+| Extend `ConflictFilter` (`resolved`,`limit`,`cursor`) + keyset read-port method + adapter SQL + `totalResolved` count | **BUILD** | AC2 — Reconciliation 8 |
+| `ConflictReconciliationSuggester` safety-ranking (per-category `ReconciliationDecision` + `safety`) | **BUILD** | AC3 — Reconciliation 12 |
+| OpenAPI snapshot regen (2 operationIds) + FE `npm run generate-api` | **BUILD** | AC2 — [[openapi-regen-frontend-client-drift-cascade]] |
+| `ConflictAutoPauseHandler` (invoke `RecoveryService.pause` on high-severity first-insert) + hook in `recordConflict` | **BUILD** | AC4 — Reconciliation 4/5 |
+| `autoPauseOnCategories` field on `IntegrationConflictDetectionProperties` + main/test `application.yml` | **BUILD** | AC5 — Reconciliation 2 |
+| `RecoveryService.pause` reviewerRole-from-actor change (`REVIEWER_ROLE_SYSTEM`) | **BUILD** | AC4 — Reconciliation 3 |
+| Dispatch gate in `WorkflowOrchestrationService.dispatchExecutionInternal` + wire `IntegrationConflictService` | **BUILD** | AC6/AC9 — Reconciliation 6 |
+| `DomainErrorCode.DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT` (enum + catalog + placeholder) | **BUILD** | AC6 — Reconciliation 7 |
+| `int unresolvedConflictCount` on `OperatorRunRow` + `OperatorRunRowResponse` + batch read-port method | **BUILD** | AC1 — Reconciliation 9 |
+| Linear reopen-notification suppression guard | **BUILD** | AC8 — Reconciliation 11 |
+| `reconcile_conflict` allowed-action | **REUSE (verify)** | AC7 — story 4.6; Reconciliation 10 |
+| `integration_conflicts` table / `IntegrationConflictCategory` / detection sweep / events / metrics | **REUSE** | story 4.17 (`done`) — Reconciliation 1 |
+| `RecoveryService.pause` primitive / `RECOVERY_PAUSED` event / `recovery_actions` | **REUSE** | story 4.8 (`done`) |
+| `RecoveryService.reconcile` / `resolveConflict` / `resolved_at` write | **REUSE (out of scope)** | story 4.6 / 4.11 (`done`) |
+| `docs/integrations/conflict-handling.md` | **BUILD (doc)** | AC5 |
+| Flyway migration / new table / new registry value / new AllowedAction | **NONE** | Reconciliation 1 |
+| CLI equivalence commands | **NONE** | read-only GETs; epic mandates CLI only for mutation endpoints (4.10–4.14) |
+| FE queue chip render / reconciliation dialog / decision bar | **DEFER** | stories 4.2/4.22/4.23/4.24 (FE) — 4.18 is backend + REST only |
+
+## Acceptance Criteria
+
+> From `epic-04-recovery.md` §"Story 4.18" (lines 394–411), with **binding clarifications** in **bold parentheticals**.
+
+1. **Given** the operator queue from story 4.2, **Then** runs with unresolved conflicts display a distinct "conflict" attention indicator alongside failed/stalled indicators — non-color signifier (icon + "Conflict" label). **(Backend: add `int unresolvedConflictCount` to `OperatorRunRow` + `OperatorRunRowResponse`, sourced from a NEW batch `IntegrationConflictReadPort.unresolvedCountByRun(Collection<runIds>)` grouped query — NOT per-row (N+1). Do NOT overload `operatorSignifier` (a run can be FAILED + conflicted). FE chip render is story 4.2/4.22 — 4.18 exposes the count only. Reconciliation 9. Update the exact-field contract tests.)**
+
+2. **Given** REST `GET /api/v1/integration-conflicts`, **Then** returns `IntegrationConflictListResponse { conflicts, totalUnresolved, totalResolved, totalUnresolvedByCategory, totalUnresolvedByIntegration }`; query params `?category=&integration=linear|github&workflowRunId=&since=&resolved=true|false&limit=&cursor=`; idempotent read; OpenAPI documented. **(NEW thin `IntegrationConflictController` — Reconciliation 8. Mirror `AuditController` cursor conventions: `since` = `@RequestParam @DateTimeFormat OffsetDateTime`, `category`/`integration` string filters, `limit` default (mirror `AuditController.DEFAULT_LIMIT`), opaque `cursor`. Extend `ConflictFilter` + read-port keyset method + adapter SQL (drop the `resolved_at IS NULL` predicate when `resolved != false`). Counts via `countUnresolvedByCategoryAndIntegration()` (→ the two `Map`s + `totalUnresolved`) + a new `totalResolved`. `operationId=listIntegrationConflicts` — add the `.contains(...)` assertion to `OpenApiSnapshotContractTest`.)**
+
+3. **Given** `GET /api/v1/integration-conflicts/{conflictId}`, **Then** returns the typed conflict with both `internalStateSnapshot` + `externalStateSnapshot` JSONBs + suggested `ReconciliationDecision` options ranked by safety. **(Map from the EXISTING `IntegrationConflictService.findConflictForResolution(conflictId) → ConflictResolutionView` (already carries both snapshots as JSON strings + `resolvedAt`). `conflictId not found` → `CONFLICT_NOT_FOUND` (404, already mapped). Add `ConflictReconciliationSuggester` producing per-category ranked `SuggestedDecision {decision, safety}` — Reconciliation 12. `operationId=getIntegrationConflict`. NOTE `ConflictResolutionView` lacks a `detectedAt` field — if the detail response needs it, widen the view + `findByPublicId` SQL (add `c.detected_at`); confirm the epic's snapshot-only detail is enough.)**
+
+4. **Given** auto-pause-on-high-severity per NFR21, **When** the detection job detects a NEW conflict in category `external_state_advanced`/`external_state_reverted` for a run in a non-terminal, non-`Paused`, non-`TakenOver` state, **Then** the conflict-handling layer invokes `RecoveryService.pause(...)` with `actor='system'` + `reviewerRole='system'`. **(NEW `ConflictAutoPauseHandler` invoked from `IntegrationConflictDetectionService.recordConflict`'s post-insert `wrote==true` branch — Reconciliation 4/5. Call `pause(runId, "autopause-conflict-"+conflictId, ActorContext.SYSTEM, "auto_paused_on_state_conflict")` — signature order is `(runId, idempotencyKey, actor, reasonText)`, Reconciliation 4. Best-effort: swallow `PAUSE_NOT_APPLICABLE` + WARN (the non-terminal/non-Paused/non-TakenOver precondition is enforced by `pause`'s own `PAUSABLE_SOURCE_STATES` gate — do NOT re-check state). `reviewerRole='system'` REQUIRES the pause-prep change in Reconciliation 3 — passing a SYSTEM actor alone leaves `reviewer_role='workflow_owner'`.)**
+
+5. **Given** auto-pause is configurable per environment, **Then** `application.yml` `deliveryline.integration.conflict.auto-pause-on-categories` (list, default `[external_state_advanced, external_state_reverted]`) lets pilots opt out per category — empty list = no auto-pause; documented in `docs/integrations/conflict-handling.md`. **(RECONCILED — the key is `deliveryline.integration.conflict-detection.auto-pause-on-categories` (existing `conflict-detection` namespace, Reconciliation 2), NOT `conflict.`. Add `List<String> autoPauseOnCategories` (raw String, parsed via `IntegrationConflictCategory.fromValue`; unknown value → normalize/skip, never throw) to `IntegrationConflictDetectionProperties` with the two-category default in the compact ctor; empty list = handler no-ops. Mirror the key into `src/main/resources/application.yml` (the `integration.conflict-detection` block, `:113-125`) AND `src/test/resources/application.yml` (`:58-67`) — [[validated-config-needs-test-yaml]]. Document the corrected key in the docs + note the AC's literal `conflict.` variance.)**
+
+6. **Given** orchestration gate, **When** `dispatchPlanGeneration`/`dispatchImplementation` is invoked on a run with unresolved high-severity conflicts, **Then** dispatch is refused with `DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT` (transient — workflow stays in prior state); operator must reconcile first. **(Gate in `dispatchExecutionInternal` after `requireRun` — Reconciliation 6. "high-severity" = `{external_state_advanced, external_state_reverted}` (define a `HIGH_SEVERITY_CONFLICT_CATEGORIES` set; independent of the auto-pause config — OQ-4). Detect via `integrationConflictService.listUnresolvedConflicts(ConflictFilter.forRun(runId))` filtered to the high-severity set (nullable-guard the injected service). Throw the typed `DomainException` — the dispatch methods never transition, so the run stays put. NEW `DomainErrorCode` three-sites — Reconciliation 7.)**
+
+7. **Given** allowed-actions integration (story 2.14), **Then** runs with unresolved conflicts surface `reconcile_conflict`; the conflict ID + suggested decision are attached so the story 4.23 dialog can pre-fill. **(RECONCILED — `reconcile_conflict` is ALREADY appended by story 4.6's `appendConflictOverlay`; the flat `List<String>` allowed-actions contract has no per-action metadata slot. The conflictId + suggestion are surfaced via the NEW `GET /integration-conflicts?workflowRunId=` list + `/{conflictId}` detail that the 4.23 dialog consumes — Reconciliation 10 / OQ-2. Do NOT widen `AllowedActionsResponse`. Pin a regression test that `reconcile_conflict` still surfaces for an owner on a conflicted run.)**
+
+8. **Given** Linear completion-sync awareness (story 3.16), **When** auto-pause fires due to a Linear-side conflict, **Then** the reverse-notification path is suppressed (no premature "Run reopened" comment) until the operator reconciles. **(Early-return guard in `RecoveryService.bestEffortLinearReopenNotification` / `WorkflowOrchestrationService.notifyLinearRunReopened` — Reconciliation 11. Gate on ANY unresolved conflict on the run's Linear ticket link (a closed Linear ticket = `external_resource_removed`, NOT an auto-pause category). Skip-with-log discipline (the method never throws). PROVISIONAL: 4.17 emits little Linear state-drift today — implement + test with a seeded Linear conflict; note the reach in Dev Notes. OQ-3.)**
+
+9. **Given** ArchUnit (story 1.11), **Then** the conflict-driven orchestration gate is implemented in the EXISTING `WorkflowOrchestrationService` — a precondition check before dispatch; no new service. **(RECONCILED — gate in `dispatchExecutionInternal`, Reconciliation 6. `ConflictAutoPauseHandler` lives in `application.integration.conflict` (allowed — no dependency-direction rule, Reconciliation 5). The new controller must stay thin — `REST_CONTROLLERS_STAY_THIN_AND_AVOID_SPI_OR_PERSISTENCE_OR_RUNNER` (`ArchitectureRuleCatalog:238`) — delegate to `IntegrationConflictService`, import no SPI/persistence. Run `ArchitectureBoundaryTest` (Failsafe — [[archunit-runs-in-failsafe-not-surefire]]).)**
+
+10. **Given** the test suite, **Then** covers: conflict surfaces in operator queue with indicator, GET list returns unresolved+resolved counts + filter combos, GET detail returns both snapshots + safety-ranked suggestions, auto-pause triggers on `external_state_advanced` (`actor=system`), auto-pause does NOT trigger on excluded categories per config, dispatch blocked when unresolved high-severity conflict exists, allowed-actions includes `reconcile_conflict`, Linear premature-notification suppression. **(Split across: `IntegrationConflictControllerTest` (`@WebMvcTest`, mock service — list filters/counts/cursor, detail snapshots+suggestions, 404); `ConflictAutoPauseHandlerTest` (unit — high-severity → pause called with SYSTEM actor + deterministic key; excluded category → no pause; `PAUSE_NOT_APPLICABLE` swallowed); a dispatch-gate test on `WorkflowOrchestrationService` (unresolved high-severity → `DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT` thrown + run un-transitioned; no conflict → dispatch proceeds); `WorkflowInspectionService` operator-queue test (`unresolvedConflictCount` populated) + allowed-actions regression; a real-PG IT extending `IntegrationConflictDetectionIT` or a new `ConflictAutoPauseIT` (seed a high-severity conflict via the sweep → run auto-paused, `recovery_actions.reviewer_role='system'`); Linear-suppression test; `OpenApiSnapshotContractTest` regen + operationId asserts; the pause logging-contract/unit tests updated for the system-reviewer-role branch. NO CLI test — no CLI surface.)**
+
+## Tasks / Subtasks
+
+- [x] **Task 1 — REST read endpoints + pagination + DTOs (AC2, AC3)**
+  - [x] NEW `adapters/rest/IntegrationConflictController.java` — `@RestController @Validated @RequestMapping("/api/v1/integration-conflicts")`, inject ONLY `IntegrationConflictService`. `GET ""` → `IntegrationConflictListResponse` (op `listIntegrationConflicts`); `GET "/{conflictId}"` → detail response (op `getIntegrationConflict`). Mirror `AuditController` param + cursor conventions.
+  - [x] NEW response DTOs in `adapters/rest/`: `IntegrationConflictListResponse { List<ConflictSummaryResponse> conflicts, long totalUnresolved, long totalResolved, Map<String,Long> totalUnresolvedByCategory, Map<String,Long> totalUnresolvedByIntegration, String nextCursor }` + `from(...)`; `ConflictSummaryResponse` (from `ConflictSummary`); `IntegrationConflictDetailResponse` (from `ConflictResolutionView` + suggestions, `@Schema(nullable=true)` on `resolvedAt`). Enum→wire via `.value()`; model on `OperatorRunSummaryResponse`/`AuditQueryResponse`.
+  - [x] Extend `ConflictFilter` with `Boolean resolved`, `Integer limit`, `String cursor` (+ keep `unfiltered()`/`forRun(...)`; add a builder/factory for the controller). Add `IntegrationConflictReadPort.listConflicts(ConflictFilter)` keyset-paginated (mirror `AuditQueryService`) + `long countResolved()`; adapter SQL: conditional `resolved_at` predicate + keyset `(detected_at, id)` cursor decode/encode. Keep `listUnresolved(...)` for the queue/gate paths.
+  - [x] `IntegrationConflictService` new `@Transactional(readOnly=true)` methods for the paginated list + counts + `findConflictForResolution` reuse; validate bad filter values → `INVALID_COMMAND_PAYLOAD` (existing pattern `:115-153`).
+- [x] **Task 2 — Safety-ranked suggestions (AC3)**
+  - [x] NEW `application/integration/conflict/ConflictReconciliationSuggester.java` (or private service method): `List<SuggestedDecision> suggestFor(IntegrationConflictCategory)`; `SuggestedDecision { ReconciliationDecision decision, String safety }` (`safety ∈ {safe, risky}`). Deterministic per-category ranking (Reconciliation 12). Unit-test the matrix.
+- [x] **Task 3 — Auto-pause handler + config + pause reviewerRole (AC4, AC5)**
+  - [x] `RecoveryService` pause-prep: add `REVIEWER_ROLE_SYSTEM = "system"`; derive `reviewerRole = actor.actorType()==ActorType.SYSTEM ? REVIEWER_ROLE_SYSTEM : REVIEWER_ROLE_WORKFLOW_OWNER` at `:1420` (Reconciliation 3). Update `RecoveryLoggingContractTest` + pause unit test for the system branch. NO migration (reviewer_role free text).
+  - [x] Add `List<String> autoPauseOnCategories` to `IntegrationConflictDetectionProperties` (default `[external_state_advanced, external_state_reverted]` in compact ctor, normalize-never-throw). Mirror the key into main + test `application.yml` (Reconciliation 2/5).
+  - [x] NEW `application/integration/conflict/ConflictAutoPauseHandler.java` — inject `ObjectProvider<RecoveryService>` + `IntegrationConflictDetectionProperties`. `void maybeAutoPause(String runId, String conflictId, IntegrationConflictCategory category, String correlationId)`: if category ∈ configured set → `pause(runId, "autopause-conflict-"+conflictId, ActorContext.SYSTEM/systemActor(correlationId), "auto_paused_on_state_conflict")`; swallow `PAUSE_NOT_APPLICABLE` + WARN; best-effort (never abort the sweep).
+  - [x] Hook `conflictAutoPauseHandler.maybeAutoPause(...)` into `IntegrationConflictDetectionService.recordConflict` post-insert `wrote==true` branch (`:471-488`); inject the handler into the detection service.
+- [x] **Task 4 — Dispatch gate + new DomainErrorCode (AC6, AC9)**
+  - [x] `DomainErrorCode.DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT` — three sites (enum + `ProblemDetailsCatalog` 409/retryable=false + `registry-api-schema-placeholders.json`) — Reconciliation 7.
+  - [x] Wire `IntegrationConflictService` into `WorkflowOrchestrationService` (nullable/`ObjectProvider` — minimize ctor fan-out). Define `HIGH_SEVERITY_CONFLICT_CATEGORIES = EnumSet.of(EXTERNAL_STATE_ADVANCED, EXTERNAL_STATE_REVERTED)`.
+  - [x] In `dispatchExecutionInternal` after `requireRun` (`:697`): if the service is present AND `listUnresolvedConflicts(ConflictFilter.forRun(runId))` contains a high-severity category → throw `DomainException(DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT, ...)` (mirror `RecoveryService:546-559`). Structured details `{runId, conflictCategory, conflictId}`.
+- [x] **Task 5 — Operator queue conflict indicator (AC1)**
+  - [x] Add `int unresolvedConflictCount` to `OperatorRunRow` + `OperatorRunRowResponse` (+ `from(...)`). NEW `IntegrationConflictReadPort.unresolvedCountByRun(Collection<String> runIds) → Map<String,Integer>` (one grouped query) + adapter SQL. In `WorkflowInspectionService.getOperatorRunSummary`, batch-fetch counts for the page's runIds (nullable-guard `integrationConflictService`) and populate each row.
+  - [x] Update the exact-field contract tests for the two records ([[workflow-summary-exact-field-contract-test]]).
+- [x] **Task 6 — Allowed-actions regression (AC7)**
+  - [x] No new code — verify `appendConflictOverlay` still appends `reconcile_conflict` for an owner on a conflicted non-terminal run; add/confirm the regression assertion in `WorkflowInspectionServiceAllowedActionsTest`. Document (Reconciliation 10) that conflictId/suggestion travel via the new REST list/detail, not the action list.
+- [x] **Task 7 — Linear reopen-notification suppression (AC8)**
+  - [x] Early-return guard (skip-with-log) in `RecoveryService.bestEffortLinearReopenNotification` (`:2500`) OR `notifyLinearRunReopened` (`:1585`): resolve the run's active Linear ticket link; if it has an unresolved conflict, skip the comment (Reconciliation 11). Reuse `integrationConflictService.listUnresolvedConflicts(ConflictFilter.forRun(runId))` filtered to the Linear integration type. Test with a seeded Linear conflict.
+- [x] **Task 8 — OpenAPI + FE client + docs (AC2, AC3, AC5)**
+  - [x] Regen the OpenAPI snapshot (`OpenApiSnapshotContractTest` with `-Dopenapi.snapshot.write=true`), review + commit; add `listIntegrationConflicts`/`getIntegrationConflict` operationId asserts. FE client: `npm run generate-api` ([[openapi-regen-frontend-client-drift-cascade]]) — commit `schema.d.ts` drift.
+  - [x] NEW `docs/integrations/conflict-handling.md` (sibling of `conflict-detection.md`): auto-pause categories + corrected config key, dispatch gate, REST inspection endpoints, Linear-suppression provisional caveat; link back to `conflict-detection.md`.
+- [x] **Task 9 — ArchUnit + full verify (AC9, AC10)**
+  - [x] Run `ArchitectureBoundaryTest` (Failsafe); confirm thin controller + no new dependency rule needed. Full targeted Surefire + Failsafe on real PG (Testcontainers) per AC10 test list. Spotless apply on hand-edited Java ([[spotless-apply-before-pushing-java-edits]]).
+- [x] **Logging instrumentation** (cross-cutting; required on every story)
+  - [x] Add SLF4J-backed structured logs at every new public service/controller entry/exit, every typed `DomainException` raise site (dispatch-gate refusal, filter-validation), every auto-pause attempt/skip, and the Linear-suppression skip branch.
+  - [x] Use parameterized logging (`log.info("...", arg1, arg2)`) — never string concatenation.
+  - [x] Levels: `INFO` for GET request start/finish + auto-pause success + dispatch-gate refusal (decision taken); `WARN` for auto-pause swallowed `PAUSE_NOT_APPLICABLE`, Linear-suppression skip; `ERROR` only for unhandled failures. `DEBUG` per-conflict detail.
+  - [x] Every log carries `correlationId`, `workflowRunId`, `conflictId`, `conflictCategory`, `actorIdentity` where applicable. Use MDC where the framework supports it.
+  - [x] Never log secrets, tokens, PR bodies, raw external payloads, or snapshot JSONB contents — only ids/refs/states.
+  - [x] Pin the dispatch-gate refusal WARN/INFO, the auto-pause INFO, and the Linear-suppression WARN with `OutputCaptureExtension` (or list-appender).
+
+## Dev Notes
+
+### Relevant architecture patterns and constraints
+
+- **This story writes NO new table + NO migration.** All persistence exists (`integration_conflicts` V36, `recovery_actions` V1). The only new persistence is READ SQL (keyset list, resolved count, per-run count) on the existing `IntegrationConflictPersistenceAdapter` (`NamedParameterJdbcTemplate`, no JPA). [Source: 4-17 story; IntegrationConflictPersistenceAdapter.java]
+- **REST-read templates.** `AuditController` (`/api/v1/audit`) is the keyset-cursor template (`since` as `@DateTimeFormat OffsetDateTime`, `List<String>` multi-filter, `limit` default, opaque `cursor`, `from(result)` response). `OperatorRunSummaryResponse` is the "counts + `Map<enum-string,count>` breakdown + `nextCursor`" template. Both are thin, own-controller-per-collection. The service javadoc (`IntegrationConflictService.java:21-28`) explicitly reserves `GET /api/v1/integration-conflicts` for this story. [Source: AuditController.java:61-124; OperatorRunSummaryResponse.java:23-65]
+- **Existing conflict read model.** `ConflictSummary(conflictId, integrationLinkId, workflowRunId, conflictCategory, integrationType, externalRef, detectedAt)`; `ConflictResolutionView(conflictId, workflowRunId, integrationLinkId, integrationType, conflictCategory, externalRef, resolvedAt (OffsetDateTime), externalStateSnapshot (JSON string), internalStateSnapshot (JSON string))`; `ConflictFilter(conflictCategory, integrationType, timeSince (Duration), workflowRunId, ticketReference)`. `IntegrationConflictReadPort`: `listUnresolved(filter)`, `findByPublicId(id)` (returns resolved rows too), `countUnresolvedByCategoryAndIntegration() → List<UnresolvedConflictCount(conflictCategory, integrationType, count)>`. These are deliberately OUTSIDE `.spi` so REST can map them without tripping the thin-controller pin. [Source: ConflictSummary.java; ConflictResolutionView.java; ConflictFilter.java; IntegrationConflictReadPort.java; UnresolvedConflictCount.java]
+- **Auto-pause seam.** `IntegrationConflictDetectionService.recordConflict` (`:442-496`) persists in a `REQUIRES_NEW` tx via `writePort.insertIfAbsent`; only genuine new inserts (`wrote==true`, `:464`) emit the event + increment the counter (`:471-488`). Hook auto-pause in that post-insert branch — dedup guarantees once per `(link, category)`. The `Decision.category()` and `row.workflowRunPublicId()` are in scope. [Source: IntegrationConflictDetectionService.java:442-496]
+- **Pause primitive.** `RecoveryService.pause(runId, idempotencyKey, actor, reasonText) → PauseRecoveryResult` (`:1121`). Gates via `PAUSABLE_SOURCE_STATES` → throws `DomainException(PAUSE_NOT_APPLICABLE)` for terminal/Paused/TakenOver — which IS AC4's non-terminal precondition (don't re-check). The prep hardcodes `REVIEWER_ROLE_WORKFLOW_OWNER` (`:1420`) — change to derive from `actor.actorType()` (Reconciliation 3). `ActorContext.SYSTEM` = the ready-made system actor; `reviewerRole` is a `recovery_actions` column, NOT an `ActorContext` field. [Source: RecoveryService.java:1121,1409-1420; ActorContext.java:16]
+- **Dispatch gate.** `WorkflowOrchestrationService.dispatchExecutionInternal` (`:681`) is the shared body for plan + implementation dispatch; it never transitions the run (Trap T1) — a throw after `requireRun` (`:697`) and before `enqueueDispatch` (`:728`) leaves the run in its prior state. The gate-off soft-return (`:691-694`) and the `RETRY_NOT_APPLICABLE` throw (`RecoveryService:546-559`) are the two refusal shapes; use the THROW shape here. `systemActor(correlationId)` (`:1916`) if you need a correlation-carrying system actor. [Source: WorkflowOrchestrationService.java:681-736]
+- **Linear reopen suppression.** `RecoveryService.rerunFromStep` → `bestEffortLinearReopenNotification` (`:2500`) → `WorkflowOrchestrationService.notifyLinearRunReopened` (`:1585`, `REQUIRES_NEW`, posts the "run reopened" comment, appends `LINEAR_RUN_REOPENED_NOTIFICATION`). It never throws; its existing gates are early-return-with-WARN (`:1592,1604,1611,1628`). Mirror the `linear-completion-sync.enabled=false` early-return (`:1437-1438`) for the conflict guard. [Source: RecoveryService.java:2500-2514; WorkflowOrchestrationService.java:1585-1672]
+- **New DomainErrorCode fan-out.** Enum + `ProblemDetailsCatalog.register` + `registry-api-schema-placeholders.json` — exactly the `PAUSE_NOT_APPLICABLE` precedent. [[new-domainerrorcode-three-sites]]. [Source: DomainErrorCode.java:286; ProblemDetailsCatalog.java:650-655; registry-api-schema-placeholders.json:209]
+- **Operator queue.** `OperatorRunRow`/`OperatorRunSummary` (nested records in `WorkflowInspectionService`) + `OperatorRunRowResponse`/`OperatorRunSummaryResponse` wire DTOs. No badge field exists — add `int unresolvedConflictCount`. Governed by an ArchUnit allow-list (existing mappers already listed; no new referencer). [Source: WorkflowInspectionService.java:4493-4521]
+
+### Logging Requirements (project-wide standard)
+
+Every story is expected to leave the touched services observable enough to debug a production incident without re-deploying. Enforced via the "Logging instrumentation" task above.
+
+- **Framework:** SLF4J + Logback. No `System.out`, no `printStackTrace()`.
+- **Where to log (minimum surface for this story):**
+  - `IntegrationConflictController` GETs → `INFO` on entry (filters) + `INFO` on exit (result count, durationMs).
+  - `ConflictAutoPauseHandler.maybeAutoPause` → `INFO` "auto-pausing run on state conflict" on the pause call; `WARN` "auto-pause not applicable" on swallowed `PAUSE_NOT_APPLICABLE`; `DEBUG` when category excluded by config.
+  - Dispatch gate refusal → `INFO`/`WARN` "dispatch blocked by unresolved conflict" with `conflictCategory` before the throw.
+  - Linear-suppression skip → `WARN` "linear reopen notification suppressed (unresolved conflict)".
+- **Required context keys:** `correlationId`, `workflowRunId`, `conflictId`, `conflictCategory`, `actorIdentity`.
+- **Forbidden in log output:** GitHub/Linear tokens, PR bodies, raw external JSON, snapshot JSONB contents — only ids/refs/states.
+- **Test contract:** pin the dispatch-gate refusal line, the auto-pause line, and the Linear-suppression WARN with `OutputCaptureExtension` (or list-appender).
+
+### Project Structure Notes
+
+- **New main:** `adapters/rest/IntegrationConflictController.java` + `IntegrationConflictListResponse` / `ConflictSummaryResponse` / `IntegrationConflictDetailResponse`; `application/integration/conflict/ConflictAutoPauseHandler.java` + `ConflictReconciliationSuggester.java` (+ `SuggestedDecision`); widened `ConflictFilter`, `IntegrationConflictReadPort` (+ `listConflicts`, `countResolved`, `unresolvedCountByRun`), `IntegrationConflictService`, `IntegrationConflictPersistenceAdapter` SQL; widened `IntegrationConflictDetectionProperties` (+ `autoPauseOnCategories`) + `IntegrationConflictDetectionService` (handler hook); `RecoveryService` (reviewerRole-from-actor + Linear-suppression guard) or `WorkflowOrchestrationService` (Linear-suppression guard + dispatch gate + `IntegrationConflictService` dep); `OperatorRunRow`/`OperatorRunRowResponse` (+ `unresolvedConflictCount`); `DomainErrorCode` + `ProblemDetailsCatalog`.
+- **New tests:** `IntegrationConflictControllerTest` (`@WebMvcTest`), `ConflictAutoPauseHandlerTest`, `ConflictReconciliationSuggesterTest`, a dispatch-gate test, `ConflictAutoPauseIT` (real PG), Linear-suppression test; edits to `OperatorRunSummary`/row exact-field contract tests, `WorkflowInspectionServiceAllowedActionsTest`, `RecoveryLoggingContractTest` + pause unit test, `OpenApiSnapshotContractTest` (+ regen), `-Pfoundation-gate` (new DomainErrorCode).
+- **Config/docs:** `src/main/resources/application.yml` + `src/test/resources/application.yml` (`auto-pause-on-categories`); `deliveryline-frontend/src/lib/api/schema.d.ts` (regen); `docs/integrations/conflict-handling.md`; OpenAPI `openapi.json` (regen).
+- **No Flyway migration, no new registry value, no new AllowedAction, no CLI command.**
+- **Variances from the epic:** AC5 config key `conflict.` → `conflict-detection.` (Reconciliation 2); AC7 "attach to action" → surfaced via the new REST list/detail (Reconciliation 10); AC8 auto-pause-category premise → gate on any unresolved Linear-link conflict + provisional reach (Reconciliation 11).
+
+### References
+
+- [Source: _bmad-output/planning-artifacts/epic-04-recovery.md#Story 4.18 (lines 394–411)] — AC1–AC10.
+- [Source: _bmad-output/implementation-artifacts/4-17-integration-conflict-detection-linear-and-github-vs-internal-state.md] — the detection half; `integration_conflicts`/`IntegrationConflictService`/`ConflictSummary`/`ConflictResolutionView`/`ConflictFilter`/read-port shapes; sweep `recordConflict` seam; docs style.
+- [Source: deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/IntegrationConflictService.java:21-28,48-65,115-153; ConflictSummary.java; ConflictResolutionView.java; ConflictFilter.java; spi/IntegrationConflictReadPort.java:18-26; spi/UnresolvedConflictCount.java] — read surface to extend + the reserved-REST javadoc.
+- [Source: deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/IntegrationConflictDetectionService.java:442-496; IntegrationConflictDetectionProperties.java:30-48; infrastructure/config/IntegrationConflictConfiguration.java:17-19] — the auto-pause hook + the config record to widen.
+- [Source: deliveryline-backend/src/main/java/org/dradgo/application/recovery/RecoveryService.java:1121,1409-1420,193,546-559,2091,2500-2514] — pause signature + hardcoded reviewerRole + throw-shape + Linear-reopen best-effort seam.
+- [Source: deliveryline-backend/src/main/java/org/dradgo/application/artifact/ActorContext.java:5,16] — `ActorContext.SYSTEM`; no `reviewerRole` field.
+- [Source: deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowOrchestrationService.java:508-612,681-736,691-694,1434-1438,1585-1672,1916] — dispatch body (gate home) + system-actor factory + Linear reopen path.
+- [Source: deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowInspectionService.java:1479,1547-1560,1603-1648,4464-4521] — `hasUnresolvedConflict` + `appendConflictOverlay` (reconcile_conflict) + operator-queue records.
+- [Source: deliveryline-backend/src/main/java/org/dradgo/domain/registry/ReconciliationDecision.java:5-9; IntegrationConflictCategory.java:21-25; DomainErrorCode.java:278-287] — decision values, conflict categories, error-code three-sites precedent.
+- [Source: deliveryline-backend/src/main/java/org/dradgo/adapters/rest/AuditController.java:61-124; OperatorRunSummaryResponse.java:23-65; AuditQueryResponse.java:22-40; ProblemDetailsCatalog.java:650-655] — REST cursor + counts-response + problem-details register templates.
+- [Source: deliveryline-backend/src/test/java/org/dradgo/adapters/rest/OpenApiSnapshotContractTest.java:71,87-125,138-148; src/test/resources/contracts/openapi/registry-api-schema-placeholders.json:119,209] — snapshot regen + operationId asserts + placeholder manifest.
+- [Source: deliveryline-backend/src/main/resources/application.yml:113-125; src/test/resources/application.yml:58-67; docs/integrations/conflict-detection.md] — config namespace + docs sibling.
+- [Source: deliveryline-backend/src/test/java/org/dradgo/architecture/ArchitectureRuleCatalog.java:238,511,827-831] — thin-controller pin + conflict write-scoping rule + recovery scope-lift.
+- [Source: deliveryline-backend/src/main/resources/db/migration/V1__create_workflow_core_tables.sql:176] — `recovery_actions.reviewer_role` free text (no CHECK → no migration for `'system'`).
+
+### Open Questions (for Alex — do not block dev; provisional bindings applied)
+
+- **OQ-1 — auto-pause config namespace.** Provisional: `deliveryline.integration.conflict-detection.auto-pause-on-categories` (add to the existing 4.17 props record), NOT the epic's literal `deliveryline.integration.conflict.*`. Alternative: mint a separate bare-`conflict` props class + `@EnableConfigurationProperties` if you want detection vs handling config visibly split. Confirm the reuse.
+- **OQ-2 — AC7 conflictId/suggestion delivery.** Provisional: `reconcile_conflict` stays a flat action (from 4.6); the conflictId + safety-ranked suggestion travel via the new `GET /integration-conflicts?workflowRunId=` / `/{conflictId}` that the 4.23 dialog consumes. Alternative: widen `AllowedActionsView`/`AllowedActionsResponse` with a parallel per-action metadata map (bigger contract + ArchUnit blast). Confirm we do NOT widen the allowed-actions contract.
+- **OQ-3 — AC8 suppression trigger + reach.** Provisional: suppress the Linear reopen comment on ANY unresolved conflict on the run's Linear ticket link (not gated on "auto-pause fired", since a closed Linear ticket = `external_resource_removed`, not an auto-pause category). Note 4.17 emits little Linear state-drift today, so the guard rarely fires — implemented + tested regardless. Confirm the "any unresolved Linear-link conflict" gate vs a stricter "auto-pause fired" gate.
+- **OQ-4 — dispatch-gate "high-severity" definition.** Provisional: a fixed `{external_state_advanced, external_state_reverted}` set, INDEPENDENT of the auto-pause config (so emptying `auto-pause-on-categories` to opt out of auto-pause does NOT also open the dispatch gate). Alternative: reuse the same configurable set for both. Confirm the fixed set.
+- **OQ-5 — detail response `detectedAt`.** `ConflictResolutionView` (the `/{conflictId}` source) has `resolvedAt` but no `detectedAt`. Provisional: return the epic's snapshot-only detail (no `detectedAt`). If the 4.23 dialog needs `detectedAt`, widen the view + `findByPublicId` SQL. Confirm.
+
+## Dev Agent Record
+
+### Agent Model Used
+
+Opus 4.8 (1M context) — `claude-opus-4-8[1m]`
+
+### Debug Log References
+
+- **Auto-pause idempotency-key rejection (fixed).** The first `ConflictAutoPauseIT` run failed with
+  `INVALID_IDEMPOTENCY_KEY`: the deterministic key `autopause-conflict-<conflictId>` embeds the
+  conflict public id (`icf_...`), whose `_` separator violates the opaque-key pattern
+  `[A-Za-z0-9-]{16,128}` (`IdempotencyKeyValidator`). Fixed by sanitizing `_ → -` in the key
+  (`(prefix + conflictId).replace('_','-')`) — still deterministic + collision-free (the random id
+  body is alphanumeric). Handler unit test's key assertion updated accordingly.
+- **Test-profile auto-pause opt-out (deliberate variance from Reconciliation 5).** The story asked to
+  mirror the two-category default into `src/test/resources/application.yml`. Doing so would auto-pause
+  the `WaitingForReview` runs the existing (`done`) story-4.17 `IntegrationConflictDetectionIT` seeds
+  for its `external_state_advanced`/`_reverted` cases, appending `RECOVERY_PAUSED` + `recovery_actions`
+  rows and complicating that test's FK cleanup — a surprising side effect on a detection-only test.
+  Set the **test profile** to an explicit empty list (opt-out) and had `ConflictAutoPauseIT` opt back
+  in via `@TestPropertySource`. Production `application.yml` carries the two-category default.
+
+### Completion Notes List
+
+Implemented the HANDLING half of the Epic-4 integration-conflict pair — five thin wirings over the
+already-shipped story-4.17 detection producer + story-4.6/4.8 recovery primitives. No Flyway
+migration, no new table, no new registry value. All 9 tasks complete; all 10 ACs satisfied.
+
+- **AC1 — operator-queue indicator.** Added a discrete `int unresolvedConflictCount` to
+  `OperatorRunRow` + `OperatorRunRowResponse` (not overloaded onto `operatorSignifier`), sourced via a
+  NEW batch `IntegrationConflictReadPort.unresolvedCountByRun(runIds)` grouped query (one query per
+  page, no N+1). The CLI renderer builds its JSON by hand so the field does not leak into the CLI
+  schema (no CLI change).
+- **AC2/AC3 — REST inspection.** NEW thin `IntegrationConflictController` (`GET
+  /api/v1/integration-conflicts` list + `/{conflictId}` detail) delegating to
+  `IntegrationConflictService`. Widened `ConflictFilter` (`resolved`/`limit`/`cursor`, 5-arg
+  convenience ctor kept), added a keyset-paginated `listConflicts` port method + adapter SQL
+  (`(detected_at, id)` cursor via a `public_id → id` subquery; three-valued `resolved`), `countResolved`,
+  and the counts/breakdowns (coarse `github`/`linear` tag, mirroring the metrics gauge). Detail maps
+  `ConflictResolutionView` + the `ConflictReconciliationSuggester` ranking; missing → `CONFLICT_NOT_FOUND`
+  404. `?integration=github` maps to the persisted `github_pr`.
+- **AC3 — safety ranking.** NEW `ConflictReconciliationSuggester` — a deterministic per-category
+  ranking of all four `ReconciliationDecision`s tagged `safe`/`risky` (safe first).
+- **AC4/AC5 — auto-pause.** NEW `ConflictAutoPauseHandler` (`ObjectProvider<RecoveryService>`, lazy)
+  invoked from `IntegrationConflictDetectionService.recordConflict`'s post-insert `wrote==true` branch
+  (once per new `(link, category)`). Best-effort: swallows `PAUSE_NOT_APPLICABLE` (and any other pause
+  fault) with a log so the sweep is never aborted. SYSTEM actor + deterministic key. `pause`'s
+  reviewer-role is now derived from the actor (`SYSTEM → system`, else `workflow_owner`) — the AC4
+  audit-trail requirement. Config `autoPauseOnCategories` added to the EXISTING
+  `IntegrationConflictDetectionProperties` (`conflict-detection` namespace, normalize-never-throw;
+  unset → two-category default, explicit `[]` → opt-out).
+- **AC6/AC9 — dispatch gate.** Gate in the existing `WorkflowOrchestrationService.dispatchExecutionInternal`
+  after `requireRun`, before `enqueueDispatch` — throwing `DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT`
+  (NEW three-sites DomainErrorCode, 409/non-retryable) when a fixed high-severity set
+  (`{external_state_advanced, external_state_reverted}`, independent of the auto-pause config) is
+  unresolved. The dispatch methods never transition, so the run stays put (AC6 "transient").
+  `IntegrationConflictService` nullable setter-injected (no ctor fan-out).
+- **AC7 — allowed actions.** No new code; regression-verified that `appendConflictOverlay` still
+  appends `reconcile_conflict` for the owner (existing test). `AllowedActionsResponse` NOT widened;
+  conflictId/suggestion travel via the new REST list/detail.
+- **AC8 — Linear suppression.** Early-return guard in `notifyLinearRunReopened` — skips the reopen
+  comment while the run has ANY unresolved conflict on its Linear ticket link (skip-with-log,
+  best-effort).
+- **AC10 — tests.** `ConflictReconciliationSuggesterTest` (9), `ConflictAutoPauseHandlerTest` (6),
+  `IntegrationConflictControllerTest` (5, `@WebMvcTest`), dispatch-gate + Linear-suppression cases in
+  `WorkflowOrchestrationServiceTest`, `unresolvedConflictCount` in `OperatorControllerTest`, system
+  reviewer-role in `RecoveryServicePauseTest`, real-PG `ConflictAutoPauseIT` (reviewer_role='system'
+  end-to-end) + `IntegrationConflictListReadIT` (keyset/resolved/counts). Updated
+  `IntegrationConflictDetectionServiceTest` (handler-hook verify). OpenAPI snapshot regenerated + FE
+  `schema.d.ts` in sync + `docs/integrations/conflict-handling.md`.
+
+**Verification (real Postgres via Testcontainers, Docker up):** Surefire unit — conflict package
+33/0, controller/orchestration/pause/operator/allowed-actions 202/0, handler 6/0 (all green). Failsafe
+— `IntegrationConflictDetectionIT` 10/0 (opt-out confirmed, existing tests unaffected),
+`ConflictAutoPauseIT` 2/0, `IntegrationConflictListReadIT` 1/0, `OpenApiSnapshotContractTest` 1/0
+(matches), `RegistryContractTest` 25/0 (three-sites), `ArchitectureBoundaryTest` 61/0, operator
+persistence ITs 18/0. `spotless:apply` clean; `spotbugs:check` BUILD SUCCESS (only pre-existing
+`EI_EXPOSE_REP` Medium on records, the accepted repo-wide pattern). FE `npm run build` clean;
+`check:api` in sync. (The `verify` reactor's jacoco-check "failure" on subset runs is a coverage-gate
+artifact of running a handful of tests, not a defect.)
+
+**Deferred / notes:** none of the 5 OQs blocked dev — all provisional bindings were applied as
+authored (OQ-1 config namespace = `conflict-detection`; OQ-2 no allowed-actions widening; OQ-3 gate on
+any unresolved Linear-link conflict; OQ-4 fixed high-severity set; OQ-5 snapshot-only detail, no
+`detectedAt`). Linear-suppression reach is provisional (4.17 emits little Linear state-drift today) —
+implemented + tested regardless.
+
+### File List
+
+**New (main):**
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/IntegrationConflictController.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/IntegrationConflictListResponse.java`
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/IntegrationConflictDetailResponse.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/ConflictAutoPauseHandler.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/ConflictReconciliationSuggester.java`
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/spi/ConflictListQuery.java`
+- `docs/integrations/conflict-handling.md`
+
+**Modified (main):**
+- `deliveryline-backend/src/main/java/org/dradgo/domain/registry/DomainErrorCode.java` (+`DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT`)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/ProblemDetailsCatalog.java` (register 409/non-retryable)
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/ConflictFilter.java` (+resolved/limit/cursor)
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/IntegrationConflictService.java` (listConflicts/getConflictDetail/unresolvedCountByRun/cursor codec/suggester dep)
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/IntegrationConflictDetectionService.java` (auto-pause hook + handler dep)
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/IntegrationConflictDetectionProperties.java` (+autoPauseOnCategories)
+- `deliveryline-backend/src/main/java/org/dradgo/application/integration/conflict/spi/IntegrationConflictReadPort.java` (+listConflicts/countResolved/unresolvedCountByRun)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/persistence/IntegrationConflictPersistenceAdapter.java` (3 new queries)
+- `deliveryline-backend/src/main/java/org/dradgo/application/recovery/RecoveryService.java` (reviewer-role-from-actor + `REVIEWER_ROLE_SYSTEM`)
+- `deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowOrchestrationService.java` (dispatch gate + Linear suppression + conflict-service dep)
+- `deliveryline-backend/src/main/java/org/dradgo/application/workflow/WorkflowInspectionService.java` (OperatorRunRow.unresolvedConflictCount + batch fetch)
+- `deliveryline-backend/src/main/java/org/dradgo/adapters/rest/OperatorRunRowResponse.java` (+unresolvedConflictCount)
+- `deliveryline-backend/src/main/resources/application.yml` (auto-pause-on-categories)
+- `deliveryline-backend/src/main/resources/openapi/openapi.json` (regenerated)
+- `deliveryline-frontend/src/lib/api/schema.d.ts` (regenerated)
+
+**New (test):**
+- `deliveryline-backend/src/test/java/org/dradgo/application/integration/conflict/ConflictReconciliationSuggesterTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/integration/conflict/ConflictAutoPauseHandlerTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/integration/conflict/ConflictAutoPauseIT.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/integration/conflict/IntegrationConflictListReadIT.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/IntegrationConflictControllerTest.java`
+
+**Modified (test):**
+- `deliveryline-backend/src/test/java/org/dradgo/application/integration/conflict/IntegrationConflictDetectionServiceTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/workflow/WorkflowOrchestrationServiceTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/application/recovery/RecoveryServicePauseTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/OperatorControllerTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/OperatorCommandsTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/cli/OperatorStatusJsonSchemaContractTest.java`
+- `deliveryline-backend/src/test/java/org/dradgo/adapters/rest/OpenApiSnapshotContractTest.java` (operationId asserts)
+- `deliveryline-backend/src/test/resources/contracts/openapi/registry-api-schema-placeholders.json` (problemTypeUris)
+- `deliveryline-backend/src/test/resources/application.yml` (auto-pause opt-out)
+
+### Review Findings (Code Review 2026-07-14)
+
+Adversarial review — three parallel layers (Blind Hunter / Edge Case Hunter / Acceptance Auditor). All ACs and binding Reconciliations verified satisfied; no Critical/High defects. 2 patch, 4 defer, 3 dismissed.
+
+**Patch (unchecked — fixable, unambiguous):**
+
+- [x] [Review][Patch] (FIXED 2026-07-14) Cursor `detectedAt` is bound as a timezone-ambiguous `java.sql.Timestamp` (`Timestamp.from(query.cursorDetectedAt().toInstant())`) into a `::timestamptz` param, deviating from the cited `AuditEventPersistenceAdapter` template which binds the `OffsetDateTime` directly. Under JVM default-tz ≠ PG session-tz the anchor instant shifts by the offset, so keyset page boundaries silently skip/duplicate rows (masked by the UTC-only Testcontainers env). Fix: `.addValue("cursorDetectedAt", query.cursorDetectedAt())`. [IntegrationConflictPersistenceAdapter.java:452-456] (blind; verified vs AuditEventPersistenceAdapter.java:182)
+- [x] [Review][Patch] (FIXED 2026-07-14) Misleading comment: the `IntegrationConflictDetectionProperties` compact-ctor comment says unknown tokens are "resolved via `IntegrationConflictCategory.fromNullableValue` and skips any that do not parse", but `ConflictAutoPauseHandler.resolveCategories` uses `fromValue(...)` inside a `try/catch`, and `fromNullableValue` in fact *throws* on an unknown non-null value (it does not skip). Runtime behavior is correct; only the comment misleads. [IntegrationConflictDetectionProperties.java (compact ctor)] (blind+auditor)
+
+**Defer (deferred — real but low / not-currently-reachable):**
+
+- [x] [Review][Defer] `since` absolute lower bound is degraded to a relative window (`Duration.between(since, OffsetDateTime.now())` → SQL `now() - make_interval`), reconstructing the threshold from two clocks so it drifts by request latency + clock skew; `AuditController` (the cited template) compares the absolute timestamp. Rooted in the reused 4.17 `ConflictFilter.timeSince` `Duration` shape. [IntegrationConflictController.java sinceToDuration] — deferred, minor imprecision (blind+auditor)
+- [x] [Review][Defer] An all-blank `auto-pause-on-categories` list normalizes to the opt-out (empty) posture with NO warning — unknown tokens WARN, but blank tokens are silently filtered at the properties layer, so a typo that yields only blanks disables auto-pause with no diagnostic. [IntegrationConflictDetectionProperties.java (compact ctor)] — deferred, low diagnostic gap (edge)
+- [x] [Review][Defer] The dispatch gate (`requireNoBlockingConflict`) and `getConflictDetail` call `IntegrationConflictCategory.fromNullableValue`, which THROWS on an unknown non-null category — contradicting the gate's documented "fail-open" contract (`ConflictReconciliationSuggester.suggestFor` defends the same input with `getOrDefault`). Not reachable today (V36 `ck_integration_conflicts_conflict_category` CHECK constrains the column). [WorkflowOrchestrationService.java requireNoBlockingConflict; IntegrationConflictService.java getConflictDetail] — deferred, defensive-only (edge+auditor)
+- [x] [Review][Defer] The operator-queue batch `unresolvedCountByRun` call is not exception-isolated — a failure of the secondary conflict-count query fails the whole operator-status view (mitigated: it shares the primary read-only tx). [WorkflowInspectionService.java:~1124] — deferred, low (edge)
+
+**Dismissed (noise / refuted on verification):** (1) `ConflictSummaryResponse.detectedAt` schema-vs-mapper nullable mismatch — `detected_at` is `timestamptz NOT NULL` (V36:21), so the null-guard is dead/defensive and the schema is accurate; (2) keyset tiebreak subquery returning NULL on a hard-deleted anchor — conflicts are soft-deleted via `archived_at` (public_id/id persist), so the subquery always resolves; (3) AC7 "add/confirm" regression assertion is confirm-only — existing `WorkflowInspectionServiceAllowedActionsTest` already asserts `reconcile_conflict` for owner / absent for reviewer, and AC7 is REUSE-verify.
+
+## Change Log
+
+| Date | Change |
+|------|--------|
+| 2026-07-14 | Story 4.18 implemented (bmad-dev-story, Opus 4.8 [1m]): integration-conflict HANDLING half — REST inspection surface, conflict-driven auto-pause (system reviewer role), dispatch gate (new `DISPATCH_BLOCKED_BY_UNRESOLVED_CONFLICT`), operator-queue conflict count, Linear reopen suppression, safety-ranked suggestions. No migration. All 9 tasks / 10 ACs done + verified green on real PG. Status → review. |

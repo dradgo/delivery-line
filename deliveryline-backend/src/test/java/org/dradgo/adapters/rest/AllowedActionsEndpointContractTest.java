@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.dradgo.application.recovery.DeveloperTakeoverService;
+import org.dradgo.application.recovery.RecoveryService;
 import org.dradgo.application.security.LocalActorIdentityResolver;
 import org.dradgo.application.workflow.ApprovalReviewerRoleResolver;
 import org.dradgo.application.workflow.ManualArtifactSubmissionService;
@@ -61,6 +62,9 @@ class AllowedActionsEndpointContractTest {
   @MockitoBean private WorkflowInspectionService workflowInspectionService;
   @MockitoBean private LocalActorIdentityResolver localActorIdentityResolver;
   @MockitoBean private DeveloperTakeoverService developerTakeoverService;
+  // Story 4.10 — WorkflowController gained the recovery service; the bean must exist for this
+  // @WebMvcTest slice to construct the controller.
+  @MockitoBean private RecoveryService recoveryService;
   @MockitoBean private WorkflowArchiveService workflowArchiveService;
 
   // Story 3f-3 — WorkflowController gained the run-dependency declaration/inspection service; the
@@ -171,6 +175,32 @@ class AllowedActionsEndpointContractTest {
         .andExpect(jsonPath("$.versionStamp.workflowState").value("WaitingForReview"));
 
     verify(workflowInspectionService).getAllowedActions(eq(RUN_ID), eq("developer"));
+  }
+
+  @Test
+  void getAllowedActionsSurfacesEnterCompareModeWireValueAtReviewState() throws Exception {
+    // Story 4.20 (AC9) — the enter_compare_mode wire value serializes over the REST boundary at a
+    // review state (here the workflow_owner spec gate). The matrix logic itself is pinned by the
+    // service-unit test; this pins the open string[] wire serialization of the new value.
+    AllowedActionsView view =
+        new AllowedActionsView(
+            List.of(
+                AllowedAction.VIEW_ONLY,
+                AllowedAction.ANSWER_CLARIFICATION,
+                AllowedAction.ENTER_COMPARE_MODE),
+            new AllowedActionsVersionStamp("WaitingForSpecApproval", 3, 3, "evt_compare_1"));
+    when(workflowInspectionService.getAllowedActions(eq(RUN_ID), eq("workflow_owner")))
+        .thenReturn(view);
+
+    mockMvc
+        .perform(
+            get("/api/v1/workflows/{runId}/allowed-actions", RUN_ID)
+                .param("actorRole", "workflow_owner")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.actions", Matchers.hasItem("enter_compare_mode")));
+
+    verify(workflowInspectionService).getAllowedActions(eq(RUN_ID), eq("workflow_owner"));
   }
 
   @Test

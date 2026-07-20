@@ -122,4 +122,53 @@ class AllowedActionRegistryPinTest {
     // RegistryContractTest).
     assertThat(AllowedAction.APPROVE_SPLIT.value()).isEqualTo("approve_split");
   }
+
+  @Test
+  void resumeWorkflowWireValueIsPinned() {
+    // Story 4.5 AC9 — RecoveryService.resume (routing through
+    // WorkflowCommandService.resumeWorkflow) is the canonical executor; surfaced ONLY at PAUSED for
+    // the workflow_owner gate role. Guard against a silent rename (lockstep with
+    // allowed-actions.placeholder.json + RegistryContractTest).
+    assertThat(AllowedAction.RESUME_WORKFLOW.value()).isEqualTo("resume_workflow");
+  }
+
+  @Test
+  void rerunFromStepWireValueIsPinned() {
+    // Story 4.7 AC10 — RecoveryService.rerunFromStep (routing through
+    // WorkflowCommandService.rerunFromStepWorkflow) is the canonical executor; surfaced for the
+    // workflow_owner gate role at FAILED + WAITING_FOR_REVIEW (states with a legal rerun edge).
+    // Guard against a silent rename (lockstep with allowed-actions.placeholder.json +
+    // RegistryContractTest).
+    assertThat(AllowedAction.RERUN_FROM_STEP.value()).isEqualTo("rerun_from_step");
+  }
+
+  @Test
+  void pauseWorkflowWireValueIsPinned() {
+    // Story 4.8 AC10 — RecoveryService.pause (routing through
+    // WorkflowCommandService.pauseWorkflow) is the canonical executor; surfaced for the
+    // workflow_owner gate role at every PAUSABLE_SOURCE_STATES arm (Investigating,
+    // WaitingForSpecApproval, Executing, WaitingForReview, WaitingForManualExecution,
+    // WaitingForLintApproval, WaitingForDelivery, Failed). Guard against a silent rename (lockstep
+    // with allowed-actions.placeholder.json + RegistryContractTest).
+    assertThat(AllowedAction.PAUSE_WORKFLOW.value()).isEqualTo("pause_workflow");
+  }
+
+  @Test
+  void classifyFailureWireValueIsPinned() {
+    // Story 4.9 AC11 — RecoveryService.classifyFailure (a pure metadata operation, no transition)
+    // is the canonical executor; surfaced ONLY at FAILED for the workflow_owner gate role. Guard
+    // against a silent rename (lockstep with allowed-actions.placeholder.json +
+    // RegistryContractTest).
+    assertThat(AllowedAction.CLASSIFY_FAILURE.value()).isEqualTo("classify_failure");
+  }
+
+  @Test
+  void enterCompareModeWireValueIsPinned() {
+    // Story 4.20 AC9 — Compare Mode is a read-only FE inspection surface (story-4.19 compare
+    // endpoint); there is NO backend executor. Surfaced via appendCompareOverlay for the
+    // reviewing/inspecting roles at WAITING_FOR_SPEC_APPROVAL / WAITING_FOR_REVIEW / FAILED /
+    // PAUSED, and the FE re-gates on the concrete artifact version>1. Guard against a silent
+    // rename (lockstep with allowed-actions.placeholder.json + RegistryContractTest).
+    assertThat(AllowedAction.ENTER_COMPARE_MODE.value()).isEqualTo("enter_compare_mode");
+  }
 }

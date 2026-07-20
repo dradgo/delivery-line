@@ -31,10 +31,33 @@ import { useState } from 'react';
 import { Stack } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { BoundedDetailSheet } from '@/components/overlays/BoundedDetailSheet';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion';
 import { cn } from '@/lib/utils';
 
 import { useWorkflowEvents } from '../hooks/useWorkflowEvents';
+import { useFailureDiagnostics } from '../hooks/useFailureDiagnostics';
+import { useAllowedActions } from '../hooks/useAllowedActions';
+import { useFailureClassification } from '../hooks/useFailureClassification';
+import { useFailureTaxonomy } from '../hooks/useFailureTaxonomy';
+import { useRetryWorkflow } from '../hooks/useRetryWorkflow';
+import { useRunIntegrationConflicts, resolveConflictId } from '../hooks/useRunIntegrationConflicts';
+import { FailureClassificationDialog } from './FailureClassificationDialog';
+import { humanNameForTaxonomy } from './failureClassificationDialogView';
+import { ReconciliationDialog } from './ReconciliationDialog';
 import { humanizeFailureCategory } from '../failureCategoryView';
+import {
+  downloadRedactedRunnerLog,
+  isActionInvokable,
+  isSyncDrift,
+  safetyTone,
+  type FailureDiagnostics,
+  type IntegrationSyncStatus,
+} from '../failureDiagnosticsView';
 import type { WorkflowEventsResponse } from '@/lib/api/queryOptions';
 import { formatRelativeTime, formatUtcTimestamp } from '../runContextFormat';
 import { StateSignifierChip } from './WorkflowStateBadge';
@@ -145,78 +168,493 @@ function FailureRow({
   );
 }
 
-/** The diagnostics panel body for a selected failure/recovery/takeover event (AC6). */
-function DiagnosticsBody({ event }: { event: WorkflowEvent }) {
-  const category = humanizeFailureCategory(event.failureCategory ?? undefined);
+/** A small labelled field block (uppercase annotation + escaped value). */
+function DiagnosticsField({
+  label,
+  value,
+  testId,
+  fallback = 'Not reported',
+}: {
+  label: string;
+  value: string | null | undefined;
+  testId?: string;
+  fallback?: string;
+}) {
+  const hasValue = value !== null && value !== undefined && value.trim() !== '';
+  return (
+    <div data-testid={testId}>
+      <span className="text-annotation uppercase tracking-wide text-text-tertiary">{label}</span>
+      <p className={cn('text-sm', hasValue ? 'text-text-primary' : 'text-text-tertiary')}>
+        {hasValue ? value : fallback}
+      </p>
+    </div>
+  );
+}
+
+/** The takeover drill-down (a takeover is not a runner failure — no diagnostics deep-dive). */
+function TakeoverDiagnosticsBody({ event }: { event: WorkflowEvent }) {
   const correlationId = event.details.correlationId;
-  const takeover = isTakeoverEvent(event);
   return (
     <Stack gap="3">
-      {takeover ? (
-        // Story 3.29 — a takeover has no failure category; surface the actor instead.
-        <div data-testid="failure-diagnostics-actor">
-          <span className="text-annotation uppercase tracking-wide text-text-tertiary">
-            Taken over by
-          </span>
-          <p className="text-sm text-text-primary">{event.actorIdentity}</p>
-        </div>
-      ) : (
-        <div data-testid="failure-diagnostics-category">
-          <span className="text-annotation uppercase tracking-wide text-text-tertiary">
-            Failure category
-          </span>
-          <p className="text-sm text-text-primary">{category ?? 'Not reported'}</p>
-        </div>
-      )}
-      <div data-testid="failure-diagnostics-reason">
-        <span className="text-annotation uppercase tracking-wide text-text-tertiary">Reason</span>
-        {/* Runner-supplied text — rendered as React-escaped plain text (never raw HTML). */}
-        <p className="text-sm text-text-primary">
-          {event.reason !== null && event.reason !== undefined && event.reason.trim() !== ''
-            ? event.reason
-            : 'No reason recorded'}
-        </p>
-      </div>
-      <div data-testid="failure-diagnostics-correlation">
+      <div data-testid="failure-diagnostics-actor">
         <span className="text-annotation uppercase tracking-wide text-text-tertiary">
-          Correlation ID
+          Taken over by
         </span>
-        {correlationId !== undefined ? (
-          // Selectable for log grep (story 3.7 ELK). Plain escaped text — safe charset.
-          <code className="block select-all break-all text-sm text-text-primary">
-            {correlationId}
-          </code>
-        ) : (
-          <p className="text-sm text-text-tertiary">Not reported</p>
-        )}
+        <p className="text-sm text-text-primary">{event.actorIdentity}</p>
       </div>
-      {takeover ? null : (
-        <div data-testid="failure-diagnostics-logs">
-          {/* PLACEHOLDER (AC6) — the story-3.6 redacted-runner-logs endpoint is not wired
-              yet (Epic 4). A disabled affordance, never a fabricated URL. Not applicable
-              to a takeover (no runner failure). */}
-          <Button
-            type="button"
-            variant="outline"
-            disabled
-            data-testid="failure-diagnostics-logs-link"
-          >
-            Download runner logs
-          </Button>
-          <p className="mt-1 text-meta text-text-tertiary">
-            Redacted runner logs become available in a later release.
-          </p>
-        </div>
-      )}
+      <DiagnosticsField
+        label="Reason"
+        testId="failure-diagnostics-reason"
+        value={event.reason ?? undefined}
+        fallback="No reason recorded"
+      />
+      <DiagnosticsField
+        label="Correlation ID"
+        testId="failure-diagnostics-correlation"
+        value={typeof correlationId === 'string' ? correlationId : undefined}
+      />
     </Stack>
   );
+}
+
+/** One ranked recommended-action row (story 4.4 AC4). */
+function RecommendedActionRow({
+  action,
+  invokable,
+  onInvoke,
+  invoking,
+}: {
+  action: FailureDiagnostics['recommendedRecoveryActions'][number];
+  invokable: boolean;
+  onInvoke: () => void;
+  invoking: boolean;
+}) {
+  const tone = safetyTone(action.safetyLevel);
+  return (
+    <li
+      data-testid="failure-diagnostics-recommendation"
+      data-action-type={action.actionType}
+      data-safety={action.safetyLevel}
+      className="flex items-start gap-3 rounded-md border border-border px-3 py-2"
+    >
+      <StateSignifierChip
+        stateName={tone === 'safe' ? 'success' : tone === 'risky' ? 'error' : 'warning'}
+        // Color-independent bracketed label survives greyscale (story 2.3 AC5).
+        label={`[${action.safetyLevel.toUpperCase()}]`}
+      />
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-sm font-medium text-text-primary">{action.actionType}</span>
+        <span className="text-meta text-text-secondary">{action.reason}</span>
+        <span className="text-annotation text-text-tertiary">
+          Precondition: {action.precondition}
+        </span>
+      </span>
+      {invokable ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={invoking}
+          onClick={onInvoke}
+          data-testid="failure-diagnostics-invoke"
+          data-action-type={action.actionType}
+        >
+          {invoking ? 'Retrying…' : 'Retry'}
+        </Button>
+      ) : (
+        <span className="shrink-0 text-annotation text-text-tertiary">
+          Surfaced in a later release
+        </span>
+      )}
+    </li>
+  );
+}
+
+/**
+ * An integration sync-status row with a drift flag (AC6). Story 4.23 — when the integration has
+ * drifted AND the run has a matching unresolved conflict, the static tooltip is replaced by a
+ * "Reconcile" control that opens the reconciliation dialog (launch context b). Without a matching
+ * conflict, the static drift tooltip remains the shipped affordance.
+ */
+function SyncStatusRow({
+  label,
+  sync,
+  onReconcile,
+}: {
+  label: string;
+  sync: IntegrationSyncStatus | null | undefined;
+  onReconcile?: (() => void) | undefined;
+}) {
+  const drift = isSyncDrift(sync);
+  const canReconcile = drift && onReconcile !== undefined;
+  return (
+    <div data-testid="failure-diagnostics-sync" data-integration={label.toLowerCase()}>
+      <span className="text-annotation uppercase tracking-wide text-text-tertiary">{label}</span>
+      {sync == null ? (
+        <p className="text-sm text-text-tertiary">Not linked</p>
+      ) : (
+        <p className="flex flex-wrap items-center gap-2 text-sm text-text-primary">
+          <span className="break-all">{sync.externalRef ?? '(no reference)'}</span>
+          <span
+            data-testid="failure-diagnostics-sync-status"
+            data-drift={drift ? 'true' : 'false'}
+            className={cn(
+              'rounded px-1.5 py-0.5 text-annotation',
+              drift
+                ? 'bg-state-error-surface text-state-error-text'
+                : 'bg-surface-elevated text-text-secondary',
+            )}
+            title={
+              drift
+                ? `Integration drift: sync status is "${sync.syncStatus}"` +
+                  (sync.lastSyncAt !== null && sync.lastSyncAt !== undefined
+                    ? `, last synced ${sync.lastSyncAt}.`
+                    : '.')
+                : `Sync status: ${sync.syncStatus}.`
+            }
+          >
+            {drift ? `⚠ ${sync.syncStatus}` : sync.syncStatus}
+          </span>
+          {canReconcile ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="failure-diagnostics-reconcile"
+              onClick={onReconcile}
+            >
+              Reconcile
+            </Button>
+          ) : null}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The enriched failure-diagnostics deep-dive (story 4.4 AC4/AC5/AC6/AC7/AC8). Fetches the run's
+ * `getFailureDiagnostics` and renders: the NFR7 five questions above the fold, a copy-correlationId
+ * button, the safety-ranked recommended actions (an active Retry button only when `retry` is in the
+ * run's allowed-actions), and expandable sections for the runner-log download, integration sync
+ * status, and last good state.
+ */
+function FailureDiagnosticsBody({
+  event,
+  workflowRunId,
+}: {
+  event: WorkflowEvent;
+  workflowRunId: string;
+}) {
+  const diagnosticsQuery = useFailureDiagnostics(workflowRunId);
+  const allowedActionsQuery = useAllowedActions(workflowRunId, 'workflow_owner');
+  const retry = useRetryWorkflow(workflowRunId);
+  const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
+
+  const diagnostics = diagnosticsQuery.data;
+
+  // Story 4.23 (launch context b) — resolve the run's unresolved conflicts so a drifted integration
+  // row can open the reconciliation dialog on the matching conflict. Only fetched when a sync has
+  // actually drifted (stale/failed), so a healthy run makes no extra call.
+  const anyDrift =
+    isSyncDrift(diagnostics?.integrationSyncStatus.linear) ||
+    isSyncDrift(diagnostics?.integrationSyncStatus.github);
+  const conflictsQuery = useRunIntegrationConflicts(workflowRunId, { enabled: anyDrift });
+  const [reconcileState, setReconcileState] = useState<{ open: boolean; conflictId: string }>({
+    open: false,
+    conflictId: '',
+  });
+  function openReconcileFor(integrationHint: string): (() => void) | undefined {
+    const conflictId = resolveConflictId(conflictsQuery.data?.conflicts, integrationHint);
+    if (conflictId === undefined) {
+      return undefined;
+    }
+    return () => setReconcileState({ open: true, conflictId });
+  }
+  const allowedActions = allowedActionsQuery.data?.actions;
+  // The allowed-actions gate is only KNOWN once the query resolves; while it is loading or errored
+  // `allowedActions` is undefined and we must not claim "not permitted" (that misleads for a run the
+  // operator can in fact act on).
+  const gateKnown = allowedActions !== undefined;
+
+  // Fall back to the clicked event's fields while the deep-dive loads or if it errors, so the panel
+  // is never empty (AC7 — the five questions must still answer "what happened / what failed").
+  const failureCategory = humanizeFailureCategory(
+    diagnostics?.failureCategory ?? event.failureCategory ?? undefined,
+  );
+  const failureReason = diagnostics?.failureReason ?? event.reason ?? undefined;
+  const correlationId =
+    diagnostics?.correlationId ??
+    (typeof event.details.correlationId === 'string' ? event.details.correlationId : undefined);
+  const runnerLog = diagnostics?.runnerLogReference ?? null;
+  const canDownloadLog =
+    runnerLog !== null && gateKnown && allowedActions.includes('view_runner_logs');
+
+  async function handleCopy() {
+    if (correlationId === undefined) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(correlationId);
+      setCopyFailed(false);
+      setCopied(true);
+      // Reset the "Copied" affirmation so the button gives feedback on a subsequent copy.
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard access can reject (insecure context / denied permission) — surface a hint rather
+      // than silently doing nothing so the operator knows to select the id manually.
+      setCopied(false);
+      setCopyFailed(true);
+    }
+  }
+
+  async function handleDownload() {
+    if (runnerLog === null) {
+      return;
+    }
+    setDownloading(true);
+    try {
+      await downloadRedactedRunnerLog(runnerLog.runnerExecutionId);
+      setDownloadError(null);
+    } catch {
+      setDownloadError('The redacted runner log could not be downloaded. Try again.');
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  return (
+    <>
+      <Stack gap="3">
+        {/* NFR7 five questions — above the fold, never inside an accordion (AC7). */}
+        <div
+          data-testid="failure-diagnostics-summary"
+          className="rounded-md border border-state-error-border bg-state-error-surface/40 p-3"
+        >
+          <StateSignifierChip stateName="error" label="Failed" />
+          <div className="mt-2 flex flex-col gap-2">
+            <DiagnosticsField
+              label="What happened"
+              testId="failure-diagnostics-category"
+              value={failureCategory ?? undefined}
+            />
+            <DiagnosticsField
+              label="Reason"
+              testId="failure-diagnostics-reason"
+              value={failureReason}
+              fallback="No reason recorded"
+            />
+            <DiagnosticsField
+              label="What changed"
+              value={`${diagnostics?.lastSuccessfulStage ?? '(unknown)'} → ${
+                diagnostics?.failedStage ?? '(unknown)'
+              }`}
+            />
+            <DiagnosticsField
+              label="Who acted"
+              value={diagnostics?.lastActorIdentity ?? 'system'}
+            />
+            <DiagnosticsField
+              label="What is next"
+              value={
+                diagnostics?.recommendedRecoveryActions[0]?.actionType ??
+                diagnostics?.nextSafeAction ??
+                undefined
+              }
+            />
+          </div>
+        </div>
+
+        {/* Correlation ID with a real copy-to-clipboard button (AC8). */}
+        <div data-testid="failure-diagnostics-correlation">
+          <span className="text-annotation uppercase tracking-wide text-text-tertiary">
+            Correlation ID
+          </span>
+          {correlationId !== undefined ? (
+            <div className="flex items-center gap-2">
+              <code className="min-w-0 break-all text-sm text-text-primary">{correlationId}</code>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void handleCopy()}
+                data-testid="failure-diagnostics-copy-correlation"
+              >
+                {copied ? 'Copied' : 'Copy'}
+              </Button>
+              {copyFailed ? (
+                <span
+                  className="text-meta text-state-error-text"
+                  data-testid="failure-diagnostics-copy-error"
+                >
+                  Copy failed — select the id manually.
+                </span>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-sm text-text-tertiary">(none)</p>
+          )}
+        </div>
+
+        {/* Recommended recovery actions, ranked by safety (AC4). */}
+        <div data-testid="failure-diagnostics-recommendations">
+          <span className="text-annotation uppercase tracking-wide text-text-tertiary">
+            Recommended recovery actions
+          </span>
+          {(diagnostics?.recommendedRecoveryActions ?? []).length === 0 ? (
+            <p className="text-sm text-text-tertiary">No recommendations.</p>
+          ) : (
+            <ul className="mt-1 flex flex-col gap-2">
+              {diagnostics?.recommendedRecoveryActions.map((action, index) => {
+                const invokable = isActionInvokable(action, allowedActions);
+                return (
+                  <RecommendedActionRow
+                    key={`${action.actionType}-${index}`}
+                    action={action}
+                    invokable={invokable}
+                    invoking={retry.isPending}
+                    onInvoke={() => retry.mutate({})}
+                  />
+                );
+              })}
+            </ul>
+          )}
+          {retry.isError ? (
+            <p
+              className="mt-1 text-meta text-state-error-text"
+              data-testid="failure-diagnostics-retry-error"
+            >
+              The retry could not be submitted. Refresh and try again.
+            </p>
+          ) : null}
+        </div>
+
+        {/* Expandable detail sections (AC6) — runner-log download, integration sync, last good state. */}
+        <Accordion type="multiple" className="border-t border-border">
+          <AccordionItem value="runner-log">
+            <AccordionTrigger data-testid="failure-diagnostics-runner-log-trigger">
+              Runner log
+            </AccordionTrigger>
+            <AccordionContent>
+              {runnerLog === null ? (
+                <p className="text-sm text-text-tertiary">No runner log captured for this run.</p>
+              ) : (
+                <Stack gap="2">
+                  <p className="text-meta text-text-secondary">
+                    {runnerLog.classification} · {runnerLog.byteSize} bytes ·{' '}
+                    {runnerLog.redactionCount} redactions
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!canDownloadLog || downloading}
+                    onClick={() => void handleDownload()}
+                    data-testid="failure-diagnostics-download-log"
+                  >
+                    {downloading ? 'Downloading…' : 'Download redacted runner log'}
+                  </Button>
+                  {!gateKnown ? (
+                    <p className="text-annotation text-text-tertiary">Checking permissions…</p>
+                  ) : !canDownloadLog ? (
+                    <p className="text-annotation text-text-tertiary">
+                      Downloading logs is not permitted in this run state.
+                    </p>
+                  ) : null}
+                  {downloadError !== null ? (
+                    <p className="text-meta text-state-error-text">{downloadError}</p>
+                  ) : null}
+                </Stack>
+              )}
+            </AccordionContent>
+          </AccordionItem>
+          <AccordionItem value="integration-sync">
+            <AccordionTrigger data-testid="failure-diagnostics-sync-trigger">
+              Integration sync status
+            </AccordionTrigger>
+            <AccordionContent>
+              <Stack gap="2">
+                <SyncStatusRow
+                  label="Linear"
+                  sync={diagnostics?.integrationSyncStatus.linear}
+                  onReconcile={openReconcileFor('linear')}
+                />
+                <SyncStatusRow
+                  label="GitHub"
+                  sync={diagnostics?.integrationSyncStatus.github}
+                  onReconcile={openReconcileFor('github')}
+                />
+              </Stack>
+            </AccordionContent>
+          </AccordionItem>
+          <AccordionItem value="last-good-state">
+            <AccordionTrigger data-testid="failure-diagnostics-last-good-trigger">
+              Last good state
+            </AccordionTrigger>
+            <AccordionContent>
+              <Stack gap="2">
+                <DiagnosticsField
+                  label="Last good state"
+                  value={diagnostics?.lastGoodState ?? undefined}
+                />
+                <DiagnosticsField
+                  label="Current blocking reason"
+                  value={diagnostics?.currentBlockingReason ?? undefined}
+                  fallback="Nothing is blocking recovery."
+                />
+              </Stack>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+      </Stack>
+      <ReconciliationDialog
+        workflowRunId={workflowRunId}
+        conflictId={reconcileState.conflictId}
+        open={reconcileState.open}
+        onClose={() => setReconcileState((prev) => ({ ...prev, open: false }))}
+      />
+    </>
+  );
+}
+
+/** The diagnostics panel body for a selected failure/recovery/takeover event (AC4/AC6). */
+function DiagnosticsBody({
+  event,
+  workflowRunId,
+}: {
+  event: WorkflowEvent;
+  workflowRunId: string;
+}) {
+  if (isTakeoverEvent(event)) {
+    return <TakeoverDiagnosticsBody event={event} />;
+  }
+  return <FailureDiagnosticsBody event={event} workflowRunId={workflowRunId} />;
 }
 
 export function FailureEventSurface({ workflowRunId }: FailureEventSurfaceProps) {
   const query = useWorkflowEvents(workflowRunId);
   const [selected, setSelected] = useState<WorkflowEvent | undefined>(undefined);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [classifyOpen, setClassifyOpen] = useState(false);
   const nowMs = Date.now();
+
+  // Story 4.24 (AC8b/AC9) — the current classification (if any) surfaced with provenance next to the
+  // "Classify failure" trigger. Cached under `detail(id)`, so the classify mutation refreshes it.
+  const classificationQuery = useFailureClassification(workflowRunId);
+  // Review D1 — humanize via the governed registry (the wire `currentDisplayLabel` is the raw
+  // snake_case value); `humanNameForTaxonomy` title-cases as a fallback when the registry is
+  // unavailable, so this surface, the Run Context Strip chip, and the dialog render ONE name.
+  const taxonomyQuery = useFailureTaxonomy();
+  // Review D2 — only offer Classify when the run's live allowed-actions include it (parity with the
+  // Decision Bar). A failed-then-recovered run no longer shows an actionable trigger it would 409 on.
+  const allowedActionsQuery = useAllowedActions(workflowRunId, 'workflow_owner');
+  const classification = classificationQuery.data;
+  const currentClassification =
+    humanNameForTaxonomy(taxonomyQuery.data, classification?.currentTaxonomyValue) ?? undefined;
+  const canClassify = allowedActionsQuery.data?.actions.includes('classify_failure') ?? false;
 
   const surfaceEvents = (query.data?.events ?? []).filter(isSurfaceEvent);
 
@@ -233,7 +671,37 @@ export function FailureEventSurface({ workflowRunId }: FailureEventSurfaceProps)
 
   return (
     <section aria-label="Run events" data-testid="failure-event-surface" className="w-full">
-      <h2 className="mb-2 text-meta uppercase tracking-wide text-text-tertiary">Run events</h2>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-meta uppercase tracking-wide text-text-tertiary">Run events</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          {currentClassification !== undefined ? (
+            <span
+              className="text-meta text-text-secondary"
+              data-testid="failure-diagnostics-classification"
+            >
+              Classified as{' '}
+              <span className="font-medium text-text-primary">{currentClassification}</span>
+              {/* Review D1 — the deprecated marker is surfaced SEPARATELY (never folded into the
+                  humanized name), so the taxonomy name stays the single canonical label. */}
+              {classification?.deprecated === true ? (
+                <span className="text-state-draft-foreground"> (deprecated)</span>
+              ) : null}
+              {classification?.classifiedBy != null ? <> by {classification.classifiedBy}</> : null}
+            </span>
+          ) : null}
+          {canClassify ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setClassifyOpen(true)}
+              data-testid="failure-diagnostics-classify-trigger"
+            >
+              Classify failure
+            </Button>
+          ) : null}
+        </div>
+      </div>
       <ul className="flex flex-col gap-2">
         {surfaceEvents.map((event) => (
           <FailureRow key={event.publicId} event={event} nowMs={nowMs} onSelect={handleSelect} />
@@ -246,8 +714,16 @@ export function FailureEventSurface({ workflowRunId }: FailureEventSurfaceProps)
         description="Details for this run event, including the correlation id for log search."
         testId="failure-diagnostics-sheet"
       >
-        {selected !== undefined ? <DiagnosticsBody event={selected} /> : null}
+        {selected !== undefined ? (
+          <DiagnosticsBody event={selected} workflowRunId={workflowRunId} />
+        ) : null}
       </BoundedDetailSheet>
+      {classifyOpen ? (
+        <FailureClassificationDialog
+          workflowRunId={workflowRunId}
+          onClose={() => setClassifyOpen(false)}
+        />
+      ) : null}
     </section>
   );
 }

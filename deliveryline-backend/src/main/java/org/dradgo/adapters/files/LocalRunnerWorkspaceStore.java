@@ -61,6 +61,9 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
   // Story 3.9 AC4 / Decision D3 — the cloned-repo working tree, sibling of input/output/logs under
   // the same {rex}/ root so the existing recursive deleteWorkspace reaps it for free (AC11).
   private static final String REPO_SUBDIR = "repo";
+  // Story: runner JDK+Maven — SIBLING of runner-work/ under deliveryline.home (NOT under a
+  // {rex}/ root), so the shared cache survives per-run workspace cleanup/deletion.
+  private static final String MAVEN_CACHE_DIRNAME = "maven-cache";
   // Story 3.9 — the VCS metadata directory inside the cloned `repo/` working tree. Excluded from
   // the
   // secret scan (see readFilesForSecretScan): its stock sample hooks / pack objects are not
@@ -215,6 +218,25 @@ public class LocalRunnerWorkspaceStore implements RunnerWorkspaceStore {
       return Optional.empty();
     }
     return Optional.of(repo);
+  }
+
+  @Override
+  public Optional<Path> prepareMavenCache() {
+    Path cache = deliverylineHome.resolve(MAVEN_CACHE_DIRNAME).normalize();
+    // Containment: the cache must stay under deliveryline.home (mirrors the workspace guards).
+    if (!cache.startsWith(deliverylineHome)) {
+      throw new IllegalStateException("maven cache path escapes deliveryline.home");
+    }
+    try {
+      createWithPerms(cache, RUNNER_WRITABLE_DIR_PERMS);
+      Path real = cache.toRealPath();
+      log.info("maven cache dir prepared path={}", real);
+      return Optional.of(real);
+    } catch (IOException error) {
+      // Degrade to a per-container ephemeral repo rather than failing the dispatch.
+      log.warn("maven cache dir prepare failed reason=io_error — using per-container cache");
+      return Optional.empty();
+    }
   }
 
   @Override

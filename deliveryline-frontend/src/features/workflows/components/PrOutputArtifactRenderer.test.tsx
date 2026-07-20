@@ -179,12 +179,38 @@ describe('PrOutputArtifactRenderer', () => {
     expect(trigger0).toHaveFocus();
   });
 
-  it('AC7 — the Compare control is reserved disabled unless backend actions include compare', () => {
-    const { rerender } = render(<PrOutputArtifactRenderer artifact={prOutputArtifactView} />);
+  it('AC7 / 4.20 AC9 — the Compare control is reserved disabled unless actions include enter_compare_mode AND version > 1', () => {
+    // A comparable (v2+) prOutput — a prior revision exists to diff against.
+    const comparable = { ...prOutputArtifactView, version: 2 };
+    const { rerender } = render(<PrOutputArtifactRenderer artifact={comparable} />);
     expect(screen.getByTestId('artifact-compare-entry')).toBeDisabled();
 
-    rerender(<PrOutputArtifactRenderer artifact={prOutputArtifactView} actions={['compare']} />);
+    // The old anticipated literal no longer enables it (renamed in story 4.20).
+    rerender(<PrOutputArtifactRenderer artifact={comparable} actions={['compare']} />);
+    expect(screen.getByTestId('artifact-compare-entry')).toBeDisabled();
+
+    // A v1 artifact (no prior revision) stays disabled even with the backend action present — the
+    // per-artifact version>1 gate (parallel to spec/plan) prevents a compare with no baseline.
+    rerender(
+      <PrOutputArtifactRenderer artifact={prOutputArtifactView} actions={['enter_compare_mode']} />,
+    );
+    expect(screen.getByTestId('artifact-compare-entry')).toBeDisabled();
+
+    rerender(<PrOutputArtifactRenderer artifact={comparable} actions={['enter_compare_mode']} />);
     expect(screen.getByTestId('artifact-compare-entry')).toBeEnabled();
+  });
+
+  it('4.20 AC9 — clicking the enabled Compare control invokes onCompare (opens the overlay)', async () => {
+    const onCompare = vi.fn();
+    render(
+      <PrOutputArtifactRenderer
+        artifact={{ ...prOutputArtifactView, version: 2 }}
+        actions={['enter_compare_mode']}
+        onCompare={onCompare}
+      />,
+    );
+    await userEvent.click(screen.getByTestId('artifact-compare-entry'));
+    expect(onCompare).toHaveBeenCalledTimes(1);
   });
 
   it('renders the PR description body via the .prose typography utility (untrusted markdown)', () => {

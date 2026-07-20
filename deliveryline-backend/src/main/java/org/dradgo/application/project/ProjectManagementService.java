@@ -13,6 +13,7 @@ import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.ProjectRunnerStep;
 import org.dradgo.domain.registry.ProjectStatus;
+import org.dradgo.domain.registry.PushMode;
 import org.dradgo.domain.registry.RunnerKind;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -110,7 +111,21 @@ public class ProjectManagementService {
             OffsetDateTime.now(ZoneOffset.UTC),
             null,
             // Story 3e-4 (AC6) — the per-step runner mapping persisted to project_runner_kinds.
-            stepRunnerKinds);
+            stepRunnerKinds,
+            // Story 3h-1 (AC2) — per-project build config from the create command (blank command
+            // coerced to null so the Project non-blank-if-set invariant holds; no BUILD then).
+            normalizeBuildCommand(command.buildCommand()),
+            command.buildStageEnabled(),
+            // Story 3h-2 (AC2) — per-project lint config from the command (blank entries dropped;
+            // empty ⇒ no lint).
+            normalizeLintCommands(command.lintCommands()),
+            command.lintStageEnabled(),
+            // Story 3h-4 (AC1) — per-project delivery config from the create command (null pushMode
+            // ⇒ AUTO; autoCreatePullRequest is a plain boolean).
+            parsePushMode(command.pushMode()),
+            command.autoCreatePullRequest(),
+            // Task 4 (DinD Testcontainers sidecar) — per-project opt-in from the create command.
+            command.testcontainersEnabled());
     Project created = projectStore.insert(project);
     log.info(
         "project created projectId={} slug={} ticketSourceKind={} repoHostKind={} status={}",
@@ -158,7 +173,27 @@ public class ProjectManagementService {
             existing.createdAt(),
             existing.archivedAt(),
             // Story 3e-4 (AC6) — full-replace: the submitted per-step map is authoritative.
-            stepRunnerKinds);
+            stepRunnerKinds,
+            // Story 3h-1 (AC2) — build config is editable; full-replace from the update command
+            // (blank command clears to null / no build).
+            normalizeBuildCommand(command.buildCommand()),
+            command.buildStageEnabled(),
+            // Story 3h-2 (AC2) — per-project lint config from the command (blank entries dropped;
+            // empty ⇒ no lint).
+            normalizeLintCommands(command.lintCommands()),
+            command.lintStageEnabled(),
+            // Story 3h-4 (AC1) — delivery config is editable; full-replace from the update command
+            // (null pushMode ⇒ AUTO).
+            parsePushMode(command.pushMode()),
+            command.autoCreatePullRequest(),
+            // Task 4 (DinD Testcontainers sidecar) — editable; full-replace from the update
+            // command.
+            command.testcontainersEnabled(),
+            // Story 3m-2 (AC5) — preserve the definition binding across an update (the back-compat
+            // 21-arg ctor would default it to null and silently revert the project to the legacy
+            // hardcoded pipeline). Not editable via this command until 3m-4/3m-8 own the write
+            // path.
+            existing.workflowDefinitionId());
     Project updated = projectStore.update(mutated);
     log.info(
         "project updated projectId={} slug={} ticketSourceKind={} repoHostKind={} status={}",
@@ -213,7 +248,27 @@ public class ProjectManagementService {
             // Story 3e-4 — preserve the per-step map across a status-only change (update
             // full-replaces
             // it from the submitted aggregate, so a status flip must carry the existing mapping).
-            existing.stepRunnerKinds());
+            existing.stepRunnerKinds(),
+            // Story 3h-1 — preserve build config across a status-only change (the back-compat
+            // 14-arg ctor would default it to (null,false) and silently wipe it).
+            existing.buildCommand(),
+            existing.buildStageEnabled(),
+            // Story 3h-2 — preserve lint config across a status-only change (the back-compat 16-arg
+            // ctor would default it to (empty,false) and silently wipe it).
+            existing.lintCommands(),
+            existing.lintStageEnabled(),
+            // Story 3h-4 — preserve delivery config across a status-only change (the back-compat
+            // 18-arg ctor would default it to (AUTO,true) and silently wipe a non-auto mode).
+            existing.pushMode(),
+            existing.autoCreatePullRequest(),
+            // Task 4 — preserve the testcontainers flag across a status-only change (the
+            // back-compat
+            // 20-arg ctor would default it to false and silently wipe it).
+            existing.testcontainersEnabled(),
+            // Story 3m-2 — preserve the definition binding across a status-only change (the
+            // back-compat 21-arg ctor would default it to null and silently revert the project to
+            // the legacy hardcoded pipeline).
+            existing.workflowDefinitionId());
     Project disabled = projectStore.update(mutated);
     log.info(
         "project disabled projectId={} slug={} status={}",
@@ -249,7 +304,21 @@ public class ProjectManagementService {
             existing.archivedAt(),
             // Story 3e-4 — preserve the per-step map across the status-only re-enable
             // (full-replace).
-            existing.stepRunnerKinds());
+            existing.stepRunnerKinds(),
+            // Story 3h-1 — preserve build config across the status-only re-enable.
+            existing.buildCommand(),
+            existing.buildStageEnabled(),
+            // Story 3h-2 — preserve lint config across a status-only change (the back-compat 16-arg
+            // ctor would default it to (empty,false) and silently wipe it).
+            existing.lintCommands(),
+            existing.lintStageEnabled(),
+            // Story 3h-4 — preserve delivery config across the status-only re-enable.
+            existing.pushMode(),
+            existing.autoCreatePullRequest(),
+            // Task 4 — preserve the testcontainers flag across the status-only re-enable.
+            existing.testcontainersEnabled(),
+            // Story 3m-2 — preserve the definition binding across the status-only re-enable.
+            existing.workflowDefinitionId());
     Project enabled = projectStore.update(mutated);
     log.info(
         "project enabled projectId={} slug={} status={}",
@@ -291,6 +360,48 @@ public class ProjectManagementService {
 
   private static RunnerKind parseRunnerKind(String runnerKind) {
     return runnerKind == null ? null : RunnerKind.fromValue(runnerKind, "runnerKind");
+  }
+
+  /**
+   * Story 3h-4 (AC1) — parse/validate the per-project push mode for persistence. null/blank ⇒ the
+   * {@link PushMode#AUTO} default (push inline, pre-3h parity — mirrors {@code parseRunnerKind}'s
+   * null handling but with a non-null default because {@code push_mode} is a NOT NULL column). A
+   * non-blank value must resolve to a real {@link PushMode} ({@code auto}/{@code manual}/{@code
+   * approve}); an unknown value surfaces a typed {@code UNKNOWN_REGISTRY_VALUE} 400 via {@code
+   * PushMode.fromValue}.
+   */
+  private static PushMode parsePushMode(String pushMode) {
+    return (pushMode == null || pushMode.isBlank())
+        ? PushMode.AUTO
+        : PushMode.fromValue(pushMode, "pushMode");
+  }
+
+  /**
+   * Story 3h-1 (AC2) — normalize the per-project build command for persistence: null/blank ⇒ null
+   * (the canonical "no build command" value the domain stores as NULL — BUILD skipped). No enum
+   * validation: the command is opaque and validated only at execution time.
+   */
+  private static String normalizeBuildCommand(String buildCommand) {
+    if (buildCommand == null) {
+      return null;
+    }
+    String trimmed = buildCommand.trim();
+    return trimmed.isEmpty() ? null : trimmed;
+  }
+
+  /**
+   * Story 3h-2 (AC2) — normalize the per-project lint commands for persistence: drop null/blank
+   * entries and trim the survivors (empty ⇒ the canonical "no lint commands" value — LINT skipped).
+   * No enum validation: the commands are opaque and validated only at execution time.
+   */
+  private static java.util.List<String> normalizeLintCommands(java.util.List<String> lintCommands) {
+    if (lintCommands == null) {
+      return java.util.List.of();
+    }
+    return lintCommands.stream()
+        .filter(command -> command != null && !command.isBlank())
+        .map(String::trim)
+        .toList();
   }
 
   /**

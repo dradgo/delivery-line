@@ -19,6 +19,8 @@ import org.dradgo.domain.integration.ticketsource.CreateSubticketResult;
 import org.dradgo.domain.integration.ticketsource.GovernedRunComment;
 import org.dradgo.domain.integration.ticketsource.SubticketDraft;
 import org.dradgo.domain.integration.ticketsource.Ticket;
+import org.dradgo.domain.integration.ticketsource.TicketQuery;
+import org.dradgo.domain.integration.ticketsource.TicketQueryResult;
 import org.dradgo.domain.integration.ticketsource.TicketRef;
 import org.dradgo.domain.integration.ticketsource.TicketSourceCapabilities;
 import org.dradgo.domain.registry.ConnectorKind;
@@ -114,6 +116,15 @@ public class LinearMockAdapter implements TicketSourceAdapter {
             .collect(Collectors.toList());
     log.info("linear_mock poll since={} returned={} tickets", since, matched.size());
     return Collections.unmodifiableList(matched);
+  }
+
+  /**
+   * Story 3i-2 — parity with {@code LinearRealAdapter}: the Linear kind does not advertise {@code
+   * supportsTicketQuery}, so the capability-gated intake surface never reaches this method.
+   */
+  @Override
+  public TicketQueryResult queryTickets(TicketQuery query) {
+    throw new UnsupportedOperationException("queryTickets not supported for linear");
   }
 
   @Override

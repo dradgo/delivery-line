@@ -24,12 +24,24 @@ public record ContainerState(
     String networkMode,
     List<CreateContainerSpec.BindMount> binds,
     Map<String, String> labels,
-    OffsetDateTime startedAt) {
+    OffsetDateTime startedAt,
+    String healthStatus) {
 
   public ContainerState {
     Objects.requireNonNull(status, "status");
     binds = binds == null ? List.of() : List.copyOf(binds);
     labels = labels == null ? Map.of() : Map.copyOf(labels);
+  }
+
+  /** Story 3.2 compatibility constructor: omits the {@code healthStatus} field added later. */
+  public ContainerState(
+      String status,
+      Integer exitCode,
+      String networkMode,
+      List<CreateContainerSpec.BindMount> binds,
+      Map<String, String> labels,
+      OffsetDateTime startedAt) {
+    this(status, exitCode, networkMode, binds, labels, startedAt, null);
   }
 
   /** Story 3.1 compatibility constructor: omits the {@code startedAt} field added by story 3.2. */
@@ -39,7 +51,7 @@ public record ContainerState(
       String networkMode,
       List<CreateContainerSpec.BindMount> binds,
       Map<String, String> labels) {
-    this(status, exitCode, networkMode, binds, labels, null);
+    this(status, exitCode, networkMode, binds, labels, null, null);
   }
 
   public boolean isExited() {

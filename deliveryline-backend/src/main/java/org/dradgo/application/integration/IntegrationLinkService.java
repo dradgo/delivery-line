@@ -689,6 +689,49 @@ public class IntegrationLinkService {
   }
 
   /**
+   * Story 4.6 -- publish the internal-state reconciliation decision to the linked GitHub PR. The
+   * operator reason remains in workflow_events only; external comments carry stable ids and the
+   * decision category, not free-form potentially sensitive text.
+   */
+  @Transactional
+  public void commentInternalReconcileOnGitHubPr(
+      String workflowRunPublicId, String conflictPublicId) {
+    PublicIdPrefixes.require(workflowRunPublicId, PublicIdPrefixes.WORKFLOW_RUN);
+    PublicIdPrefixes.require(conflictPublicId, PublicIdPrefixes.INTEGRATION_CONFLICT);
+    String priorRunMdc = MdcKeys.beginScope(MdcKeys.WORKFLOW_RUN_ID, workflowRunPublicId);
+    try {
+      IntegrationLink active =
+          integrationLinkRecordPort
+              .findActiveByTypeAndWorkflowRunForUpdate(
+                  GITHUB_PR_INTEGRATION_TYPE, workflowRunPublicId)
+              .orElseThrow(() -> noActiveGitHubLink(workflowRunPublicId));
+      RepositoryHostAdapter adapter = gitHubAdapterProvider.getIfAvailable();
+      if (adapter == null) {
+        throw gitHubAdapterUnavailable(active.externalRef());
+      }
+      adapter.commentOnPullRequest(
+          PullRequestRef.of(active.externalRef()),
+          internalReconcileCommentBody(workflowRunPublicId, conflictPublicId));
+      log.info(
+          "commentInternalReconcileOnGitHubPr success workflowRunId={} integrationLinkPublicId={} conflictId={}",
+          workflowRunPublicId,
+          active.publicId(),
+          conflictPublicId);
+    } finally {
+      MdcKeys.endScope(MdcKeys.WORKFLOW_RUN_ID, priorRunMdc);
+    }
+  }
+
+  private static String internalReconcileCommentBody(
+      String workflowRunPublicId, String conflictPublicId) {
+    return "DeliveryLine reconciled workflow run "
+        + workflowRunPublicId
+        + " by accepting the internal state for integration conflict "
+        + conflictPublicId
+        + ".";
+  }
+
+  /**
    * Reusable guard (story 3.15 AC5): assert an artifact's PR reference matches the active {@code
    * github_pr} link's canonical {@code external_ref} for the run — preventing approval of a {@code
    * prOutput} artifact whose PR reference has drifted (NFR19). Raises {@code
@@ -769,6 +812,30 @@ public class IntegrationLinkService {
    */
   public Optional<IntegrationLink> findActiveGitHubPrLink(String workflowRunPublicId) {
     return integrationLinkRecordPort.findActiveByTypeAndWorkflowRunForUpdate(
+        GITHUB_PR_INTEGRATION_TYPE, workflowRunPublicId);
+  }
+
+  /**
+   * Story 4.4 (AC1/AC6) — the active {@code linear} link for a run, read WITHOUT the {@code
+   * PESSIMISTIC_WRITE} lock the {@link #findActiveLinearTicketLink} write-path variant takes. Backs
+   * the read-only failure-diagnostics integration-sync-status view (carries {@code syncStatus} +
+   * {@code lastSyncAt}). Empty when the run has no active Linear link.
+   */
+  @Transactional(readOnly = true)
+  public Optional<IntegrationLink> findActiveLinearLinkReadOnly(String workflowRunPublicId) {
+    return integrationLinkRecordPort.findActiveByTypeAndWorkflowRun(
+        LINEAR_INTEGRATION_TYPE, workflowRunPublicId);
+  }
+
+  /**
+   * Story 4.4 (AC1/AC6) — the active {@code github_pr} link for a run, read WITHOUT the {@code
+   * PESSIMISTIC_WRITE} lock the {@link #findActiveGitHubPrLink} write-path variant takes. Backs the
+   * read-only failure-diagnostics integration-sync-status view. Empty when the run has no active PR
+   * link.
+   */
+  @Transactional(readOnly = true)
+  public Optional<IntegrationLink> findActiveGitHubPrLinkReadOnly(String workflowRunPublicId) {
+    return integrationLinkRecordPort.findActiveByTypeAndWorkflowRun(
         GITHUB_PR_INTEGRATION_TYPE, workflowRunPublicId);
   }
 

@@ -1,0 +1,7 @@
+{
+  "value": "adversarial_description",
+  "humanReadableName": "Adversarial Description",
+  "description": "Danger <img src=x onerror=\"window.__classDescXss=1\"> <script>window.__classDescXss2=1</script>",
+  "examples": ["A benign example."],
+  "deprecated": false
+}

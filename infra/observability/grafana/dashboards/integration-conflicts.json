@@ -1,0 +1,60 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "schemaVersion": 39,
+  "title": "Integration Conflicts",
+  "uid": "deliveryline-integration-conflicts",
+  "tags": ["deliveryline", "integration", "conflicts"],
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Unresolved conflicts by category",
+      "description": "Story 4.17 (AC7): currently-unresolved integration_conflicts rows, grouped by conflict category (external_state_advanced / _reverted / external_resource_removed / metadata_drift / link_broken). The IntegrationConflictUnresolvedHigh alert fires when the total exceeds 5 for 10m.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (category) (deliveryline_integration_conflict_unresolved_count)",
+          "legendFormat": "{{category}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Unresolved conflicts by integration",
+      "description": "Same unresolved-conflict gauge grouped by integration (github / linear).",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (integration) (deliveryline_integration_conflict_unresolved_count)",
+          "legendFormat": "{{integration}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Conflict detections/min by category",
+      "description": "Rate of NEW conflicts detected (first-insert of a (link, category)) — the counter deliveryline_integration_conflict_detected_total, per minute.",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (category, integration) (rate(deliveryline_integration_conflict_detected_total[5m])) * 60",
+          "legendFormat": "{{category}} / {{integration}}"
+        }
+      ]
+    }
+  ]
+}

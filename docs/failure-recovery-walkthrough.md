@@ -282,9 +282,11 @@ The `recovery_actions` table itself is not yet exposed via a CLI command — Epi
 
 ## What is NOT in Epic 1
 
-The Epic-1 baseline ships only one recovery action: `retry`. The `RecoveryService` class is
-scope-protected by an ArchUnit rule (`RECOVERY_SERVICE_IS_SCOPE_PROTECTED`) so a future
-contributor cannot stealth-add Epic-4 methods. The following arrive in Epic 4:
+The Epic-1 baseline ships only one recovery action: `retry`. The `RecoveryService` class was
+originally scope-protected by an ArchUnit rule (`RECOVERY_SERVICE_IS_SCOPE_PROTECTED`) so a future
+contributor could not stealth-add Epic-4 methods; that lock was lifted in Epic 4 (story 4.28) once
+its deeper-recovery scope landed — the allowed surface is now governed by
+[ADR 0033](adr/0033-recovery-service-scope-lift.md). The following arrive in Epic 4:
 
 - `resume(...)` — pick up a paused or interrupted run
 - `rerun(...)` — replay a specific stage with a fresh context

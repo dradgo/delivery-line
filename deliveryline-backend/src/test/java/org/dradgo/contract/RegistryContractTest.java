@@ -28,27 +28,35 @@ import org.dradgo.domain.DomainException;
 import org.dradgo.domain.id.PublicIdPrefixes;
 import org.dradgo.domain.registry.ActorType;
 import org.dradgo.domain.registry.AllowedAction;
+import org.dradgo.domain.registry.ArtifactKind;
 import org.dradgo.domain.registry.ArtifactOperationStatus;
 import org.dradgo.domain.registry.ArtifactOperationType;
 import org.dradgo.domain.registry.ArtifactStatus;
 import org.dradgo.domain.registry.ArtifactType;
+import org.dradgo.domain.registry.BmadStepKey;
 import org.dradgo.domain.registry.ConnectorKind;
 import org.dradgo.domain.registry.ConnectorRole;
 import org.dradgo.domain.registry.DataClassification;
+import org.dradgo.domain.registry.DefinitionKind;
 import org.dradgo.domain.registry.DomainErrorCode;
 import org.dradgo.domain.registry.DomainRegistry;
+import org.dradgo.domain.registry.DriftCategory;
 import org.dradgo.domain.registry.FailureCategory;
+import org.dradgo.domain.registry.FailureTaxonomyValue;
 import org.dradgo.domain.registry.IdempotencyRecordStatus;
+import org.dradgo.domain.registry.IntegrationConflictCategory;
 import org.dradgo.domain.registry.IntegrationFailureCategory;
 import org.dradgo.domain.registry.IntegrationSyncStatus;
 import org.dradgo.domain.registry.PersistedRegistryValues;
 import org.dradgo.domain.registry.ProjectRunnerStep;
 import org.dradgo.domain.registry.ProjectStatus;
+import org.dradgo.domain.registry.ReconciliationDecision;
 import org.dradgo.domain.registry.ReviewOutcome;
 import org.dradgo.domain.registry.RunnerExecutionStatus;
 import org.dradgo.domain.registry.RunnerKind;
 import org.dradgo.domain.registry.RunnerSchemaVersion;
 import org.dradgo.domain.registry.RunnerStage;
+import org.dradgo.domain.registry.SafeRerunStep;
 import org.dradgo.domain.registry.WorkflowEventType;
 import org.dradgo.domain.registry.WorkflowState;
 import org.junit.jupiter.api.Tag;
@@ -108,8 +116,17 @@ class RegistryContractTest {
     assertEquals(registryValues(DataClassification.values()), DomainRegistry.dataClassifications());
     assertEquals(registryValues(FailureCategory.values()), DomainRegistry.failureCategories());
     assertEquals(
+        registryValues(FailureTaxonomyValue.values()), DomainRegistry.failureTaxonomyValues());
+    assertEquals(
         registryValues(IntegrationFailureCategory.values()),
         DomainRegistry.integrationFailureCategories());
+    assertEquals(
+        registryValues(IntegrationConflictCategory.values()),
+        DomainRegistry.integrationConflictCategories());
+    assertEquals(registryValues(DriftCategory.values()), DomainRegistry.driftCategories());
+    assertEquals(
+        registryValues(ReconciliationDecision.values()), DomainRegistry.reconciliationDecisions());
+    assertEquals(registryValues(SafeRerunStep.values()), DomainRegistry.safeRerunSteps());
     assertEquals(
         registryValues(IntegrationSyncStatus.values()), DomainRegistry.integrationSyncStatuses());
     assertEquals(
@@ -121,6 +138,9 @@ class RegistryContractTest {
     assertEquals(registryValues(ProjectRunnerStep.values()), DomainRegistry.projectRunnerSteps());
     assertEquals(registryValues(ConnectorKind.values()), DomainRegistry.connectorKinds());
     assertEquals(registryValues(ReviewOutcome.values()), DomainRegistry.reviewOutcomes());
+    assertEquals(registryValues(DefinitionKind.values()), DomainRegistry.definitionKinds());
+    assertEquals(registryValues(BmadStepKey.values()), DomainRegistry.bmadStepKeys());
+    assertEquals(registryValues(ArtifactKind.values()), DomainRegistry.artifactKinds());
     assertEquals(PublicIdPrefixes.prefixMap(), DomainRegistry.publicIdPrefixes());
   }
 
@@ -187,6 +207,55 @@ class RegistryContractTest {
   }
 
   @Test
+  void integrationConflictCategoryStaysAlignedWithSqlCheck() {
+    // Story 4.17 (AC2/AC3) — IntegrationConflictCategory is SQL-CHECK-backed (the V36
+    // integration_conflicts.conflict_category column), so the registry set must equal the
+    // ck_integration_conflicts_conflict_category value-set. NO API-placeholder leg — 4.17 has no
+    // REST surface (story 4.18 owns GET /api/v1/integration-conflicts + its OpenAPI schema), so
+    // this drift gate is registry-vs-SQL only (contrast IntegrationFailureCategory, which is
+    // neither
+    // SQL-CHECK-backed nor in the API manifest).
+    assertFalse(
+        DomainRegistry.integrationConflictCategories().isEmpty(),
+        "IntegrationConflictCategory registry must not be empty");
+    assertEquals(
+        DomainRegistry.integrationConflictCategories(),
+        extractConstraintValues("ck_integration_conflicts_conflict_category"));
+  }
+
+  @Test
+  void driftCategoryStaysAlignedWithSqlCheck() {
+    // Story 4.15 (AC2/AC3) — DriftCategory is SQL-CHECK-backed (the V45
+    // artifact_drift_detected.drift_category column), so the registry set must equal the
+    // ck_artifact_drift_detected_drift_category value-set. NO API-placeholder leg — 4.15 has no
+    // REST
+    // surface (backend detection story; the repair REST/CLI is 4.16), so this drift gate is
+    // registry-vs-SQL only (mirrors integrationConflictCategoryStaysAlignedWithSqlCheck).
+    assertFalse(
+        DomainRegistry.driftCategories().isEmpty(), "DriftCategory registry must not be empty");
+    assertEquals(
+        DomainRegistry.driftCategories(),
+        extractConstraintValues("ck_artifact_drift_detected_drift_category"));
+  }
+
+  @Test
+  void failureTaxonomyValuesStayAlignedWithSqlCheck() {
+    // Story 4.9 (AC4/AC5) — FailureTaxonomyValue is SQL-CHECK-backed (the V44
+    // workflow_runs.failure_classification column), so the registry set must equal the
+    // ck_workflow_runs_failure_classification value-set. NO API-placeholder leg — 4.9 has no
+    // REST surface (story 4.14 owns POST /api/v1/workflows/{id}/classify-failure + its OpenAPI
+    // enum), so this drift gate is registry-vs-SQL only (contrast IntegrationFailureCategory,
+    // which is neither SQL-CHECK-backed nor in the API manifest). Set-equality is compatible with
+    // the NFR33 never-remove rule because the CHECK only ever grows in lockstep with the enum.
+    assertFalse(
+        DomainRegistry.failureTaxonomyValues().isEmpty(),
+        "FailureTaxonomyValue registry must not be empty");
+    assertEquals(
+        DomainRegistry.failureTaxonomyValues(),
+        extractConstraintValues("ck_workflow_runs_failure_classification"));
+  }
+
+  @Test
   void projectStatusAndConnectorKindStayAlignedWithSqlChecksAndApiManifest() throws IOException {
     // Story 3c-2 (AC4) — drift gate for the two new project registries. ConnectorKind aligns with
     // BOTH the ticket-source-kind and repo-host-kind CHECKs (R1: both are the {linear,github}
@@ -240,6 +309,45 @@ class RegistryContractTest {
     assertEquals(
         DomainRegistry.reviewOutcomes(),
         readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "reviewOutcomes"));
+  }
+
+  @Test
+  void definitionKindAndArtifactKindStayAlignedWithSqlChecksAndApiManifest() throws IOException {
+    // Story 3m-2 (AC7 / DD-1) — the two CHECK-backed configurable-workflow value sets are
+    // drift-tested against BOTH their DB CHECK and their API placeholder (like artifactStatuses):
+    // definition_kind -> ck_workflow_definitions_kind; artifact_kind ->
+    // ck_workflow_definition_steps_artifact_kind (the nullable `is null or ... in (...)` shape,
+    // same
+    // as failure_classification). bmad_step_key has NO DB CHECK (DD-1: step_key is free text), so
+    // it
+    // is drift-tested registry-vs-API only, below.
+    assertFalse(
+        DomainRegistry.definitionKinds().isEmpty(), "DefinitionKind registry must not be empty");
+    assertEquals(
+        DomainRegistry.definitionKinds(), extractConstraintValues("ck_workflow_definitions_kind"));
+    assertEquals(
+        DomainRegistry.definitionKinds(),
+        readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "definitionKinds"));
+
+    assertFalse(
+        DomainRegistry.artifactKinds().isEmpty(), "ArtifactKind registry must not be empty");
+    assertEquals(
+        DomainRegistry.artifactKinds(),
+        extractConstraintValues("ck_workflow_definition_steps_artifact_kind"));
+    assertEquals(
+        DomainRegistry.artifactKinds(),
+        readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "artifactKinds"));
+  }
+
+  @Test
+  void bmadStepKeyStaysAlignedWithApiPlaceholderOnly() throws IOException {
+    // Story 3m-2 (AC7 / DD-1) — bmad_step_key is the preset/catalog vocabulary (3m-5), NOT a DB
+    // CHECK (workflow_definition_steps.step_key is free text so custom definitions author arbitrary
+    // keys). So it is drift-tested registry-vs-API only, mirroring the CHECK-less artifactTypes
+    // leg.
+    assertFalse(DomainRegistry.bmadStepKeys().isEmpty(), "BmadStepKey registry must not be empty");
+    assertEquals(
+        DomainRegistry.bmadStepKeys(), readArrayNonEmpty(API_PLACEHOLDER_RESOURCE, "bmadStepKeys"));
   }
 
   @Test
@@ -473,6 +581,10 @@ class RegistryContractTest {
     registryBoundaries.put(
         "artifact_operations.failure_category",
         PersistedRegistryValues::artifactOperationFailureCategory);
+    // Story 4.15 (AC2/Reconciliation 7) — the V45 artifact_drift_detected.drift_category boundary,
+    // parsed at the drift read adapter's row mapper. Non-nullable; fails fast on unknown.
+    registryBoundaries.put(
+        "artifact_drift_detected.drift_category", PersistedRegistryValues::artifactDriftCategory);
     registryBoundaries.put("approvals.actor_type", PersistedRegistryValues::approvalActorType);
     registryBoundaries.put(
         "runner_executions.status", PersistedRegistryValues::runnerExecutionStatus);
@@ -504,6 +616,16 @@ class RegistryContractTest {
     // step_reviews.connector_role boundary (no such column); the reviewer role lives on
     // project_credentials.connector_role, already covered above.
     registryBoundaries.put("step_reviews.outcome", PersistedRegistryValues::stepReviewOutcome);
+    // Story 3m-2 (AC7/AC10) — the two CHECK'd configurable-workflow boundaries.
+    // workflow_definitions
+    // .kind -> DefinitionKind (NOT NULL) and workflow_definition_steps.produces_artifact_kind ->
+    // ArtifactKind (nullable, but a non-null unknown still fails fast). step_key / runner_kind are
+    // NOT registry-parsed boundaries (DD-1, free/opaque text).
+    registryBoundaries.put(
+        "workflow_definitions.kind", PersistedRegistryValues::workflowDefinitionKind);
+    registryBoundaries.put(
+        "workflow_definition_steps.produces_artifact_kind",
+        PersistedRegistryValues::stepDefinitionArtifactKind);
 
     List<DomainException> thrown = new ArrayList<>();
     for (Map.Entry<String, Function<String, ?>> entry : registryBoundaries.entrySet()) {

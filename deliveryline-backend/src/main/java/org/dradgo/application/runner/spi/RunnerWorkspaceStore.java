@@ -188,4 +188,18 @@ public interface RunnerWorkspaceStore {
    * #readRawStdoutForCapture(String)}.
    */
   Optional<RawRunnerLog> readRawStderrForCapture(String runnerExecutionId);
+
+  /**
+   * Resolve (creating if needed) the shared Maven local-repository cache directory at {@code
+   * {deliveryline.home}/maven-cache}, a SIBLING of {@code runner-work/} so it survives per-run
+   * workspace cleanup and is never walked by {@link #readFilesForSecretScan(String, boolean)}
+   * (which only descends {@code rex_} prefixed directories). The Docker adapter bind-mounts the
+   * returned path at {@code /workspace/.m2} (read-write) so repeat runs reuse downloaded artifacts.
+   * Default: {@link Optional#empty()} — a store that has no notion of a shared cache (mocks,
+   * non-local implementations) degrades to a per-container ephemeral repo, and the adapter simply
+   * adds no mount.
+   */
+  default Optional<Path> prepareMavenCache() {
+    return Optional.empty();
+  }
 }

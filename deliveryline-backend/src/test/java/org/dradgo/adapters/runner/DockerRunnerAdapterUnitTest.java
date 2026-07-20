@@ -25,6 +25,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.dradgo.adapters.runner.docker.ContainerState;
 import org.dradgo.adapters.runner.docker.CreateContainerSpec;
+import org.dradgo.adapters.runner.docker.DindSidecarService;
 import org.dradgo.adapters.runner.docker.DockerEngineGateway;
 import org.dradgo.application.runner.CapturedLogs;
 import org.dradgo.application.runner.ExecutionConstraints;
@@ -37,6 +38,7 @@ import org.dradgo.application.runner.RunnerProperties;
 import org.dradgo.application.runner.RunnerSecretsService;
 import org.dradgo.application.runner.spi.LogGrowthObservation;
 import org.dradgo.application.runner.spi.RawRunnerLog;
+import org.dradgo.application.runner.spi.RunnerDispatchException;
 import org.dradgo.application.runner.spi.RunnerExecutionSnapshot;
 import org.dradgo.application.runner.spi.RunnerScratchStore;
 import org.dradgo.application.runner.spi.RunnerWorkspaceStore;
@@ -141,6 +143,36 @@ class DockerRunnerAdapterUnitTest {
   }
 
   @Test
+  void dispatchAddsMavenCacheMountWhenEnabled() {
+    // Story: runner JDK+Maven — when the flag is enabled AND the workspace store provides a
+    // shared cache path, dispatch adds a 4th rw bind at /workspace/.m2. Every existing dispatch
+    // test never calls the setter, so mavenCacheEnabled stays false and the mount is absent
+    // (byte-identical 3-mount spec).
+    Path cacheDir = Path.of("/srv/dl/maven-cache");
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID))
+        .thenReturn(Optional.of("bundle-bytes".getBytes()));
+    when(workspaceStore.prepareMavenCache()).thenReturn(Optional.of(cacheDir));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+    adapter.setMavenCacheEnabled(true);
+
+    adapter.dispatch(dispatchRequest());
+
+    ArgumentCaptor<CreateContainerSpec> specCaptor =
+        ArgumentCaptor.forClass(CreateContainerSpec.class);
+    verify(gateway).createContainer(specCaptor.capture());
+    CreateContainerSpec spec = specCaptor.getValue();
+    assertThat(spec.binds()).hasSize(4);
+    CreateContainerSpec.BindMount m2 =
+        spec.binds().stream()
+            .filter(b -> b.containerPath().equals("/workspace/.m2"))
+            .findFirst()
+            .orElseThrow();
+    assertThat(m2.readOnly()).isFalse();
+    assertThat(m2.hostPath()).isEqualTo(cacheDir);
+  }
+
+  @Test
   void dispatchForwardsConfiguredDockerSecurityOptsToContainerSpec() {
     // Real read-only-stage Codex runs use bubblewrap, which needs an unprivileged user namespace;
     // Docker's default seccomp blocks it. The adapter must forward the configured
@@ -204,6 +236,9 @@ class DockerRunnerAdapterUnitTest {
         b.planStage(),
         b.implementationStage(),
         b.openspec(),
+        b.buildStage(),
+        b.lintStage(),
+        b.deliveryMode(),
         b.queueMaxDepth());
   }
 
@@ -309,7 +344,8 @@ class DockerRunnerAdapterUnitTest {
             null,
             null,
             (ExecutionSubStage) null,
-            true);
+            true,
+            false);
     stubWorkspace();
     when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
     when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
@@ -338,6 +374,131 @@ class DockerRunnerAdapterUnitTest {
     verify(gateway).createContainer(specCaptor.capture());
     assertThat(specCaptor.getValue().environment())
         .doesNotContainKey("DELIVERYLINE_RUNNER_OPENSPEC");
+  }
+
+  @Test
+  void executionStageWithTestcontainersOnProvisionsSidecarAttachesNetworkAndInjectsEnv() {
+    // DinD Testcontainers Task 6 — an EXECUTION dispatch with testcontainersEnabled=true and a
+    // wired DindSidecarService provisions the per-run sidecar, joins the runner to its network
+    // (instead of runnerProperties.docker().networkMode()), and injects the DinD-supplied env.
+    DindSidecarService dind = Mockito.mock(DindSidecarService.class);
+    adapter.setDindSidecarService(dind);
+    String network = "deliveryline-net-" + REX_ID;
+    Map<String, String> dindEnv =
+        Map.of(
+            "DOCKER_HOST", "tcp://dind:2375",
+            "TESTCONTAINERS_HOST_OVERRIDE", "dind",
+            "TESTCONTAINERS_RYUK_DISABLED", "true");
+    DindSidecarService.DindHandle handle =
+        new DindSidecarService.DindHandle(network, "dind1", dindEnv);
+    when(dind.provision(REX_ID)).thenReturn(handle);
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+
+    adapter.dispatch(executionDispatchRequest(true));
+
+    verify(dind, times(1)).provision(REX_ID);
+    ArgumentCaptor<CreateContainerSpec> specCaptor =
+        ArgumentCaptor.forClass(CreateContainerSpec.class);
+    verify(gateway).createContainer(specCaptor.capture());
+    CreateContainerSpec spec = specCaptor.getValue();
+    assertThat(spec.networkMode()).isEqualTo(network);
+    assertThat(spec.environment())
+        .containsEntry("DOCKER_HOST", "tcp://dind:2375")
+        .containsEntry("TESTCONTAINERS_HOST_OVERRIDE", "dind")
+        .containsEntry("TESTCONTAINERS_RYUK_DISABLED", "true");
+  }
+
+  @Test
+  void flagOffIsByteIdenticalNoSidecarNoNetworkChange() {
+    // DinD Testcontainers Task 6 (AC7-style parity) — testcontainersEnabled=false (the default,
+    // every deployment today) never calls DindSidecarService.provision and leaves the runner's
+    // networkMode + env byte-identical to pre-task-6, even with a DindSidecarService bean wired.
+    DindSidecarService dind = Mockito.mock(DindSidecarService.class);
+    adapter.setDindSidecarService(dind);
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+
+    adapter.dispatch(executionDispatchRequest(false));
+
+    verify(dind, never()).provision(anyString());
+    ArgumentCaptor<CreateContainerSpec> specCaptor =
+        ArgumentCaptor.forClass(CreateContainerSpec.class);
+    verify(gateway).createContainer(specCaptor.capture());
+    CreateContainerSpec spec = specCaptor.getValue();
+    assertThat(spec.networkMode()).isEqualTo(properties.docker().networkMode());
+    assertThat(spec.environment())
+        .doesNotContainKeys(
+            "DOCKER_HOST", "TESTCONTAINERS_HOST_OVERRIDE", "TESTCONTAINERS_RYUK_DISABLED");
+  }
+
+  @Test
+  void provisionFailureFailsFastWithoutDispatch() {
+    // DinD Testcontainers Task 6 — a DindProvisionException must fail fast: the runner container
+    // is NEVER created, and the adapter surfaces a RunnerDispatchException carrying
+    // TESTCONTAINERS_INFRA_FAILED so RunnerBroker.executeQueuedDispatch's catch block records that
+    // category instead of the default RUNNER_CRASH.
+    DindSidecarService dind = Mockito.mock(DindSidecarService.class);
+    adapter.setDindSidecarService(dind);
+    DindSidecarService.DindProvisionException failure =
+        new DindSidecarService.DindProvisionException(
+            "failed to provision dind sidecar for " + REX_ID,
+            new IllegalStateException("dind sidecar reported unhealthy"));
+    when(dind.provision(REX_ID)).thenThrow(failure);
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+
+    assertThatThrownBy(() -> adapter.dispatch(executionDispatchRequest(true)))
+        .isInstanceOf(RunnerDispatchException.class)
+        .satisfies(
+            ex ->
+                assertThat(((RunnerDispatchException) ex).failureCategory())
+                    .isEqualTo(FailureCategory.TESTCONTAINERS_INFRA_FAILED));
+
+    verify(gateway, never()).createContainer(any());
+  }
+
+  @Test
+  void provisionedSidecarTornDownWhenPreCreateStepThrows() {
+    // DinD Testcontainers Task 6 (B1 regression) — a sidecar is provisioned successfully, then a
+    // post-provision, pre-createContainer step throws (here: a repositoryRef-bearing dispatch with
+    // no RepositoryWorkspaceService wired → IllegalStateException at the repo-workspace guard,
+    // which lives between provision() and the create/start try). The adapter must tear the sidecar
+    // down (never leak the privileged dockerd + per-run network) and rethrow the ORIGINAL
+    // exception unchanged, and must never reach docker.createContainer.
+    DindSidecarService dind = Mockito.mock(DindSidecarService.class);
+    adapter.setDindSidecarService(dind);
+    String network = "deliveryline-net-" + REX_ID;
+    DindSidecarService.DindHandle handle =
+        new DindSidecarService.DindHandle(
+            network, "dind1", Map.of("DOCKER_HOST", "tcp://dind:2375"));
+    when(dind.provision(REX_ID)).thenReturn(handle);
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    RunnerDispatchRequest repoRequest =
+        new RunnerDispatchRequest(
+            REX_ID,
+            RUN_ID,
+            RunnerStage.EXECUTION,
+            RunnerKind.CODEX,
+            Path.of("/scratch/context-bundle.v1.json"),
+            new ExecutionConstraints(Duration.ofSeconds(600L), false),
+            DataClassification.SHAREABLE_REDACTED,
+            "owner/repo#1",
+            null,
+            (ExecutionSubStage) null,
+            false,
+            true);
+
+    assertThatThrownBy(() -> adapter.dispatch(repoRequest))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("repository workspace service is unavailable");
+
+    verify(dind, times(1)).provision(REX_ID);
+    verify(dind, times(1)).teardown(REX_ID, network, "dind1");
+    verify(gateway, never()).createContainer(any());
   }
 
   @Test
@@ -393,6 +554,43 @@ class DockerRunnerAdapterUnitTest {
     // Story 3b.1 AC2/AC6: INVESTIGATION is unchanged regardless of subStage (carries null).
     assertThat(dispatchedStageToken(dispatchRequest(RunnerStage.INVESTIGATION, null)))
         .isEqualTo("investigation");
+  }
+
+  @Test
+  void dispatchMaterializesReferencedArtifactsForExecutionStage() {
+    // Root-cause fix (run_08880e2c / FIN-40): the EXECUTION-stage (implementation-plan, pr-output)
+    // bundle references the approved spec BY PATH only; without materializing that content into the
+    // mounted input/ dir the planning runner sees a dangling reference, writes "spec file is not
+    // present", and reconstructs a plan that DIVERGES from the approved design. The materializer
+    // already ran for REVIEW — it must run for EXECUTION too (same dangling-reference class as the
+    // 2026-07-01 REVIEW fix, previously scoped too narrowly).
+    org.dradgo.application.runner.ReviewInputArtifactMaterializer materializer =
+        Mockito.mock(org.dradgo.application.runner.ReviewInputArtifactMaterializer.class);
+    adapter.setReviewInputArtifactMaterializer(materializer);
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+
+    adapter.dispatch(dispatchRequest(RunnerStage.EXECUTION, ExecutionSubStage.IMPLEMENTATION_PLAN));
+
+    verify(materializer).materialize(eq(REX_ID), any(byte[].class));
+  }
+
+  @Test
+  void dispatchSkipsMaterializationForInvestigationStage() {
+    // Scope guard: the fix adds ONLY EXECUTION to REVIEW. INVESTIGATION (spec creation) and BUILD
+    // (runs backend-side, never reaches this adapter) stay unmaterialized — an investigation
+    // dispatch has no approved-spec reference to mount, so keep it byte-identical.
+    org.dradgo.application.runner.ReviewInputArtifactMaterializer materializer =
+        Mockito.mock(org.dradgo.application.runner.ReviewInputArtifactMaterializer.class);
+    adapter.setReviewInputArtifactMaterializer(materializer);
+    stubWorkspace();
+    when(scratchStore.tryReadContextBundle(REX_ID)).thenReturn(Optional.of("bundle".getBytes()));
+    when(gateway.createContainer(any())).thenReturn(CONTAINER_ID);
+
+    adapter.dispatch(dispatchRequest(RunnerStage.INVESTIGATION, null));
+
+    verify(materializer, never()).materialize(anyString(), any(byte[].class));
   }
 
   @Test
@@ -548,6 +746,9 @@ class DockerRunnerAdapterUnitTest {
             RunnerProperties.PlanStage.defaults(),
             RunnerProperties.ImplementationStage.defaults(),
             RunnerProperties.OpenSpec.defaults(),
+            RunnerProperties.BuildStage.defaults(),
+            RunnerProperties.LintStage.defaults(),
+            RunnerProperties.DeliveryMode.defaults(),
             100);
     adapter =
         new DockerRunnerAdapter(
@@ -947,6 +1148,27 @@ class DockerRunnerAdapterUnitTest {
         null,
         null,
         subStage);
+  }
+
+  /**
+   * DinD Testcontainers Task 6 — an EXECUTION-stage request carrying the trailing {@code
+   * testcontainersEnabled} flag (via the broker's full 12-arg dispatch constructor: repositoryRef +
+   * linearTicketRef + subStage + openspecEnabled + testcontainersEnabled).
+   */
+  private RunnerDispatchRequest executionDispatchRequest(boolean testcontainersEnabled) {
+    return new RunnerDispatchRequest(
+        REX_ID,
+        RUN_ID,
+        RunnerStage.EXECUTION,
+        RunnerKind.CODEX,
+        Path.of("/scratch/context-bundle.v1.json"),
+        new ExecutionConstraints(Duration.ofSeconds(600L), false),
+        DataClassification.SHAREABLE_REDACTED,
+        null,
+        null,
+        (ExecutionSubStage) null,
+        false,
+        testcontainersEnabled);
   }
 
   private String dispatchedStageToken(RunnerDispatchRequest request) {

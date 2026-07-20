@@ -1,0 +1,9 @@
+diff --git a/src/auth/handler.ts b/src/auth/handler.ts
+--- a/src/auth/handler.ts
++++ b/src/auth/handler.ts
+@@ -1,3 +1,4 @@
+ const base = "https://example.test";
+-const link = "old";
++const link = "<a href=javascript:window.__compareDiffXss=1>click</a>";
++const tag = "<script>window.__compareDiffXss2 = 1;</script>";
+ const after = "done";

@@ -124,6 +124,14 @@ class RedactionPolicyServiceContractTest {
             "project-credential-github-token.json",
             "project-credential-linear-token.json",
             "project-credential-opaque-under-key.json",
+            // Story 3i-1 — the JIRA API-token project-credential adversarial fixture (Atlassian
+            // tokens have no stable prefix, so the secret rides a SECRET_FIELD-covered key).
+            "project-credential-jira-token.json",
+            // Story 3i-3 — the Bitbucket adversarial fixtures. The app-password Basic header is
+            // scrubbed by the AUTHORIZATION_HEADER pattern; the single-secret project credential
+            // rides a SECRET_FIELD-covered "token" key.
+            "bitbucket-app-password.txt",
+            "project-credential-bitbucket-token.json",
             "query-secret.txt",
             "repo-context-readme-with-pem-and-path.md",
             "repo-context-tree-summary-with-secrets.json",
